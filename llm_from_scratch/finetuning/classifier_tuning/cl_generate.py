@@ -1,0 +1,57 @@
+import tiktoken
+import torch
+import torch.nn as nn
+
+import config
+from llm_from_scratch.GPT.gpt_model import GPTModel
+from llm_from_scratch.utils import text_to_ids
+
+
+def classify_text(input, model, device, max_length=None, pad_token=50256):
+    """
+    A classification function inspired by our previous generate_loop() and SpamDataset class
+    """
+    model.eval()
+    # calc max length and input length
+    ctx_len = model.pos_emb_dict.weight.shape[0]  # shape (ctx_len, emb_dim)
+    max_length = min(max_length, ctx_len) if max_length else ctx_len
+    input_len = min(input.shape[1], max_length)
+
+    # truncating and padding
+    # creating a tensor full of pads token of size max_length
+    pads = torch.full((input.shape[0], max_length), pad_token)
+    # replace all pads token below input_len by the corresponding inputs
+    pads[:, :input_len] = input[:, :input_len]
+
+    with torch.no_grad():
+        logits = model(pads)[:, -1, :]
+        pred = torch.argmax(logits, dim=-1)
+
+        # (optional) checking confidence
+        print(f"{torch.max(torch.softmax(logits, dim=-1)).item() * 100:.2f}%")
+
+    return "SPAM" if pred == 1 else "Not SPAM"
+
+
+if __name__ == "__main__":
+
+    tokenizer = tiktoken.get_encoding("gpt2")
+
+    model_config = config.config_creator("gpt_s")
+    model_config["drop_rate"] = 0.0
+    model = GPTModel(model_config)
+
+    # changing the arch from the classic GPT2 to the classification output head, just like in cl_training.py
+    # alternatively, could have saved the whole model arch during cl_training (and not just params) instead.
+    num_classes = 2
+    model.out = nn.Linear(model_config["emb_dim"], num_classes)
+
+    # loading our finetuned config/model params
+    ft_checkpoint = torch.load(config.ft_classifier_w_gpt2, weights_only=False)
+    model.load_state_dict(ft_checkpoint["model_state_dict"])
+
+    text_spam = "You are a winner you have been specially selected to receive $1000 cash or a $2000 award."
+
+    output = classify_text(text_to_ids(text_spam, tokenizer=tokenizer), model, device="cuda", max_length=35)
+
+    print(output)

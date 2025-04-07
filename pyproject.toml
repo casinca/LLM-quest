@@ -1,0 +1,35 @@
+[project]
+name = "llm-architectures-from-scratch"
+version = "0.1.0"
+description = "verbose reimplementations of LLM architectures, research papers or experiments from scratch"
+authors = [
+    {name = "casinca", email = "47400729+casinca@users.noreply.github.com"},
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch==2.4.1",
+    "tiktoken>=0.7.0",
+    "tqdm>=4.66",
+    "tensorflow>=2.18.0",
+    "pandas>=2.2.3",
+    "jupyterlab>=4.3.1",
+    "matplotlib>=3.10.0",
+    "datasets>=3.3.2",
+]
+
+[tool.setuptools]
+packages = ["llm_from_scratch"]
+py-modules = ["config", "gpt_download"]
+
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
