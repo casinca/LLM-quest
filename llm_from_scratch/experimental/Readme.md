@@ -49,8 +49,8 @@ This requires many more experiments to see if there is an actual benefit in perp
 
 #### b) individual (per embedding) weighting
 
-- alternatively instead of a scalar $p$, for some more granularity, we could have a learnable vector $\vec{p} \in
-  \mathbb{R}^{emb\ dim}$.  
+- alternatively instead of a scalar $p$, for some more granularity, we could have a learnable vector ${\vec{p} \in
+  \mathbb{R}^{emb\ dim}}$.  
   Same as **a)** but to normalize the weights we could use a softmax or individual sigmoids (like DeepSeek did for
   weighting routed ones).
 

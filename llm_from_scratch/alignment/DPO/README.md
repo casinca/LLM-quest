@@ -100,10 +100,11 @@ We need to define our reward function $r(x,y)$.
 
 $r(x,y)$ is taken from the RLHF equation where we want to maximize the reward function $r(x,y)$ while minimizing
 divergence between the policy model $\pi_\theta$ and the reference model $\pi_{ref}$ via a relative entropy
-(Kullback–Leibler div) penalty *(not rendered properly)*:
+(Kullback–Leibler div) penalty:
 
 $$
-\underset{\pi_\theta}{\max} \underset{\pi_\theta(y|x)}{\mathbb{E}} [ r(x, y) ] - \beta D_{KL} [ \pi_\theta(y|x) \parallel \pi_{ref}(y|x) ] \qquad  (11)
+\max_{\pi_\theta} \mathbb{E}\_{\pi_\theta(y|x)} \left[ r(x, y) \right] - \beta D_{KL} \left[ \pi_\theta(y|x) \parallel
+\pi_{ref}(y|x) \right] \qquad  (11)
 $$
 
  - $\beta$ is a hparam to scale the trade-off between the reward and KL divergence terms.
@@ -116,7 +117,7 @@ Without going into the full derivation of (10) with Lagrange multiplier, we want
 ${\pi_\theta}$ and also solve for ${\pi_\theta}$ which gives the result:
 
 $$
-\pi_\theta(y | x) = \frac{1}{Z(x)} \cdot \pi_{ref}(y | x) \cdot e^{\left(\frac{1}{\beta} r(x, y)\right)} \tag{12}
+\pi_\theta(y | x) = \frac{1}{Z(x)} \cdot \pi_{ref}(y | x) \cdot e^{\left(\frac{1}{\beta} r(x, y)\right)} \qquad  (12)
 $$
 
 rearranged to isolate the reward term:
@@ -151,6 +152,6 @@ $$
 and finally into our loss (9) for minimization:
 
 $$
-L_{DPO} = - \left[ \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)}
-\right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) \right] \qquad  (16)
+\mathcal{L}\_{DPO} = - \left[ \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)}
+\right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) \right] \tag{16}
 $$

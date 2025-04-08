@@ -16,7 +16,7 @@
 
 - Router: [Discrete](#alt-architecture-sparsediscrete-vs-densecontinuous) topk
 
-- [Modular](#more-details) experts
+- [Modular](#modular-experts) experts
 
 - Auxiliary losses:
     - router z
@@ -57,7 +57,7 @@ $f_i$ we're seeing, but also high magnitudes (which imply overload).
 mistakes).  
 Ie, the fraction of tokens dispatched to each expert but in a discrete/empirical way since we "hard" count the freq of
 selected experts.  
-*Edit: I'm actually computing $f_i$ like DeepSeek and not the below formula. Instead of counting only the 1st of topk
+*Edit: I'm actually computing* $f_i$ *like DeepSeek and not the below formula. Instead of counting only the 1st of topk
 (argmax) I'm counting the topk*
 
     $$f_i = \frac{1}{T} \sum_{x\in B} 1\!\!1\{\text{argmax }p(x) = i\}$$
@@ -69,7 +69,7 @@ selected experts.
 - $\alpha$ is a hyperparameter. They tested and chose in both Switch and ST-MoE $\alpha = 10\text{e}^{-2}$
 
 $f_i$ is not differentiable (discrete), $P_i$ (continuous) is, which helps because now we get a gradient from
-$\frac{\partial \mathcal{L}_{aux}}{\partial W_{gate}}$ that can update the parameters of the gate.
+$\frac{\partial \mathcal{L}\_{aux}}{\partial W_{gate}}$ that can update the parameters of the gate.
 
 So we end up with a loss that should be minimized under a uniform distribution, which is what we want, ie balanced
 experts load.
@@ -148,7 +148,7 @@ case.
 #### Auxiliary loss free load balancing:
 
 A novel and lighter approach for load balance as it's not counting on gradient updates for guidance.  
-They are injecting a bias vector $\vec{b} \in \mathbb{R}^{num\ experts}$, directly in the result (probas/scores) of the
+They are injecting a bias vector ${\vec{b} \in \mathbb{R}^{num\ experts}}$, directly in the result (probas/scores) of the
 softmax/sigmoid, these scores now biased, will only be used to select the topk experts (not for weighting).  
 
 They count the freq of selected experts per batch $c_i$ and the average $\overline{c_i}$, to calculate the violation
