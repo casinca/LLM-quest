@@ -1,4 +1,4 @@
-# LLM Architectures from Scratch
+# LLM Quest: Models, architectures, research papers from scratch
 
 This repo is a constant WIP.  
 It was initially a "package like" version following the great
@@ -23,7 +23,7 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 &nbsp;
 
- - GPT to Llama 3.2 arch*:
+ - GPT to Llama 3.2 from scratch*:
     - GQA
     - RoPE + YaRN
     - RMS Norm
@@ -31,14 +31,14 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 &nbsp;
 
- - Llama 3.2 to DeepSeek V3, R1 arch:
+ - Llama 3.2 to DeepSeek V3, R1 from scratch:
     - MLA
     - MTP
     - DeepSeek MoE
 
 &nbsp;
 
- - Llama 3.2 to Gemma 3 (text-only) arch:
+ - Llama 3.2 to Gemma 3 from scratch (text-only):
     - GeGLU
     - Local/Global attention
     - SWA
