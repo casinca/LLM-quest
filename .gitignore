@@ -186,4 +186,4 @@ pyrightconfig.json
 # checkpoints and data folders
 checkpoints/
 data/
-llm_from_scratch/alignment/DPO/instruction-data-with-preference.json
+llm_quest/alignment/dpo/instruction-data-with-preference.json

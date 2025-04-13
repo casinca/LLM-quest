@@ -1,7 +1,7 @@
 [project]
-name = "llm-architectures-from-scratch"
+name = "llm-quest"
 version = "0.1.0"
-description = "verbose reimplementations of LLM architectures, research papers or experiments from scratch"
+description = "verbose reimplementations of LLM architectures, research papers from scratch"
 authors = [
     {name = "casinca", email = "47400729+casinca@users.noreply.github.com"},
 ]
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["llm_from_scratch"]
+packages = ["llm_quest"]
 py-modules = ["config", "gpt_download"]
 
 
