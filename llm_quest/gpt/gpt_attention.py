@@ -27,9 +27,8 @@ class SelfAttention_v1(nn.Module):
         return ctx_tensor
 
 
-# optimized using 1xFFN Linear layer(ax+b) and no biases, which ends up being a*x These single Linear classes also help
-# with controlling the output dim
-# (reducing/compression if d_out > d_in or expansion d_out > d_int, GPT has d_in = d_out)
+# optimized using 1xFFN Linear layer (ax+b) and no biases, which ends up being a*x. The Linear classes also help with
+# controlling the output dim (reducing/compression if d_out > d_in or expansion d_out > d_int, GPT has d_in = d_out)
 class SelfAttention_v2(nn.Module):
     def __init__(self, d_in, d_out, qkv_bias=False):
         super().__init__()
@@ -164,17 +163,11 @@ class MultiHeadAttention(nn.Module):
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
-        # print("att_scores shape", att_scores.shape)
-        # print("att_scores", att_scores)
         # mask up to seq length/num of tokens
         current_mask = self.mask.bool()[:seq_len, :seq_len]
-        # print("current_mask shape", current_mask.shape)
-        # print("current_mask", current_mask)
         scaled_att_scores = att_scores * self.att_scaling
         # masking in place and normalizing with softmax
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)
-        # print("masked_att_scores shape", scaled_att_scores.shape)
-        # print("masked_att_scores", scaled_att_scores)
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
         att_weights = self.dropout(att_weights)  # reg
 
