@@ -5,7 +5,7 @@ It was initially a "package like" version following the great
 [LLM from scratch repo/book](https://github.com/rasbt/LLMs-from-scratch) structure from [@rasbt](https://github.com/rasbt).
 
 Little by little, it served me as a base for verbose re-implementations of different architectures, research
-papers or experiments from scratch, such as Mixture of Experts (MoE), Gemma 3, DeepSeek V3...  
+papers or experiments from scratch, such as: Mixture of Experts (MoE), Gemma 3, DeepSeek V3...  
 Put simply, SOTA LLM stuff that piques my interest for experiments and learning.
 
 Even though the code is mine (unless explicitly mentioned like `gpt_download.py`), anyone
