@@ -168,10 +168,13 @@ if __name__ == "__main__":
     model_settings = config.config_creator("gpt_s")
     torch.manual_seed(123)
 
+    device = "cuda"
     model = GPTModel(model_settings)
     model.eval()
 
     load_weights_into_gpt(model, params)
+
+    model.to(device)  # we move the model to GPU *after* loading weights
 
     output3 = generate_loop(
         input=text_to_ids("This is where it", tokenizer=tokenizer),
