@@ -29,7 +29,7 @@ class SelfAttention_v1(nn.Module):
 
 # optimized using 1xFFN Linear layer(ax+b) and no biases, which ends up being a*x These single Linear classes also help
 # with controlling the output dim
-# (reducing/compression if d_out > d_in or expansion d_out > d_int, gpt has d_in = d_out)
+# (reducing/compression if d_out > d_in or expansion d_out > d_int, GPT has d_in = d_out)
 class SelfAttention_v2(nn.Module):
     def __init__(self, d_in, d_out, qkv_bias=False):
         super().__init__()

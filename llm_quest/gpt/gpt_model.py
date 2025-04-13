@@ -8,7 +8,7 @@ class GPTModel(nn.Module):
     """
     A gpt model implementation.
 
-    This model follows the architecture described in the gpt papers, consisting of:
+    This model follows the architecture described in the GPT papers, consisting of:
     - Token embeddings
     - Positional embeddings
     - Multiple transformer blocks

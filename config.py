@@ -56,7 +56,7 @@ LLAMA32_SMALL_CONFIG = {
     "n_heads": 12,
     "n_layers": 12,
     "num_kv_groups": 4,
-    "hidden_dim": 4 * 768,  # equivalent to gpt hidden dim
+    "hidden_dim": 4 * 768,  # equivalent to GPT hidden dim
     "rope_base": 10_000,  # RoPE base for θ calc
     # this section is mainly for SFT:
     "rope_freq": {  # hparams for RoPE variant (NTK Aware + by parts/wavelength scaling)
@@ -100,7 +100,7 @@ DEEPSEEK_SMALL_CONFIG = {
     "n_heads": 12,
     "n_layers": 12,
     "hidden_dim": 4 * 768,
-    "num_ffn": 3,  # number of FFN layers, remaining will be moe
+    "num_ffn": 3,  # number of FFN layers, remaining will be MoE
     "mtp_depth": 2,  # number of MTP modules (depth of the multi token prediction)
     "mtp_loss_coeff": 0.2,  # for now static, DeepSeek mentions 0.1 for first 10T tokens, 0.3 for the remaining 4.8T
     "rope_base": 10_000,
@@ -117,7 +117,7 @@ DEEPSEEK_SMALL_CONFIG = {
 
 def config_creator(gpt_size):
     """
-    This function creates a config dictionary for a gpt model based on the size provided.
+    This function creates a config dictionary for a GPT model based on the size provided.
 
     Args:
         gpt_size (str): The size of the gpt model. It can be one of the following:

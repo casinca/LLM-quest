@@ -97,7 +97,7 @@ class TransformerBlock(nn.Module):
     3. Feed-Forward Neural Network + Mixture of Experts
     4. Residual connections
 
-    per DeepSeekV3 paper, the first 3 layers are FFNs, rest moe
+    per DeepSeekV3 paper, the first 3 layers are FFNs, rest MoE
 
     Args:
         cfg (dict): Config dict containing hyperparams:

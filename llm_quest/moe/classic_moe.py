@@ -29,9 +29,9 @@ class Expert(nn.Module):
 
 
 class MoE(nn.Module):
-    """Mixture of Experts (moe) layer.
+    """Mixture of Experts (MoE) layer.
 
-    This layer implements a sparse moe, where a gate selects a subset of experts for each token.
+    This layer implements a sparse MoE, where a gate selects a subset of experts for each token.
     The outputs from the selected experts are then combined to produce the final output.
 
     Args:

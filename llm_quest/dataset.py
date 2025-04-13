@@ -10,7 +10,7 @@ from llm_quest.utils import alpaca_prompt_format
 
 class GPTDataset(Dataset):
     """
-    GPTDataset is a custom PyTorch Dataset for preparing text data for training the gpt model.
+    GPTDataset is a custom PyTorch Dataset for preparing text data for training the GPT model.
 
     Args:
         text (str): The input text to be tokenized and transformed into sequences.
@@ -103,7 +103,7 @@ class SpamDataset(Dataset):
         tokenizer (Tokenizer): The tokenizer object used to encode the text.
         max_length (int, optional): Maximum length for padding/truncating sequences.
                                     If None, uses the longest sequence length.
-        pad_token (int, optional): Token ID used for padding. Defaults to 50256 (gpt-2 padding token).
+        pad_token (int, optional): Token ID used for padding. Defaults to 50256 (GPT-2 padding token).
 
     Attributes:
         data (DataFrame): The loaded spam dataset.

@@ -48,7 +48,7 @@ def global_loss(logits, y, model=None, classification=False):
     """
     Quick wrapper of the CE loss for a batch of data. Based on _calc_loss_batch()
 
-    Used for training only, to calculate the global loss of possible multiple loss terms (eg, moe).
+    Used for training only, to calculate the global loss of possible multiple loss terms (eg, MoE).
     _calc_loss_batch() is used for eval to calc the main loss only: CE
     """
     if classification:
@@ -56,8 +56,8 @@ def global_loss(logits, y, model=None, classification=False):
     else:
         loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), y.flatten())
 
-    # Add moe auxiliary losses
-    # we are not averaging, but adding the cumulated aux losses of all moe layers
+    # Add MoE auxiliary losses
+    # we are not averaging, but adding the cumulated aux losses of all MoE layers
     # TODO might want to also add classic aux loss for DeepSeek and rethink the logic handling for training/inf
     moe_loss = 0.0
     for module in model.modules():

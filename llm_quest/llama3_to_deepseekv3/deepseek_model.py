@@ -27,7 +27,7 @@ class MTPModule(nn.Module):
         self.rms_h_prev = RMSNorm(cfg["emb_dim"])
         self.rms_input = RMSNorm(cfg["emb_dim"])
         self.down_proj = nn.Linear(2 * cfg["emb_dim"], cfg["emb_dim"])
-        self.trf_block = TransformerBlock(cfg, layer=0)  # MTP trf block should have a FFN, not moe. Layers < 3 = FFN
+        self.trf_block = TransformerBlock(cfg, layer=0)  # MTP trf block should have a FFN, not MoE. Layers < 3 = FFN
         self.out_layer = main_output_head  # shared
 
     def forward(self, x, h_prev, mask, cos, sin):

@@ -120,7 +120,7 @@ class TransformerBlock(nn.Module):
     def forward(self, x):
         """
         This is a pre-LN arch, contrary to the original paper on transformers (which is post-LN)
-        Somehow gpt paper has a post-LN fig.1 but OpenAI impl is pre-LN
+        Somehow GPT paper has a post-LN fig.1 but OpenAI impl is pre-LN
         """
         residual = x
         x = self.ln_1(x)

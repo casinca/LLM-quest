@@ -45,7 +45,7 @@ class SiLU(nn.Module):
     where σ(x) is the sigmoid function: 1/(1 + e^(-x))
 
     This activation function is also known as "swish" and is used as part of the SwiGLU
-    gated activation in the Llama architecture's FFN, replacing the GELU activation from gpt.
+    gated activation in the Llama architecture's FFN, replacing the GELU activation from GPT.
     """
 
     def __init__(self) -> None:

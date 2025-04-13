@@ -42,7 +42,7 @@ class GlobalBuffers:
 
 class Llama3Model(nn.Module):
     """
-    A gpt to Llama 3.2 model conversion implementation.
+    A GPT to Llama 3.2 model conversion implementation.
 
     This model follows the architecture described in the Llama paper, consisting of:
     - Token embeddings

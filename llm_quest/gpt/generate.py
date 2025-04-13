@@ -37,7 +37,7 @@ def generate_loop(
     device="cuda",
 ):
     """
-    Generates text using a gpt model with optional top-k sampling, temperature scaling, and early stopping.
+    Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
 
     Args:
         input (torch.Tensor): Input tensor of token IDs with shape [batch_size, seq_len]
