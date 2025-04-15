@@ -50,13 +50,14 @@ class GPTModel(nn.Module):
         x = self.final_ln(x)
 
         # optimization for last token prediction, ie classification, reward model, etc
+        # avoid unnecessary projection for all hidden states
         if only_last_token:
             # apply output layer only to the last token's hidden state
-            # shape: (b, emb_dim) → (b, vocab_size)
+            # shape: (b, emb_dim) → (b, output_dim)
             logits = self.out(x[:, -1, :])
         else:
             # apply output layer to all hidden states
             # shape: (b, s, emb_dim) → (b, s, vocab_size)
             logits = self.out(x)
-            
+
         return logits
