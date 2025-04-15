@@ -33,7 +33,7 @@ def _calc_loss_batch(X, y, model, device, classification=False):
     # logits. Slicing will naturally give us a 2D shape that matches nn.F.cross_entropy() requirement.
     # logits will have a 2D shape: (b, num of classes) and targets 1D shape of true classes, thus no need to flatten.
     if classification:
-        logits = model(X)[:, -1, :]
+        logits = model(X, only_last_token=True)
         loss = torch.nn.functional.cross_entropy(logits, y)
     # but in classic causal NTP, logits have a shape (b,s,v) and targets (b, s)
     # thus we need to flatten logits to (b*s, v) and targets (b*s) for the correct format

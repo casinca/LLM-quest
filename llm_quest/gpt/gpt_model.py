@@ -36,7 +36,7 @@ class GPTModel(nn.Module):
         # projecting output to vocab_size to get logits
         self.out = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
-    def forward(self, x):
+    def forward(self, x, only_last_token=False):
         b, seq_len = x.shape
 
         # shape (b, s) → (b, s, emb_dim)
@@ -48,5 +48,15 @@ class GPTModel(nn.Module):
         x = self.dropout(x)
         x = self.trf_blocks(x)
         x = self.final_ln(x)
-        logits = self.out(x)
+
+        # optimization for last token prediction, ie classification, reward model, etc
+        if only_last_token:
+            # apply output layer only to the last token's hidden state
+            # shape: (b, emb_dim) → (b, vocab_size)
+            logits = self.out(x[:, -1, :])
+        else:
+            # apply output layer to all hidden states
+            # shape: (b, s, emb_dim) → (b, s, vocab_size)
+            logits = self.out(x)
+            
         return logits
