@@ -25,10 +25,11 @@ def accuracy_loader(data_loader, model, device):
         y = y.to(device)
 
         with torch.no_grad():
-            logits = model(X)[:, -1, :]  # shape (b, num_examples, num_classes) → (num examples, num_classes)
+            logits = model(X, only_last_token=True)  # (b, num_classes)
 
             # Get highest preds for entire batch of sequence
-            batch_preds = torch.argmax(logits, dim=-1)  # shape (num examples, pred_idx)
+            batch_preds = torch.argmax(logits, dim=-1)  # shape (b,)
+            print(batch_preds.shape)
             # compare with targets as boolean:
             # summing up the 1s(True) and then converting tensor to a scalar for calculation
             total_correct_preds += (batch_preds == y).sum().item()
@@ -88,7 +89,7 @@ def classifier_training_eval_loop(
             input_batch = input_batch.to(device)
             targets = targets.to(device)
 
-            logits = model(input_batch)[:, -1, :]  # only interested in the last token/score for our classification
+            logits = model(input_batch, only_last_token=True)  # only interested in the last token/score for our classification
 
             optimizer.zero_grad()
             loss = global_loss(logits, targets, classification=True)  # classi=True for correct loss req shape
