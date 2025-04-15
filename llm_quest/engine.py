@@ -29,9 +29,9 @@ def _calc_loss_batch(X, y, model, device, classification=False):
     X = X.to(device)
     y = y.to(device)
 
-    # in the case of classification finetuning, we're only interested in minimizing the loss based on the last token's
-    # logits and the shape of the tensor also matches nn.F.cross_entropy() requirement.
-    # logits already have a 2D shape: (b, num of classes) and targets 1D shape of true classes, thus no need to flatten
+    # in the case of classification finetuning, we're only interested in minimizing the loss based on the last tokens'
+    # logits. Slicing will naturally give us a 2D shape that matches nn.F.cross_entropy() requirement.
+    # logits will have a 2D shape: (b, num of classes) and targets 1D shape of true classes, thus no need to flatten.
     if classification:
         logits = model(X)[:, -1, :]
         loss = torch.nn.functional.cross_entropy(logits, y)
