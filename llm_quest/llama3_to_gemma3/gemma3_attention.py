@@ -98,8 +98,8 @@ def apply_sliding_window_attention(queries, keys, values, window_size, swa_mask=
 
     # Attention:
     # need to match query shape with keys for matmul:
-    #  (b, num_heads, seq_len, head_dim) -> (b, num_heads, seq_len, 1, head_dim)
-    # and keys^T -> (b, num_heads, seq_len, head_dim, window_size)
+    #  (b, num_heads, seq_len, head_dim) → (b, num_heads, seq_len, 1, head_dim)
+    # and keys^T → (b, num_heads, seq_len, head_dim, window_size)
     att_scores = queries.unsqueeze(3) @ keys_windows.mT
 
     # Causal mask:

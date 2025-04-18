@@ -45,8 +45,11 @@ def generate_loop(
         max_gen (int): Maximum number of tokens to generate
         context_length (int): Maximum context length the model can process
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
-        temp (float, optional): Temperature for softmax sampling. Higher values increase randomness.
-                                If 0, uses greedy sampling. Defaults to 0.0.
+        temp (float, optional): Temperature for softmax sampling:
+                                - if >1, increases entropy (randomness)
+                                - if <1, decreases entropy (more deterministic)
+                                - if 1, untempered distribution
+                                - if 0, uses greedy sampling. Defaults to 0.0.
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to None.
         device (str, optional): Device to move the input tensor to. Defaults to "cuda".

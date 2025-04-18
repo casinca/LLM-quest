@@ -228,7 +228,7 @@ def dpo_training_eval_loop_simple(
     num_epoch,
     eval_freq,
     eval_iter,
-    device,
+    device,  # not used here, as the collate func is moving to the device
     beta=0.1,
 ):
     """

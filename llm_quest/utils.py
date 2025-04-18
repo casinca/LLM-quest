@@ -57,17 +57,17 @@ def ids_to_text(ids, tokenizer):
     return decoded
 
 
-def alpaca_prompt_format(entry, response=True):
+def alpaca_prompt_format(entry, include_output=True):
     """
     Formats an instruction-input-output entry into the Alpaca prompt format.
 
     Args:
         entry (dict): A dictionary containing 'instruction', 'input', and 'output' keys
                     representing an instruction example.
-        response (bool): If set to False, will remove response_txt from the output
+        include_output (bool): If set to False, will remove output_txt from the output
 
     Returns:
-        str: A formatted prompt string containing the instruction, optional input, and response
+        str: A formatted prompt string containing the instruction, optional input, and output
             in the Alpaca format.
     """
 
@@ -87,14 +87,14 @@ Below is an instruction that describes a task. Write a response that appropriate
         else ""
     )
 
-    response_txt = f"""
+    output_txt = f"""
 ### Response:
 {entry['output']}
 """
-    if not response:
+    if not include_output:
         return instruction_txt + input_txt
     else:
-        return instruction_txt + input_txt + response_txt
+        return instruction_txt + input_txt + output_txt
 
 
 def alpaca_prompt_format2(entry):
