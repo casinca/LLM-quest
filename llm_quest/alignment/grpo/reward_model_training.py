@@ -25,6 +25,8 @@ tokenizer = tiktoken.get_encoding("gpt2")
 train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer)
 val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer)
 
+print(train_set[0])
+
 dpo_custom_collate = partial(
     custom_collate_fn,
     allowed_max_length=model_cfg["context_length"],
@@ -52,6 +54,9 @@ val_loader = DataLoader(
     pin_memory=False,
 )
 
+test_batch = next(iter(train_loader))
+print("test_batch['chosen'].shape", test_batch["chosen"].shape)
+
 # --- model & optimizer ---
 model = GPTModel(model_cfg)
 # changing the head to a single output linear layer: we want a scalar reward
@@ -60,14 +65,14 @@ model.to(model_device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-reward_model_training_eval_loop_simple(
-    train_loader,
-    val_loader,
-    model,
-    optimizer,
-    num_epoch,
-    eval_freq=10,
-)
+# reward_model_training_eval_loop_simple(
+#    train_loader,
+#    val_loader,
+#    model,
+#    optimizer,
+#    num_epoch,
+#    eval_freq=10,
+# )
 
 ## --- training loop ---
 # test_batch = next(iter(train_loader))

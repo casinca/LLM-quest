@@ -161,8 +161,41 @@ def evaluate_reward_model(val_loader, reward_model):
     return avg_loss, avg_acc
 
 
-def response_collator():
-    pass
+def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
+    """
+    Collate sampled responses into a single tensor, preparing them for the reward model.
+
+    Args:
+        responses (List[List[int]]): list of responses, each response is the prompt + the policy's output
+        len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
+        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
+        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            padded_responses: Tensor of shape (batch_size, max_len) with padded token IDs.
+            response_masks: Boolean tensor of the same shape with masked: prompt + padding tokens
+    """
+    max_len = max(len(response) for response in responses)
+    padded_responses = []
+    reward_masks = []
+    attn_masks = []
+
+    for response in responses:
+        len_response = len(response)  # len of a sampled response (ie prompt+policy's output)
+        response += [pad_token_id] * (max_len - len_response)
+        reward_mask = [False] * len_prompt + [True] * (len_response - len_prompt) + [False] * (max_len - len_response)
+        attn_mask = [True] * (len_response) + [False] * (max_len - len_response)
+
+        padded_responses.append(response)
+        reward_masks.append(reward_mask)
+        attn_masks.append(attn_mask)
+
+    padded_responses = torch.tensor(padded_responses)
+    reward_masks = torch.tensor(reward_masks, dtype=torch.bool)
+    attn_masks = torch.tensor(attn_masks, dtype=torch.bool)
+
+    return padded_responses.to(device), reward_masks.to(device), attn_masks.to(device)
 
 
 if __name__ == "__main__":
@@ -183,17 +216,34 @@ if __name__ == "__main__":
     num_samples = 5
     responses = []
 
-    for i in range(num_samples):
-        torch.manual_seed(123 + i)
-        response = generate_loop(
-            input=text_to_ids("This is where it", tokenizer=tokenizer),
-            model=model,
-            max_gen=20,
-            context_length=model_settings["context_length"],
-            top_k=25,
-            temp=1.4,
-        )
-        responses.append(response)
-        responses.append(ids_to_text(response, tokenizer))
+    #    for i in range(num_samples):
+    #        torch.manual_seed(123 + i)
+    #        response = generate_loop(
+    #            input=text_to_ids("This is where it", tokenizer=tokenizer),
+    #            model=model,
+    #            max_gen=20,
+    #            context_length=model_settings["context_length"],
+    #            top_k=25,
+    #            temp=1.4,
+    #        )
+    #        responses.append(response.squeeze(0).tolist())
 
-    print(responses)
+    responses = [
+        [20, 21, 22, 50, 51, 5250, 51, 52],
+        [20, 21, 22, 60, 61, 62],
+        [20, 21, 22, 70, 71, 7270, 71, 7270, 71, 72],
+        [20, 21, 22, 80, 81, 82],
+        [20, 21, 22, 90, 91, 922, 90],
+    ]
+
+    print(text_to_ids("This is where it", tokenizer=tokenizer))
+
+    padded_responses, response_masks, attn_masks = response_collator(
+        responses,
+        len_prompt=3,
+        pad_token_id=50256,
+        device="cuda",
+    )
+    print(padded_responses)
+    print(response_masks)
+    print(attn_masks)
