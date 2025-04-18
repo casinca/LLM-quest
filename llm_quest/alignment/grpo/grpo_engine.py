@@ -172,9 +172,10 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
 
     Returns:
-        Tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+        Dict[str, torch.Tensor]: A dictionary containing:
             padded_responses: Tensor of shape (batch_size, max_len) with padded token IDs.
-            response_masks: Boolean tensor of the same shape with masked: prompt + padding tokens
+            reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
+            attn_masks: Boolean tensor of the same shape with masked: padding tokens.
     """
     max_len = max(len(response) for response in responses)
     padded_responses = []
@@ -195,7 +196,11 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     reward_masks = torch.tensor(reward_masks, dtype=torch.bool)
     attn_masks = torch.tensor(attn_masks, dtype=torch.bool)
 
-    return padded_responses.to(device), reward_masks.to(device), attn_masks.to(device)
+    return {
+        "padded_responses": padded_responses.to(device),
+        "reward_masks": reward_masks.to(device),
+        "attn_masks": attn_masks.to(device),
+    }
 
 
 if __name__ == "__main__":
@@ -238,12 +243,12 @@ if __name__ == "__main__":
 
     print(text_to_ids("This is where it", tokenizer=tokenizer))
 
-    padded_responses, response_masks, attn_masks = response_collator(
+    collated_batch = response_collator(
         responses,
         len_prompt=3,
         pad_token_id=50256,
         device="cuda",
     )
-    print(padded_responses)
-    print(response_masks)
-    print(attn_masks)
+    print(collated_batch["padded_responses"])
+    print(collated_batch["reward_masks"])
+    print(collated_batch["attn_masks"])
