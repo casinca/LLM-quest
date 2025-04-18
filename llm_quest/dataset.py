@@ -2,6 +2,7 @@ import gzip
 import json
 
 import pandas as pd
+import tiktoken
 import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 
@@ -246,7 +247,7 @@ class PreferenceDataset(Dataset):
         self.instruct_ids_list = []
         for instruct in text:
             # convert to alpaca format instructions + chosen & rejected responses (which include prompt too, hence full)
-            formatted_instruct = alpaca_prompt_format(instruct, response=False)
+            formatted_instruct = alpaca_prompt_format(instruct, include_output=False)
             chosen_response = instruct["chosen"]
             rejected_response = instruct["rejected"]
             formatted_chosen_full = f"{formatted_instruct}\n\n### Response:\n{chosen_response}"
