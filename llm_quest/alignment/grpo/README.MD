@@ -2,8 +2,8 @@
 
 ## PRE STEPS
 
-we will take a GPT2 124M with reduced ctx length for everything, we need to fit 3x LLMs at peak on 1 GPU, just need to test the
-impl is working as intended.
+we will take a GPT2 124M with reduced ctx length for everything, we need to fit 3x LLMs at peak on 1 GPU, just need to
+test the impl is working as intended.
 
 ### policy model: we will instruct SFT the GPT base model the same way as we did for ch7, no changes.
 
@@ -20,7 +20,8 @@ impl is working as intended.
       - we want the dataloader to ouput tuple `input, preferred, rejected = batch` and concat or input+pref & input+rej?
       **mask in the collate accordingly!**
     
-- ~~we will take the SFT policy model or base policy? (DeepseekMath is base for lower bias but doesn't really mater for the impl):~~
+- ~~we will take the SFT policy model or base policy? (DeepseekMath is base for lower bias but doesn't really mater for
+  the impl):~~
     - ~~change the output head FFN to project 1 scalar (reward score)~~
     - ~~change the loss function to BT model.~~
     - ~~training epochs?~~
@@ -34,8 +35,7 @@ impl is working as intended.
 - need a pipeline to dynamically append our response together then pad + batch & attn mask to return for feeding the
   reward model properly
 - we calculate the full trajectory reward of each sample (there is **no γ discounted future rewards decay**/time penalty
-  ) + the KL div is **NOT** applied to intermediate rewards nor the full
- reward!  
+  ) + the KL div is **NOT** applied to intermediate rewards nor the full reward!  
 - from each full reward, we then calculate their z-score, which will be our advantage functions for each trajectory.  
  **ie we do Outcome Supervision, not Process Supervision**, (no intermediate Advantage functions at each step.)
 - we clip our `advantage function * policy ratio` and then we apply KL div (via unbiased estimator (Schulman, 2020)) to
@@ -53,12 +53,23 @@ polishing:
     uses dropout.
 
 # FOR THE README
+- Start explaining how DeepSeek ended up with GRPO and its origins (PPO + REINFORCE with baseline version) and PPO
+  itself from TRPO...
 
-Concerning the choice of a reward model: Base vs SFT model.  
-Pros of Base is that you don't get that sweet SFT bias but since it's not SFT'd, the model will have to learn
+- explain we can reparametrize the KL div in terms of policy ratio, but we did use a dedicated KL div function.
+
+- Explain We chose Outcome Supervision with rewards but we can also do Process Supervision easily (explain how)
+
+- explain Concerning the choice of a reward model: Base vs SFT model.  
+
+  Pros of Base is that you don't get that sweet SFT bias but since it's not SFT'd, the model will have to learn
 instructions by itself, likely requiring more training that an SFT'd one.
 
-DeepSeek used a Base DeepSeekMath 7B model.
+  DeepSeek used a Base DeepSeekMath 7B model.
+
+- explain also in the README and not just in comments: that we could theoretically wouldn't need to put the policy in
+  eval mode for sampling as some models do not use dropout or BN thus `with torch_inference_mode():` will suffice. But
+  in the example I used GPT2 as policy which uses dropout.
 
 # Note
 
