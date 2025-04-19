@@ -82,4 +82,5 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 - vectorize MoE dispatching while keeping the code readable
 - reorganize activation and normalization functions in dedicated modules
 - better optim for classification: we use masks to retrieve the last valid token instead of slicing [:,-1,:]
+- add optional Conservative DPO option
 - nested TODOs
