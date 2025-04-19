@@ -25,7 +25,6 @@ tokenizer = tiktoken.get_encoding("gpt2")
 train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer)
 val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer)
 
-print(train_set[0])
 
 dpo_custom_collate = partial(
     custom_collate_fn,
@@ -54,8 +53,6 @@ val_loader = DataLoader(
     pin_memory=False,
 )
 
-test_batch = next(iter(train_loader))
-print("test_batch['chosen'].shape", test_batch["chosen"].shape)
 
 # --- model & optimizer ---
 model = GPTModel(model_cfg)
@@ -74,32 +71,30 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_dec
 #    eval_freq=10,
 # )
 
-## --- training loop ---
-# test_batch = next(iter(train_loader))
-# print("test_batch['chosen'].shape", test_batch["chosen"].shape)
-#
-# pref_mini_rewards = model(test_batch["chosen"])
-# reject_mini_rewards = model(test_batch["rejected"])
-#
-# print("pref_mini_rewards.shape", pref_mini_rewards.shape)
-#
-# pref_mask = test_batch["chosen_mask"].unsqueeze(-1)  # shape (b, s) -> (b, s, 1)
-# reject_mask = test_batch["rejected_mask"].unsqueeze(-1)
-# pref_mini_rewards *= pref_mask
-# reject_mini_rewards *= reject_mask
-#
-## --- mean pooling over the sequence length ---
-# num_valid_pref_tokens = pref_mask.sum(dim=1)  # we want to divide by the number of valid tokens
-# num_valid_reject_tokens = reject_mask.sum(dim=1)
-# pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens
-# reject_rewards = reject_mini_rewards.sum(dim=1) / num_valid_reject_tokens
-#
-# print("pref_rewards.shape", pref_rewards.shape)
-# print("pref_rewards", pref_rewards)
-#
-## shape (b,1) -> (b)
-# pref_rewards, reject_rewards = pref_rewards.squeeze(-1), reject_rewards.squeeze(-1)
-#
-# loss = bt_loss(pref_rewards, reject_rewards)
-#
-# print(loss)
+# --- training loop ---
+test_batch = next(iter(train_loader))
+print("test_batch['chosen'].shape", test_batch["chosen"].shape)
+
+pref_mini_rewards = model(test_batch["chosen"]).squeeze(-1)
+reject_mini_rewards = model(test_batch["rejected"]).squeeze(-1)
+
+print("pref_mini_rewards.shape", pref_mini_rewards.shape)
+
+pref_mask = test_batch["chosen_mask"]  # shape (b, s) -> (b, s, 1)
+reject_mask = test_batch["rejected_mask"]
+pref_mini_rewards *= pref_mask
+reject_mini_rewards *= reject_mask
+# --- mean pooling over the sequence length ---
+num_valid_pref_tokens = pref_mask.sum(dim=1)  # we want to divide by the number of valid tokens
+num_valid_reject_tokens = reject_mask.sum(dim=1)
+pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens
+reject_rewards = reject_mini_rewards.sum(dim=1) / num_valid_reject_tokens
+
+print("pref_rewards.shape", pref_rewards.shape)
+print("pref_rewards", pref_rewards)
+# shape (b,1) -> (b)
+pref_rewards, reject_rewards = pref_rewards, reject_rewards
+
+loss = bt_loss(pref_rewards, reject_rewards)
+
+print(loss)

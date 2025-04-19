@@ -1,5 +1,6 @@
 import tiktoken
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 import config
@@ -29,7 +30,7 @@ def bt_loss(chosen_logits, rejected_logits, beta=1.0):
     return loss.mean()
 
 
-# TODO update docstring
+# TODO update docstring, change reshaping rewards instead of masks
 def reward_model_training_eval_loop_simple(
     train_loader,
     val_loader,
@@ -101,7 +102,7 @@ def reward_model_training_eval_loop_simple(
             interval_correct_pred += (pref_rewards > rej_rewards).sum().item()
             interval_train_count += pref_rewards.shape[0]
 
-            # eval
+            # --- eval ---
             if step % eval_freq == 0:
                 # Calculate metrics for the interval
                 avg_interval_train_loss = interval_train_loss / eval_freq  # Avg loss per batch in interval
@@ -203,6 +204,64 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     }
 
 
+def z_score(rewards):
+    """
+    Compute the z-score of the rewards.
+    Args:
+        rewards (torch.Tensor): Tensor of shape (batch_size,) containing the rewards.
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size,) containing the z-scores.
+    """
+    return (rewards - rewards.mean()) / rewards.std()
+
+
+# TODO we will change batch["chosen"] to appropriate names when we do our own initial collate function
+def grpo_training_loop(
+    train_loader,
+    policy_model,
+    reward_model,
+    optimizer,
+    num_epoch,
+    num_samples,
+    policy_config,
+    device,
+):
+    for epoch in range(1, num_epoch + 1):
+        reference_model = policy_model
+        reference_model.eval()
+        policy_model.train()
+
+        for batch in train_loader:
+            responses = []
+
+            for i in range(num_samples):
+                torch.manual_seed(123 + i)
+                response = generate_loop(
+                    input=batch["chosen"],
+                    model=policy_model,
+                    max_gen=20,
+                    context_length=policy_config["context_length"],
+                    top_k=25,
+                    temp=1.4,
+                )
+                responses.append(response.squeeze(0).tolist())
+
+            collated_batch = response_collator(
+                responses,
+                len_prompt=len(batch["chosen"]),
+                pad_token_id=50256,
+                device=device,
+            )
+
+            # Reward model - retrieving advantages
+            # full reward = mean pooling over the sequence length (Outcome Supervision)
+            mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+            mini_rewards *= collated_batch["reward_masks"]
+            rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+            advantages = z_score(rewards)
+
+
 if __name__ == "__main__":
     settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
 
@@ -241,14 +300,29 @@ if __name__ == "__main__":
         [20, 21, 22, 90, 91, 922, 90],
     ]
 
-    print(text_to_ids("This is where it", tokenizer=tokenizer))
-
     collated_batch = response_collator(
         responses,
         len_prompt=3,
         pad_token_id=50256,
         device="cuda",
     )
-    print(collated_batch["padded_responses"])
-    print(collated_batch["reward_masks"])
-    print(collated_batch["attn_masks"])
+
+    reward_model_cfg = config.GPT_SMALL_CONFIG
+
+    reward_model = GPTModel(reward_model_cfg)
+    # changing the head to a single output linear layer: we want a scalar reward
+    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
+
+    # freeze model - make all layers non-trainable
+    for param in model.parameters():
+        param.requires_grad = False
+
+    reward_model.to(device)
+
+    pref_mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+    pref_mini_rewards *= collated_batch["reward_masks"]
+    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+
+    print(pref_rewards)
+
+    print(z_score(pref_rewards))
