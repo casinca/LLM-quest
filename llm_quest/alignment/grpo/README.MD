@@ -76,7 +76,7 @@ instructions by itself, likely requiring more training that an SFT'd one.
 - lets not get confused with DPO and preprocessing for the loss, here we're projecting to a single scalar, not a proba
   distrib over vocab size, thus there is not logits and label shifting.
 
-- **We use mean pooling for the full reward calculation for each trajectory. Even if we use outcome supervision.**
+- **We use mean pooling for the full reward calculation for each trajectory for outcome supervision.**
   Because in case of later implementation of Process supervision, mean pooling will be naturally compatible since we
   retrieve all mini rewards at each steps for each trajectory. If we had used last token only method, it wouldn't be
-  compatible.
+  compatible with process supervision, only outcome supervision.
