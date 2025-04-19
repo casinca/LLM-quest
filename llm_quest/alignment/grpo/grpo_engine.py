@@ -30,7 +30,7 @@ def bt_loss(chosen_logits, rejected_logits, beta=1.0):
     return loss.mean()
 
 
-# TODO update docstring, change reshaping rewards instead of masks
+# TODO update docstring + change reshaping rewards instead of masks
 def reward_model_training_eval_loop_simple(
     train_loader,
     val_loader,
@@ -207,6 +207,7 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
 def z_score(rewards):
     """
     Compute the z-score of the rewards.
+    This is the way DeepSeek calculate the learned advantages.
     Args:
         rewards (torch.Tensor): Tensor of shape (batch_size,) containing the rewards.
 
@@ -292,6 +293,7 @@ def grpo_training_loop(
         for batch in train_loader:
             responses = []
             policy_model.eval()
+            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
             # --- Sampling responses ---
             for i in range(num_samples):
@@ -306,7 +308,7 @@ def grpo_training_loop(
                     temp=1.4,
                 )
                 responses.append(response.squeeze(0).tolist())
-            # TODO don't forget to put back the policy model in train mode, it's in eval after the gen
+
             collated_batch = response_collator(
                 responses,
                 len_prompt=len(batch["chosen"]),
@@ -314,6 +316,7 @@ def grpo_training_loop(
                 device=device,
             )
 
+            policy_model.train()
             # --- Policy ratio ---
             policy_logprobs = log_probs_per_token(
                 logits=policy_model(collated_batch["padded_responses"]),
@@ -330,7 +333,7 @@ def grpo_training_loop(
             # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
             policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
 
-            # --- Reward model - retrieving advantages ---
+            # --- Reward model - retrieving learned advantages ---
             # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
             mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
             mini_rewards *= collated_batch["reward_masks"]
@@ -338,12 +341,15 @@ def grpo_training_loop(
             advantages = z_score(rewards)
 
             # --- GRPO loss ---
-            # KL divergence (could have also been reparametrized in terms of policy_ratio)
+            # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
             kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
-            surrogate_loss_per_token = policy_ratio_per_token * advantages
+            # (PyTorch will broadcast the advantages, for completeness unsqueeze to emphasize advantages aren't per tok)
+            surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
             clipped_surrogate_loss_per_token = torch.clip(surrogate_loss_per_token, min=1 - eps, max=1 + eps)
             grpo_loss_per_token = torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+            grpo_loss = grpo_loss_per_token.mean()
 
+            optimizer.zero_grad()
             grpo_loss.backward()
             optimizer.step()
 

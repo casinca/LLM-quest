@@ -48,6 +48,9 @@ impl is working as intended.
 polishing:
   - add `num_batch` and `eval_iter` for reward_model_evaluation()
   - unify training and val losses in evaluate
+  - explain that we could theoretically wouldn't need to put the policy in eval mode for sampling as some models do not
+    use dropout or BN thus `with torch_inference_mode():` will suffice. But in the example I used GPT2 as policy which
+    uses dropout.
 
 # FOR THE README
 
