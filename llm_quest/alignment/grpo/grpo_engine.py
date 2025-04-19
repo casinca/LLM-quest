@@ -216,6 +216,61 @@ def z_score(rewards):
     return (rewards - rewards.mean()) / rewards.std()
 
 
+def log_probs_per_token(logits, inputs, attention_mask=None):
+    """
+    Compute the log probabilities of the inputs given the logits.
+    This is similar to the static method compute_logprobs() in the DPOLoss class.
+
+    Args:
+        logits (torch.Tensor): Tensor of shape (batch_size, seq_len, vocab_size) containing the logits.
+        inputs (torch.Tensor): Tensor of shape (batch_size, seq_len) containing the generated tokens.
+        attention_mask (torch.Tensor, optional): Tensor of shape (batch_size, seq_len) containing the attention
+                                                mask. Defaults to None.
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size, seq_len1) containing the log probabilities.
+    """
+
+    logits = logits[:, :-1, :]
+    labels = inputs[:, 1:]
+
+    log_probs = F.log_softmax(logits, dim=-1)  # shape (b, s-1, v)
+
+    # retrieving the log probs assigned to each label
+    label_log_probs = torch.gather(
+        input=log_probs,
+        dim=-1,
+        index=labels.unsqueeze(-1),
+    ).squeeze_(-1)
+
+    if attention_mask is not None:
+        shifted_mask = attention_mask[:, 1:]
+        label_log_probs *= shifted_mask
+
+    return label_log_probs  # shape (b, s-1)
+
+
+def kl_div_per_token(policy_logprobs, reference_logprobs):
+    """
+    Compute the KL divergence between the policy and reference log probabilities.
+    Estimated with (Schulman, 2020) unbiased estimator:
+    D_KL(π_θ || π_ref) =
+    π_ref(y_i,t | x_i, y_i,<t) / π_θ(y_i,t | x_i, y_i,<t) -
+    log(π_ref(y_i,t | x_i, y_i,<t)/π_θ(y_i,t | x_i, y_i,<t)) - 1
+
+    Args:
+        policy_logprobs (torch.Tensor): Tensor of shape (batch_size, seq_len) containing the policy log probabilities.
+        reference_logprobs (torch.Tensor): Tensor of shape (batch_size, seq_len) containing the reference log probabilities.
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size, seq_len) containing the KL divergence.
+    """
+    ratio = torch.exp(reference_logprobs - policy_logprobs)
+    log_ratio = reference_logprobs - policy_logprobs
+
+    return ratio - log_ratio - 1
+
+
 # TODO we will change batch["chosen"] to appropriate names when we do our own initial collate function
 def grpo_training_loop(
     train_loader,
@@ -226,6 +281,8 @@ def grpo_training_loop(
     num_samples,
     policy_config,
     device,
+    eps=0.2,
+    beta=1.0,
 ):
     for epoch in range(1, num_epoch + 1):
         reference_model = policy_model
@@ -234,9 +291,12 @@ def grpo_training_loop(
 
         for batch in train_loader:
             responses = []
+            policy_model.eval()
 
+            # --- Sampling responses ---
             for i in range(num_samples):
                 torch.manual_seed(123 + i)
+
                 response = generate_loop(
                     input=batch["chosen"],
                     model=policy_model,
@@ -246,7 +306,7 @@ def grpo_training_loop(
                     temp=1.4,
                 )
                 responses.append(response.squeeze(0).tolist())
-
+            # TODO don't forget to put back the policy model in train mode, it's in eval after the gen
             collated_batch = response_collator(
                 responses,
                 len_prompt=len(batch["chosen"]),
@@ -254,12 +314,38 @@ def grpo_training_loop(
                 device=device,
             )
 
-            # Reward model - retrieving advantages
-            # full reward = mean pooling over the sequence length (Outcome Supervision)
+            # --- Policy ratio ---
+            policy_logprobs = log_probs_per_token(
+                logits=policy_model(collated_batch["padded_responses"]),
+                inputs=collated_batch["padded_responses"],
+                attention_mask=collated_batch["attn_masks"],
+            )
+            with torch.inference_mode():
+                reference_logprobs = log_probs_per_token(
+                    logits=reference_model(collated_batch["padded_responses"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+            # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
+            # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
+            policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
+
+            # --- Reward model - retrieving advantages ---
+            # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
             mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
             mini_rewards *= collated_batch["reward_masks"]
             rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
             advantages = z_score(rewards)
+
+            # --- GRPO loss ---
+            # KL divergence (could have also been reparametrized in terms of policy_ratio)
+            kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+            surrogate_loss_per_token = policy_ratio_per_token * advantages
+            clipped_surrogate_loss_per_token = torch.clip(surrogate_loss_per_token, min=1 - eps, max=1 + eps)
+            grpo_loss_per_token = torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+
+            grpo_loss.backward()
+            optimizer.step()
 
 
 if __name__ == "__main__":
