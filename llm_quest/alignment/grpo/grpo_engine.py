@@ -276,23 +276,51 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
 def grpo_training_loop(
     train_loader,
     policy_model,
+    reference_model,
     reward_model,
     optimizer,
     num_epoch,
     num_samples,
+    num_grad_updates,
     policy_config,
     device,
     eps=0.2,
     beta=1.0,
 ):
+    """
+    GRPO training loop.
+    Args:
+        train_loader (DataLoader): DataLoader providing batches of prompts.
+        policy_model (nn.Module): The language model being trained (policy π_θ).
+        reference_model (nn.Module): A copy of the policy model (π_ref/π_θ_old) used to compute:
+                                    - KL divergence (D_KL(π_ref || π_θ)).
+                                    - Policy ratio (π_θ/π_ref).
+                                    Its weights are periodically synchronized with the policy model.
+        reward_model (nn.Module): A model (r_𝜑) pretrained to predict rewards for completions (frozen).
+        optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
+        num_epoch (int): The total number of training epochs.
+        num_samples (int): The number of responses/samples to generate from the policy model from each prompt.
+        num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
+        policy_config (dict): Configuration dictionary for the policy model.
+        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
+                    trade-off between maximizing reward and staying close to the reference policy.
+
+    Returns:
+        TODO
+        None: The function modifies the `policy_model` in place.
+
+    """
+    reward_model.eval()
+
     for epoch in range(1, num_epoch + 1):
-        reference_model = policy_model
-        reference_model.eval()
-        policy_model.train()
 
         for batch in train_loader:
-            responses = []
+            reference_model.load_state_dict(policy_model.state_dict())
+            reference_model.eval()
             policy_model.eval()
+            responses = []
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
             # --- Sampling responses ---
@@ -316,42 +344,51 @@ def grpo_training_loop(
                 device=device,
             )
 
-            policy_model.train()
-            # --- Policy ratio ---
-            policy_logprobs = log_probs_per_token(
-                logits=policy_model(collated_batch["padded_responses"]),
-                inputs=collated_batch["padded_responses"],
-                attention_mask=collated_batch["attn_masks"],
-            )
             with torch.inference_mode():
+                # --- Reward model - retrieving learned advantages ---
+                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+                mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+                advantages = z_score(rewards)
+
+                # --- Policy ratio ---
                 reference_logprobs = log_probs_per_token(
                     logits=reference_model(collated_batch["padded_responses"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
-            # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
-            # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
-            policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
 
-            # --- Reward model - retrieving learned advantages ---
-            # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-            mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
-            mini_rewards *= collated_batch["reward_masks"]
-            rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-            advantages = z_score(rewards)
+            # Gradient updates loop
+            policy_model.train()
+            for j in range(num_grad_updates):
+                policy_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
 
-            # --- GRPO loss ---
-            # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
-            kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
-            # (PyTorch will broadcast the advantages, for completeness unsqueeze to emphasize advantages aren't per tok)
-            surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-            clipped_surrogate_loss_per_token = torch.clip(surrogate_loss_per_token, min=1 - eps, max=1 + eps)
-            grpo_loss_per_token = torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
-            grpo_loss = grpo_loss_per_token.mean()
+                # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
+                # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
+                policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
 
-            optimizer.zero_grad()
-            grpo_loss.backward()
-            optimizer.step()
+                # --- GRPO loss ---
+                # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
+                kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
+                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surrogate_loss_per_token = torch.clip(
+                    policy_ratio_per_token, min=1 - eps, max=1 + eps
+                ) * advantages.unsqueeze(-1)
+
+                grpo_loss_per_token = (
+                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+                )
+                grpo_loss = grpo_loss_per_token.mean()
+
+                optimizer.zero_grad()
+                grpo_loss.backward()
+                optimizer.step()
 
 
 if __name__ == "__main__":
