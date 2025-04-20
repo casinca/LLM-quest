@@ -101,7 +101,6 @@ class DeepSeekMoE(nn.Module):
 
         # process shared experts (always active)
         for expert in self.shared_experts:
-            # output += expert(x) * torch.sigmoid(self.shared_w)
             output += expert(x)
 
         # gating
@@ -120,8 +119,7 @@ class DeepSeekMoE(nn.Module):
             weight_mask = expert_idx == topk_idxs
             # mask for tokens assigned to the ith expert across all topk
             mask = weight_mask.any(dim=-1)  # shape (b, s, topk) → (b, s)
-            # print("MASK", mask.shape)
-            # print("test", (topk_idxs == expert_idx).shape)
+
             if mask.any():
                 # retrieving weights for the ith expert across all topk (summed)
                 # shape (b, s, topk) → (b, s)
@@ -130,7 +128,6 @@ class DeepSeekMoE(nn.Module):
                 # select tokens and weights using the same mask
                 # shape (b, s, emb_dim) → (num_selected_tokens, emb_dim)
                 selected_tokens = x[mask]
-                # print("selected_tokens", selected_tokens.shape)
                 # shape (b, s) → (num_selected_tokens) → (num_selected_tokens, 1) broadcast for elem-wise mult
                 selected_weights = expert_weights[mask].unsqueeze(-1)
 
