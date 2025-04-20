@@ -54,7 +54,7 @@ polishing:
 
 # FOR THE README
 - Start explaining how DeepSeek ended up with GRPO and its origins (PPO + REINFORCE with baseline version) and PPO
-  itself from TRPO...
+  itself from TRPO (novel by implementing KL div, which PPO simplified with clip surrogate objective)
 
 - explain we can reparametrize the KL div in terms of policy ratio, but we did use a dedicated KL div function.
 
