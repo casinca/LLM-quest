@@ -273,7 +273,7 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
 
 
 # TODO we will change batch["chosen"] to appropriate names when we do our own initial collate function
-def grpo_training_loop(
+def grpo_training_loop_single_prompt(
     train_loader,
     policy_model,
     reference_model,
@@ -288,7 +288,9 @@ def grpo_training_loop(
     beta=1.0,
 ):
     """
-    GRPO training loop.
+    This GRPO training loop processes generates multiple samples for a single prompt at a time.
+    It will only work for batch size = 1.
+
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
         policy_model (nn.Module): The language model being trained (policy π_θ).
@@ -317,6 +319,7 @@ def grpo_training_loop(
     for epoch in range(1, num_epoch + 1):
 
         for batch in train_loader:
+            print("start")
             reference_model.load_state_dict(policy_model.state_dict())
             reference_model.eval()
             policy_model.eval()
@@ -324,6 +327,7 @@ def grpo_training_loop(
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
             # --- Sampling responses ---
+            # simple sequential sampling for single prompt
             for i in range(num_samples):
                 torch.manual_seed(123 + i)
 
@@ -339,27 +343,26 @@ def grpo_training_loop(
 
             collated_batch = response_collator(
                 responses,
-                len_prompt=len(batch["chosen"]),
+                len_prompt=batch["chosen"].shape[-1],
                 pad_token_id=50256,
                 device=device,
             )
 
             with torch.inference_mode():
-                # --- Reward model - retrieving learned advantages ---
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-                advantages = z_score(rewards)
-
-                # --- Policy ratio ---
                 reference_logprobs = log_probs_per_token(
                     logits=reference_model(collated_batch["padded_responses"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
+                # --- Reward model - retrieving learned advantages ---
+                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+                mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
 
-            # Gradient updates loop
+            advantages = z_score(rewards)  # computing outside the inference scope
+
+            # --- Gradient updates loop ---
             policy_model.train()
             for j in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(

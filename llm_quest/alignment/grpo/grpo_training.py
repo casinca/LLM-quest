@@ -6,14 +6,14 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import grpo_training_loop
+from llm_quest.alignment.grpo.grpo_engine import grpo_training_loop_single_prompt
 from llm_quest.dataset import PreferenceDataset, custom_collate_fn
 from llm_quest.gpt.gpt_model import GPTModel
 
 # --- hyperparameters ---
 torch.manual_seed(123)
 gpt_config = config.GPT_SMALL_CONFIG
-batch_size = 8
+batch_size = 1
 lr = 1e-5
 weight_decay = 0.01
 num_epoch = 1
@@ -53,7 +53,7 @@ reference_model.to(model_device)
 
 optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay)
 
-grpo_training_loop(
+grpo_training_loop_single_prompt(
     train_loader=test_loader,
     policy_model=policy_model,
     reference_model=reference_model,

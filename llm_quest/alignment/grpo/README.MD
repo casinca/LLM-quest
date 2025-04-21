@@ -45,6 +45,25 @@ test the impl is working as intended.
 
 # TODO
 
+-  GRPO training loop sampling responses from single prompt at a time works ✅.
+
+- Multi prompt will require significant more work, both methods will handle parrallel generations:
+    - in both case, we will have to interleave the prompts (* num_samples) for efficient parallel generations.
+    - simple multi prompt (prompt + generated responses have the same length, assuming they are all prompt+max gen
+      length):
+        - We need to change the initial @rasbt collate func to also retrieve a mask for padded tokens only. the attn masks
+        currently mask padded tokens but also the prompt, which isn't good here. we just need to mask the padded tokens.
+        - need to see if rest of the loop works the same
+    
+    - multi prompt (prompt+ generated shouldn't have the same length)
+      - we need to redo the generation function from scratch... to handle variable parallel generations, shorter responses
+        are padded with eos tokens while generating longer responses.
+      - we also need to change the collate function same as simple multi prompt.
+      - will need to change the response collator?
+      - will probably need to rework the grpo training loop
+  
+- add docstrings to all functions
+
 polishing:
   - add `num_batch` and `eval_iter` for reward_model_evaluation()
   - unify training and val losses in evaluate
