@@ -310,7 +310,6 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
-# TODO we will change batch["chosen"] to appropriate names when we do our own initial collate function
 def grpo_training_loop_single_prompt(
     train_loader,
     policy_model,
@@ -326,7 +325,7 @@ def grpo_training_loop_single_prompt(
     beta=1.0,
 ):
     """
-    This GRPO training loop processes generates multiple samples for a single prompt at a time.
+    This GRPO training loop generates multiple samples for a single prompt at a time.
     It will only work for batch size = 1.
 
     Args:
