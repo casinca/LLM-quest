@@ -61,6 +61,8 @@ test the impl is working as intended.
       - we also need to change the collate function same as simple multi prompt.
       - will need to change the response collator?
       - will probably need to rework the grpo training loop
+
+- all GRPOs, constraint the loss only on reward mask/generated tokens and not prompt+generated tokens.
   
 - add docstrings to all functions
 

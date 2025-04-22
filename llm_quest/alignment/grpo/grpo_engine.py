@@ -242,6 +242,28 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     }
 
 
+def batched_response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
+    """
+    Prepare masks of multi prompts+ sampled responses preparing them for the reward model.
+    Since we are generating responses in parallel, we don't need to pad anything, the generated tensor is already
+    padded, we just need to prepare the masks.
+    """
+    b, max_len = responses.shape
+
+    attn_masks = torch.ones(b, max_len, dtype=torch.bool)
+    attn_masks[:, :len_prompt] = False
+
+    reward_masks = torch.ones(b, max_len, dtype=torch.bool)
+    reward_masks[:, :len_prompt] = False
+    reward_masks[:, len_prompt:] = responses[:, len_prompt:] != pad_token_id
+
+    return {
+        "padded_responses": responses.to(device),
+        "reward_masks": reward_masks.to(device),
+        "attn_masks": attn_masks.to(device),
+    }
+
+
 def z_score(rewards):
     """
     Compute the z-score of the rewards.
@@ -395,7 +417,129 @@ def grpo_training_loop_single_prompt(
                 # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
                 mini_rewards = reward_model(
                     collated_batch["padded_responses"],
-                    attn_mask=collated_batch["attn_masks"],
+                    collated_batch["attn_masks"],
+                ).squeeze(-1)
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+
+            advantages = z_score(rewards)  # computing outside the inference scope for grads
+
+            # --- Gradient updates loop ---
+            policy_model.train()
+            for j in range(num_grad_updates):
+                policy_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+
+                # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
+                # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
+                policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
+
+                # --- GRPO loss ---
+                # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
+                kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
+                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surrogate_loss_per_token = torch.clip(
+                    policy_ratio_per_token, min=1 - eps, max=1 + eps
+                ) * advantages.unsqueeze(-1)
+
+                grpo_loss_per_token = (
+                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+                )
+                grpo_loss = grpo_loss_per_token.mean()
+
+                optimizer.zero_grad()
+                grpo_loss.backward()
+                optimizer.step()
+
+
+def grpo_training_loop(
+    train_loader,
+    policy_model,
+    reference_model,
+    reward_model,
+    optimizer,
+    num_epoch,
+    num_samples,
+    num_grad_updates,
+    policy_config,
+    device,
+    eps=0.2,
+    beta=1.0,
+):
+    """
+    This GRPO training loop generates multiple samples for a single prompt at a time.
+    It will only work for batch size = 1.
+
+    Args:
+        train_loader (DataLoader): DataLoader providing batches of prompts.
+        policy_model (nn.Module): The language model being trained (policy π_θ).
+        reference_model (nn.Module): A copy of the policy model (π_ref/π_θ_old) used to compute:
+                                    - KL divergence (D_KL(π_ref || π_θ)).
+                                    - Policy ratio (π_θ/π_ref).
+                                    Its weights are periodically synchronized with the policy model.
+        reward_model (nn.Module): A model (r_𝜑) pretrained to predict rewards for completions (frozen).
+        optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
+        num_epoch (int): The total number of training epochs.
+        num_samples (int): The number of responses/samples to generate from the policy model from each prompt.
+        num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
+        policy_config (dict): Configuration dictionary for the policy model.
+        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
+                    trade-off between maximizing reward and staying close to the reference policy.
+
+    Returns:
+        TODO
+        None: The function modifies the `policy_model` in place.
+
+    """
+    reward_model.eval()
+
+    for epoch in range(1, num_epoch + 1):
+
+        for batch in train_loader:
+            print("start")
+            reference_model.load_state_dict(policy_model.state_dict())
+            reference_model.eval()
+            policy_model.eval()
+            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
+
+            torch.manual_seed(123)
+            dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
+            # --- Sampling responses ---
+            # simple sequential sampling for single prompt
+
+            responses = generate_loop(
+                input=dup_prompts,
+                model=policy_model,
+                max_gen=20,
+                context_length=policy_config["context_length"],
+                top_k=25,
+                temp=0,
+            )
+
+            collated_batch = batched_response_collator(
+                responses,
+                len_prompt=batch["padded_prompts"].shape[-1],
+                pad_token_id=50256,
+                device=device,
+            )
+
+            with torch.inference_mode():
+                reference_logprobs = log_probs_per_token(
+                    logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+                # --- Reward model - retrieving learned advantages ---
+                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+                mini_rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    collated_batch["attn_masks"],
                 ).squeeze(-1)
                 mini_rewards *= collated_batch["reward_masks"]
                 rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
@@ -464,21 +608,30 @@ if __name__ == "__main__":
     #        )
     #        responses.append(response.squeeze(0).tolist())
 
-    responses = [
-        [20, 21, 22, 50, 12],
-        [20, 21, 22, 34, 61, 62, 91],
-        [20, 21, 22, 50, 24, 62, 1],
-        [40, 41, 50256, 70, 71],
-        [40, 41, 50256, 80, 81, 83, 84],
-        [40, 41, 50256, 90, 91, 922, 90],
-    ]
+    responses = torch.tensor(
+        [
+            [20, 21, 22, 50, 50256, 50256],
+            [20, 21, 22, 34, 61, 62],
+            [20, 21, 22, 50, 24, 62],
+            [40, 41, 50256, 70, 71, 50256],
+            [40, 41, 50256, 80, 81, 83],
+            [40, 41, 50256, 90, 91, 92],
+        ]
+    )
 
-    collated_batch = response_collator(
+    collated_batch = batched_response_collator(
         responses,
         len_prompt=3,
         pad_token_id=50256,
         device="cuda",
     )
+
+    # collated_batch = response_collator(
+    #    responses,
+    #    len_prompt=3,
+    #    pad_token_id=50256,
+    #    device="cuda",
+    # )
 
     print(collated_batch["padded_responses"])
     print(collated_batch["reward_masks"])
