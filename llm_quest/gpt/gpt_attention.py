@@ -146,7 +146,12 @@ class MultiHeadAttention(nn.Module):
         self.att_scaling = self.head_dim**-0.5
         self.out_proj = nn.Linear(d_out, d_out)  # optional additional learnable params for the output
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
+        """
+        args:
+            x: (b, seq_len, d_in)
+            attn_mask (optional): (b, seq_len) used for padding tokens
+        """
         queries = self.w_queries(x)  # shape (b, s, d_out) aka augmented emb dim if d_out > d_in
         keys = self.w_keys(x)
         values = self.w_values(x)
@@ -168,6 +173,9 @@ class MultiHeadAttention(nn.Module):
         scaled_att_scores = att_scores * self.att_scaling
         # masking in place and normalizing with softmax
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)
+        if attn_mask is not None:
+            attn_mask = attn_mask.view(b, 1, 1, seq_len)  # reshaping to match att_scores shape
+            scaled_att_scores.masked_fill_(~attn_mask, -torch.inf)  # mask where attn_mask is False
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
         att_weights = self.dropout(att_weights)  # reg
 
