@@ -387,13 +387,16 @@ def grpo_training_loop_single_prompt(
 
             with torch.inference_mode():
                 reference_logprobs = log_probs_per_token(
-                    logits=reference_model(collated_batch["padded_responses"]),
+                    logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
                 # --- Reward model - retrieving learned advantages ---
                 # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+                mini_rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    attn_mask=collated_batch["attn_masks"],
+                ).squeeze(-1)
                 mini_rewards *= collated_batch["reward_masks"]
                 rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
 
@@ -403,7 +406,7 @@ def grpo_training_loop_single_prompt(
             policy_model.train()
             for j in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
-                    logits=policy_model(collated_batch["padded_responses"]),
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
