@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 import config
 from gpt_download import download_and_load_gpt2
+from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.generate import generate_loop
 from llm_quest.gpt.gpt_model import GPTModel
 from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
@@ -162,6 +163,43 @@ def evaluate_reward_model(val_loader, reward_model):
     return avg_loss, avg_acc
 
 
+def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
+    """
+    Collate prompts into a single tensor, preparing them for the policy model sample generations.
+
+    Args:
+        prompts (List[dict]): This should be a list of dicts from the preferenceDataset class with key "prompt".
+        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
+        custom_max_length (int, optional): Maximum length of the padded sequences.
+        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
+
+    Returns:
+    """
+
+    max_length = max(len(item["prompt"]) + 1 for item in prompts)
+    if custom_max_length is not None:
+        max_length = min(max_length, custom_max_length)
+
+    padded_prompts = []
+    prompt_masks = []
+
+    for item in prompts:
+        prompt_len = len(item["prompt"])
+        padded_prompt = item["prompt"] + [pad_token_id] * (max_length - prompt_len)
+        prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
+
+        padded_prompts.append(padded_prompt)
+        prompt_masks.append(prompt_mask)
+
+    padded_prompts = torch.tensor(padded_prompts)
+    prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
+
+    return {
+        "padded_prompts": padded_prompts.to(device),
+        "prompt_masks": prompt_masks.to(device),
+    }
+
+
 def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     """
     Collate sampled responses into a single tensor, preparing them for the reward model.
@@ -178,7 +216,7 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
             reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
             attn_masks: Boolean tensor of the same shape with masked: padding tokens.
     """
-    max_len = max(len(response) for response in responses)
+    max_len = max(len(response) + 1 for response in responses)
     padded_responses = []
     reward_masks = []
     attn_masks = []
@@ -332,7 +370,7 @@ def grpo_training_loop_single_prompt(
                 torch.manual_seed(123 + i)
 
                 response = generate_loop(
-                    input=batch["chosen"],
+                    input=batch["padded_prompts"],
                     model=policy_model,
                     max_gen=20,
                     context_length=policy_config["context_length"],
@@ -343,7 +381,7 @@ def grpo_training_loop_single_prompt(
 
             collated_batch = response_collator(
                 responses,
-                len_prompt=batch["chosen"].shape[-1],
+                len_prompt=batch["padded_prompts"].shape[-1],
                 pad_token_id=50256,
                 device=device,
             )
@@ -395,22 +433,22 @@ def grpo_training_loop_single_prompt(
 
 
 if __name__ == "__main__":
-    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
-
-    tokenizer = tiktoken.get_encoding("gpt2")
-    model_settings = config.config_creator("gpt_s")
-    torch.manual_seed(123)
-
-    device = "cuda"
-    model = GPTModel(model_settings)
-    model.eval()
-
-    load_weights_into_gpt(model, params)
-
-    model.to(device)  # we move the model to GPU *after* loading weights
-
-    num_samples = 5
-    responses = []
+    #    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
+    #
+    #    tokenizer = tiktoken.get_encoding("gpt2")
+    #    model_settings = config.config_creator("gpt_s")
+    #    torch.manual_seed(123)
+    #
+    #    device = "cuda"
+    #    model = GPTModel(model_settings)
+    #    model.eval()
+    #
+    #    load_weights_into_gpt(model, params)
+    #
+    #    model.to(device)  # we move the model to GPU *after* loading weights
+    #
+    #    num_samples = 5
+    #    responses = []
 
     #    for i in range(num_samples):
     #        torch.manual_seed(123 + i)
@@ -425,11 +463,12 @@ if __name__ == "__main__":
     #        responses.append(response.squeeze(0).tolist())
 
     responses = [
-        [20, 21, 22, 50, 51, 5250, 51, 52],
-        [20, 21, 22, 60, 61, 62],
-        [20, 21, 22, 70, 71, 7270, 71, 7270, 71, 72],
-        [20, 21, 22, 80, 81, 82],
-        [20, 21, 22, 90, 91, 922, 90],
+        [20, 21, 22, 50, 12],
+        [20, 21, 22, 34, 61, 62, 91],
+        [20, 21, 22, 50, 24, 62, 1],
+        [40, 41, 50256, 70, 71],
+        [40, 41, 50256, 80, 81, 83, 84],
+        [40, 41, 50256, 90, 91, 922, 90],
     ]
 
     collated_batch = response_collator(
@@ -439,22 +478,26 @@ if __name__ == "__main__":
         device="cuda",
     )
 
-    reward_model_cfg = config.GPT_SMALL_CONFIG
+    print(collated_batch["padded_responses"])
+    print(collated_batch["reward_masks"])
+    print(collated_batch["attn_masks"])
 
-    reward_model = GPTModel(reward_model_cfg)
-    # changing the head to a single output linear layer: we want a scalar reward
-    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
-
-    # freeze model - make all layers non-trainable
-    for param in model.parameters():
-        param.requires_grad = False
-
-    reward_model.to(device)
-
-    pref_mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
-    pref_mini_rewards *= collated_batch["reward_masks"]
-    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-
-    print(pref_rewards)
-
-    print(z_score(pref_rewards))
+#    reward_model_cfg = config.GPT_SMALL_CONFIG
+#
+#    reward_model = GPTModel(reward_model_cfg)
+#    # changing the head to a single output linear layer: we want a scalar reward
+#    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
+#
+#    # freeze model - make all layers non-trainable
+#    for param in model.parameters():
+#        param.requires_grad = False
+#
+#    reward_model.to(device)
+#
+#    pref_mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
+#    pref_mini_rewards *= collated_batch["reward_masks"]
+#    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+#
+#    print(pref_rewards)
+#
+#    print(z_score(pref_rewards))
