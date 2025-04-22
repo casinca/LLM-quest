@@ -117,14 +117,18 @@ class TransformerBlock(nn.Module):
         self.ffn = FFN(cfg)
         self.dropout = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x):
+    def forward(self, x, attn_mask=None):
         """
         This is a pre-LN arch, contrary to the original paper on transformers (which is post-LN)
         Somehow GPT paper has a post-LN fig.1 but OpenAI impl is pre-LN
+
+        Args:
+            x: Input tensor of shape (b, seq_len, emb_dim)
+            attn_mask: Optional attention mask of shape (b, seq_len)
         """
         residual = x
         x = self.ln_1(x)
-        x = self.att(x)
+        x = self.att(x, attn_mask)
         x = self.dropout(x)
         x = x + residual
         residual = x
