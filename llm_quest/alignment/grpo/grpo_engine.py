@@ -251,7 +251,7 @@ def batched_response_collator(responses, len_prompt, pad_token_id=50256, device=
     b, max_len = responses.shape
 
     attn_masks = torch.ones(b, max_len, dtype=torch.bool)
-    attn_masks[:, :len_prompt] = False
+    attn_masks = responses != pad_token_id
 
     reward_masks = torch.ones(b, max_len, dtype=torch.bool)
     reward_masks[:, :len_prompt] = False
@@ -583,6 +583,8 @@ def grpo_training_loop(
                 grpo_loss.backward()
                 optimizer.step()
 
+            print(grpo_loss)
+
 
 if __name__ == "__main__":
     #    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
@@ -643,22 +645,23 @@ if __name__ == "__main__":
     print(collated_batch["reward_masks"])
     print(collated_batch["attn_masks"])
 
-#    reward_model_cfg = config.GPT_SMALL_CONFIG
-#
-#    reward_model = GPTModel(reward_model_cfg)
-#    # changing the head to a single output linear layer: we want a scalar reward
-#    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
-#
-#    # freeze model - make all layers non-trainable
-#    for param in model.parameters():
-#        param.requires_grad = False
-#
-#    reward_model.to(device)
-#
-#    pref_mini_rewards = reward_model(collated_batch["padded_responses"]).squeeze(-1)
-#    pref_mini_rewards *= collated_batch["reward_masks"]
-#    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-#
-#    print(pref_rewards)
-#
-#    print(z_score(pref_rewards))
+    device = "cuda"
+    torch.manual_seed(123)
+    reward_model_cfg = config.GPT_SMALL_CONFIG
+
+    reward_model = GPTModel(reward_model_cfg)
+    # changing the head to a single output linear layer: we want a scalar reward
+    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
+
+    # freeze model - make all layers non-trainable
+    reward_model.eval()
+
+    reward_model.to(device)
+
+    pref_mini_rewards = reward_model(collated_batch["padded_responses"], collated_batch["attn_masks"]).squeeze(-1)
+    pref_mini_rewards *= collated_batch["reward_masks"]
+    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+
+    print(pref_rewards)
+
+    print(z_score(pref_rewards))
