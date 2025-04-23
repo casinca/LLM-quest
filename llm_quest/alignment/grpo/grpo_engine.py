@@ -583,8 +583,6 @@ def grpo_training_loop(
                 grpo_loss.backward()
                 optimizer.step()
 
-            print(grpo_loss)
-
 
 if __name__ == "__main__":
     #    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
@@ -641,27 +639,27 @@ if __name__ == "__main__":
     #    device="cuda",
     # )
 
-    print(collated_batch["padded_responses"])
-    print(collated_batch["reward_masks"])
-    print(collated_batch["attn_masks"])
-
-    device = "cuda"
-    torch.manual_seed(123)
-    reward_model_cfg = config.GPT_SMALL_CONFIG
-
-    reward_model = GPTModel(reward_model_cfg)
-    # changing the head to a single output linear layer: we want a scalar reward
-    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
-
-    # freeze model - make all layers non-trainable
-    reward_model.eval()
-
-    reward_model.to(device)
-
-    pref_mini_rewards = reward_model(collated_batch["padded_responses"], collated_batch["attn_masks"]).squeeze(-1)
-    pref_mini_rewards *= collated_batch["reward_masks"]
-    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-
-    print(pref_rewards)
-
-    print(z_score(pref_rewards))
+#    print(collated_batch["padded_responses"])
+#    print(collated_batch["reward_masks"])
+#    print(collated_batch["attn_masks"])
+#
+#    device = "cuda"
+#    torch.manual_seed(123)
+#    reward_model_cfg = config.GPT_SMALL_CONFIG
+#
+#    reward_model = GPTModel(reward_model_cfg)
+#    # changing the head to a single output linear layer: we want a scalar reward
+#    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
+#
+#    # freeze model - make all layers non-trainable
+#    reward_model.eval()
+#
+#    reward_model.to(device)
+#
+#    pref_mini_rewards = reward_model(collated_batch["padded_responses"], collated_batch["attn_masks"]).squeeze(-1)
+#    pref_mini_rewards *= collated_batch["reward_masks"]
+#    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+#
+#    print(pref_rewards)
+#
+#    print(z_score(pref_rewards))
