@@ -289,7 +289,7 @@ def log_probs_per_token(logits, inputs, attention_mask=None):
                                                 mask. Defaults to None.
 
     Returns:
-        torch.Tensor: Tensor of shape (batch_size, seq_len1) containing the log probabilities.
+        torch.Tensor: Tensor of shape (batch_size, seq_len-1) containing the log probabilities.
     """
 
     logits = logits[:, :-1, :]
@@ -449,7 +449,10 @@ def grpo_training_loop_single_prompt(
                 grpo_loss_per_token = (
                     torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
                 )
-                grpo_loss = grpo_loss_per_token.mean()
+                # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
+                loss_mask = collated_batch["reward_masks"][:, 1:]
+                grpo_loss_per_token *= loss_mask
+                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
 
                 optimizer.zero_grad()
                 grpo_loss.backward()
@@ -571,7 +574,10 @@ def grpo_training_loop(
                 grpo_loss_per_token = (
                     torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
                 )
-                grpo_loss = grpo_loss_per_token.mean()
+                # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
+                loss_mask = collated_batch["reward_masks"][:, 1:]
+                grpo_loss_per_token *= loss_mask
+                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
 
                 optimizer.zero_grad()
                 grpo_loss.backward()
