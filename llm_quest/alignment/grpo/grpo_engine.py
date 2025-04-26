@@ -2,6 +2,8 @@ import tiktoken
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import config
 from gpt_download import download_and_load_gpt2
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.generate import generate_loop
@@ -130,7 +132,6 @@ def reward_model_training_eval_loop_simple(
 
 
 def evaluate_reward_model(val_loader, reward_model):
-    
     """
     Evaluate the reward model on the validation set.
 
@@ -143,7 +144,7 @@ def evaluate_reward_model(val_loader, reward_model):
             - avg_loss (float): The average loss over the validation set.
             - avg_acc (float): The average accuracy over the validation set (proportion of batches where chosen reward > rejected reward).
     """
-    
+
     total_loss = 0.0
     correct = 0
     count = 0

@@ -45,26 +45,28 @@ test the impl is working as intended.
 
 # TODO
 
--  GRPO training loop sampling responses from single prompt at a time works ✅.
+~~-  GRPO training loop sampling responses from single prompt at a time works ✅.~~
 
-- Multi prompt will require significant more work, both methods will handle parrallel generations:
-    - in both case, we will have to interleave the prompts (* num_samples) for efficient parallel generations.
-    - simple multi prompt (prompt + generated responses have the same length, assuming they are all prompt+max gen
+- ~~Multi prompt will require significant more work, both methods will handle parrallel generations:~~
+    - ~~in both case, we will have to interleave the prompts (* num_samples) for efficient parallel generations.~~
+    - ~~simple multi prompt (prompt + generated responses have the same length, assuming they are all prompt+max gen~~
       length):
-        - We need to change the initial @rasbt collate func to also retrieve a mask for padded tokens only. the attn masks
-        currently mask padded tokens but also the prompt, which isn't good here. we just need to mask the padded tokens.
-        - need to see if rest of the loop works the same
+        - ~~We need to change the initial @rasbt collate func to also retrieve a mask for padded tokens only. the attn masks
+        currently mask padded tokens but also the prompt, which isn't good here. we just need to mask the padded tokens.~~
+        - ~~need to see if rest of the loop works the same~~
     
     - multi prompt (prompt+ generated shouldn't have the same length)
       - we need to redo the generation function from scratch... to handle variable parallel generations, shorter responses
         are padded with eos tokens while generating longer responses.
-      - we also need to change the collate function same as simple multi prompt.
-      - will need to change the response collator?
-      - will probably need to rework the grpo training loop
+      - ~~we also need to change the collate function same as simple multi prompt~~.
+      - ~~will need to change the response collator?~~
+      - ~~will probably need to rework the grpo training loop~~
 
-- all GRPOs, constraint the loss only on reward mask/generated tokens and not prompt+generated tokens.
+~~- all GRPOs, constrain the loss only on reward mask/generated tokens and not prompt+generated tokens.~~
   
 - add docstrings to all functions
+- clean up the test code + comments
+- README
 
 polishing:
   - add `num_batch` and `eval_iter` for reward_model_evaluation()
@@ -72,6 +74,7 @@ polishing:
   - explain that we could theoretically wouldn't need to put the policy in eval mode for sampling as some models do not
     use dropout or BN thus `with torch_inference_mode():` will suffice. But in the example I used GPT2 as policy which
     uses dropout.
+  - add Process Supervision?
 
 # FOR THE README
 - Start explaining how DeepSeek ended up with GRPO and its origins (PPO + REINFORCE with baseline version) and PPO
@@ -81,12 +84,12 @@ polishing:
 
 - Explain We chose Outcome Supervision with rewards but we can also do Process Supervision easily (explain how)
 
-- explain Concerning the choice of a reward model: Base vs SFT model.  
+- ~~explain Concerning the choice of a reward model: Base vs SFT model.~~
 
-  Pros of Base is that you don't get that sweet SFT bias but since it's not SFT'd, the model will have to learn
-instructions by itself, likely requiring more training that an SFT'd one.
+  ~~Pros of Base is that you don't get that sweet SFT bias but since it's not SFT'd, the model will have to learn
+instructions by itself, likely requiring more training that an SFT'd one.~~
 
-  DeepSeek used a Base DeepSeekMath 7B model.
+  ~~DeepSeek used a Base DeepSeekMath 7B model.~~
 
 - explain also in the README and not just in comments: that we could theoretically wouldn't need to put the policy in
   eval mode for sampling as some models do not use dropout or BN thus `with torch_inference_mode():` will suffice. But
@@ -94,8 +97,8 @@ instructions by itself, likely requiring more training that an SFT'd one.
 
 # Note
 
-- lets not get confused with DPO and preprocessing for the loss, here we're projecting to a single scalar, not a proba
-  distrib over vocab size, thus there is not logits and label shifting.
+- lets not get confused with DPO and preprocessing for the reward model loss, here we're projecting to a single scalar,
+  not a proba distrib over vocab size, thus there is not logits and label shifting.
 
 - **We use mean pooling for the full reward calculation for each trajectory for outcome supervision.**
   Because in case of later implementation of Process supervision, mean pooling will be naturally compatible since we
