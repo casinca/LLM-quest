@@ -2,8 +2,6 @@ import tiktoken
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import config
 from gpt_download import download_and_load_gpt2
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.generate import generate_loop
@@ -15,6 +13,7 @@ def bt_loss(chosen_logits, rejected_logits, beta=1.0):
     """
     Compute the Bradley-Terry loss between chosen and rejected logits.
     This is the equivalent of the BCE loss, see dpo README equations 8 and 9.
+    This is the loss used for the reward model training
 
     Args:
         chosen_logits (torch.Tensor): Logits of the chosen response. Shape: (batch_size)
@@ -44,17 +43,18 @@ def reward_model_training_eval_loop_simple(
     beta=0.1,
 ):
     """
-    A simple training and evaluation loop for a model.
+    A simple training and evaluation loop for the reward model.
 
     Args:
-        train_loader (DataLoader): DataLoader containing training data batches
-        val_loader (DataLoader): DataLoader containing validation data batches
-        reward_model (nn.Module): The model to train
-        optimizer (torch.optim.Optimizer): Optimizer for model parameter updates
-        num_epoch (int): Number of epochs to train for
-        eval_freq (int): Number of steps between evaluations
-        eval_iter (int): Number of batches to use during evaluation
-        device (torch.device): Device to run training on (cuda/cpu)
+        train_loader (DataLoader): DataLoader for training data batches.
+        val_loader (DataLoader): DataLoader for validation data batches.
+        reward_model (nn.Module): The reward model to train. It should output token-level rewards.
+        optimizer (torch.optim.Optimizer): Optimizer for the reward model parameters.
+        num_epoch (int): Total number of epochs to train for.
+        eval_freq (int): Frequency (in training steps) at which to perform evaluation.
+        eval_iter (int, optional): Number of batches to use for evaluation. If None, uses all batches in `val_loader`. Defaults to None.
+        device (torch.device, optional): Device to run training on (e.g., 'cuda', 'cpu'). Note: This parameter is currently not used internally as data loading handles device placement. Defaults to None.
+        beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 0.1.
     """
     step = 0
     interval_train_loss = 0.0
@@ -130,9 +130,20 @@ def reward_model_training_eval_loop_simple(
 
 
 def evaluate_reward_model(val_loader, reward_model):
+    
     """
     Evaluate the reward model on the validation set.
+
+    Args:
+        val_loader (DataLoader): DataLoader providing batches of chosen and rejected responses.
+        reward_model (nn.Module): The reward model being evaluated.
+
+    Returns:
+        tuple: A tuple containing:
+            - avg_loss (float): The average loss over the validation set.
+            - avg_acc (float): The average accuracy over the validation set (proportion of batches where chosen reward > rejected reward).
     """
+    
     total_loss = 0.0
     correct = 0
     count = 0
@@ -140,16 +151,18 @@ def evaluate_reward_model(val_loader, reward_model):
     reward_model.eval()
     with torch.inference_mode():
         for batch in val_loader:
-            pref_mini_rewards = reward_model(batch["chosen"])
-            rej_mini_rewards = reward_model(batch["rejected"])
+            # shape (b, s, 1) → (b, s)
+            pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
+            rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
 
-            pref_mask = batch["chosen_mask"].unsqueeze(-1)
-            rej_mask = batch["rejected_mask"].unsqueeze(-1)
+            # shape (b, s)
+            pref_mask = batch["chosen_mask"]
+            rej_mask = batch["rejected_mask"]
 
             pref_reward = (pref_mini_rewards * pref_mask).sum(dim=1) / pref_mask.sum(dim=1)
             rej_reward = (rej_mini_rewards * rej_mask).sum(dim=1) / rej_mask.sum(dim=1)
 
-            loss = bt_loss(pref_reward.squeeze(-1), rej_reward.squeeze(-1))
+            loss = bt_loss(pref_reward, rej_reward)
             total_loss += loss.item()
 
             # count the number of correct predictions
@@ -165,15 +178,17 @@ def evaluate_reward_model(val_loader, reward_model):
 
 def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
     """
-    Collate prompts into a single tensor, preparing them for the policy model sample generations.
+    Initial Collate function to pad prompts into a single tensor, preparing them for the policy model sample generations.
 
     Args:
-        prompts (List[dict]): This should be a list of dicts from the preferenceDataset class with key "prompt".
+        prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt" whose value is a list of token IDs (int).
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        custom_max_length (int, optional): Maximum length of the padded sequences.
+        custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length is determined by the longest prompt in the batch.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
 
-    Returns:
+        Dict[str, torch.Tensor]: A dictionary containing:
+            padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
+            prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
     """
 
     max_length = max(len(item["prompt"]) + 1 for item in prompts)
