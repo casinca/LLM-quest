@@ -15,8 +15,7 @@ This is basically (for people familiar with Quant finance) the z-score of each r
 
 - The KL divergence is estimated with [(Schulman, 2020) unbiased estimator](http://joschu.net/blog/kl-approx.html)
 
-  $$𝔻_{KL}[\pi_\theta || \pi_{ref}] = \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})}
-  - \log \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})} - 1$$
+  $$𝔻_{KL}[\pi_\theta || \pi_{ref}] = \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})} - \log \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})} - 1$$
 
   Probability ratios for each/ $t$-th token of each/  $i$-th trajectory given the prompt $x$ and
   previous $t$ tokens in that trajectory, between the reference $\pi_{ref}$ and policy model $\pi_{\theta}$ (more details in
