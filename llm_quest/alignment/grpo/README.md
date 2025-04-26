@@ -15,8 +15,8 @@ This is basically (for people familiar with Quant finance) the z-score of each r
 
 - The KL divergence is estimated with [(Schulman, 2020) unbiased estimator](http://joschu.net/blog/kl-approx.html)
 
-  $$\mathbb{D}_{KL}[\pi_\theta || \pi_{ref}] = \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})}
-  - \log \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})} - 1,$$
+  $$𝔻_{KL}[\pi_\theta || \pi_{ref}] = \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})}
+  - \log \frac{\pi_{ref}(y_{i,t} | x, y_{i,<t})}{\pi_\theta(y_{i,t} | x, y_{i,<t})} - 1$$
 
   Probability ratios for each/ $t$-th token of each/  $i$-th trajectory given the prompt $x$ and
   previous $t$ tokens in that trajectory, between the reference $\pi_{ref}$ and policy model $\pi_{\theta}$ (more details in
@@ -45,7 +45,7 @@ This is basically (for people familiar with Quant finance) the z-score of each r
     - Pretrained on a preference (pref/rej pairs) dataset, with the output head changed to 
     $W \in \mathbb{R}^{d_{out} \times 1}$ for a single scalar reward, aimed at minimizing the Bradley-Terry loss 
     $\mathcal{L}(\phi) = - \log \sigma(R_\phi(p, r_{\text{pref}}) - R_\phi(p, r_{\text{rej}}))$.  
-      $r_{\phi}$ is used to compute the mini rewards/per tokens of each trajectory of $\pi_{\theta}$'s responses.
+      $r_{\phi}$ is used to compute the mini rewards/per tokens of each $\pi_{\theta}$'s generated trajectory.
 
 
 TODO
