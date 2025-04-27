@@ -363,8 +363,10 @@ def grpo_training_loop_single_prompt(
     beta=1.0,
 ):
     """
+    Earliest version for reference.
     This GRPO training loop generates multiple samples for a single prompt at a time.
     It will only work for batch size = 1.
+
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
@@ -475,7 +477,7 @@ def grpo_training_loop_single_prompt(
                 optimizer.step()
 
 
-def grpo_training_loop(
+def deprecated_grpo_training_loop_variant(
     train_loader,
     policy_model,
     reference_model,
@@ -490,8 +492,14 @@ def grpo_training_loop(
     beta=1.0,
 ):
     """
-    This GRPO training loop generates multiple samples for a single prompt at a time.
-    It will only work for batch size = 1.
+    This was actually my initial GRPO training loop attempt, and wasn't true to the GRPO paper, I kept it for
+    reference as:
+        This update the reference model per episode/batch instead of the classic "per outer loop iteration" from the
+        original paper. "This way we can use a single model for both π_ref and π_θ_old."
+
+    The drawback is that its anchor role isn't as strong, since the π_ref is updated every batch.
+
+
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
@@ -580,6 +588,253 @@ def grpo_training_loop(
 
                 # --- GRPO loss ---
                 # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
+                kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
+                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surrogate_loss_per_token = torch.clip(
+                    policy_ratio_per_token, min=1 - eps, max=1 + eps
+                ) * advantages.unsqueeze(-1)
+
+                grpo_loss_per_token = (
+                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+                )
+                # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
+                loss_mask = collated_batch["reward_masks"][:, 1:]
+                grpo_loss_per_token *= loss_mask
+                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
+
+                optimizer.zero_grad()
+                grpo_loss.backward()
+                optimizer.step()
+
+
+def grpo_training_loop_variant_experimental(
+    train_loader,
+    policy_model,
+    reward_model,
+    optimizer,
+    num_epoch,
+    num_samples,
+    num_grad_updates,
+    policy_config,
+    device,
+    eps=0.2,
+    beta=1.0,
+):
+    """
+    GRPO training with just 2 models (1 policy + 1 reward model).
+    This variant is based on the assumption that we can use a single policy for both π_θ and π_θ_old from the
+    grpo_training_loop() func implementation.
+    This experimental version is mixing this assumption with the deprecated_grpo_training_loop_variant()
+    where we used a single model for both π_ref and π_θ_old.
+
+    Thus leaving us with a single model for π_θ, π_θ_old and π_ref.
+    The drawback is that π_ref anchor role isn't as strong, since it's updated every episode/batch with π_θ_old.
+
+    Args:
+        train_loader (DataLoader): DataLoader providing batches of prompts.
+        policy_model (nn.Module): The language model being trained (policy π_θ) also used as π_θ_old and π_ref.
+        reward_model (nn.Module): A model (r_𝜑) pretrained to predict rewards for completions (frozen).
+        optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
+        num_epoch (int): The total number of training epochs.
+        num_samples (int): The number of responses/samples to generate from the policy model from each prompt.
+        num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
+        policy_config (dict): Configuration dictionary for the policy model.
+        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
+                    trade-off between maximizing reward and staying close to the reference policy.
+
+    Returns:
+        TODO
+        None: The function modifies the `policy_model` in place.
+
+    """
+    reward_model.eval()
+
+    for epoch in range(1, num_epoch + 1):
+
+        for batch in train_loader:
+            print("start")
+            policy_model.eval()  # for every new episode, π_θ, π_θ_old and π_ref are the same
+            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
+
+            torch.manual_seed(123)
+            # --- Sampling responses ---
+            # interleaving the prompts to generate multiple samples in parallel
+            dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
+            responses = generate_loop(
+                input=dup_prompts,
+                model=policy_model,
+                max_gen=20,
+                context_length=policy_config["context_length"],
+                top_k=25,
+                temp=0,
+            )
+
+            collated_batch = batched_response_collator(
+                responses,
+                len_prompt=batch["padded_prompts"].shape[-1],
+                pad_token_id=50256,
+                device=device,
+            )
+
+            with torch.inference_mode():
+                # we now use π_θ in inference mode for both π_ref and π_θ_old
+                old_and_ref_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+                # Reward model - retrieving learned advantages -
+                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+                mini_rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    collated_batch["attn_masks"],
+                ).squeeze(-1)
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+
+            advantages = z_score(rewards)  # computing outside the inference scope
+
+            policy_model.train()
+            # --- Gradient updates loop ---
+            for j in range(num_grad_updates):
+                policy_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+
+                # --- GRPO loss ---
+                # π_ref = π_θ_old
+                policy_ratio_per_token = torch.exp(policy_logprobs - old_and_ref_logprobs)
+                # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
+                kl_div = kl_div_per_token(policy_logprobs, old_and_ref_logprobs)
+                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
+                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surrogate_loss_per_token = torch.clip(
+                    policy_ratio_per_token, min=1 - eps, max=1 + eps
+                ) * advantages.unsqueeze(-1)
+
+                grpo_loss_per_token = (
+                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
+                )
+                # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
+                loss_mask = collated_batch["reward_masks"][:, 1:]
+                grpo_loss_per_token *= loss_mask
+                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
+
+                optimizer.zero_grad()
+                grpo_loss.backward()
+                optimizer.step()
+
+
+def grpo_training_loop(
+    train_loader,
+    policy_model,
+    reference_model,
+    reward_model,
+    optimizer,
+    num_epoch,
+    num_samples,
+    num_grad_updates,
+    policy_config,
+    device,
+    eps=0.2,
+    beta=1.0,
+):
+    """
+    GRPO training loop.
+
+    Args:
+        train_loader (DataLoader): DataLoader providing batches of prompts.
+        policy_model (nn.Module): The language model being trained (policy π_θ).
+        reference_model (nn.Module): A copy of the policy model (π_ref) used to compute:
+                                    - KL divergence (D_KL(π_ref || π_θ)).
+        reward_model (nn.Module): A model (r_𝜑) pretrained to predict rewards for completions (frozen).
+        optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
+        num_epoch (int): The total number of training epochs.
+        num_samples (int): The number of responses/samples to generate from the policy model from each prompt.
+        num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
+        policy_config (dict): Configuration dictionary for the policy model.
+        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
+                    trade-off between maximizing reward and staying close to the reference policy.
+
+    Returns:
+        TODO
+        None: The function modifies the `policy_model` in place.
+
+    """
+    reward_model.eval()
+    reference_model.eval()
+
+    for epoch in range(1, num_epoch + 1):
+        reference_model.load_state_dict(policy_model.state_dict())
+
+        for batch in train_loader:
+            print("start")
+            policy_model.eval()  # for every new episode, π_θ and π_θ_old are the same
+            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
+
+            torch.manual_seed(123)
+            # --- Sampling responses ---
+            # interleaving the prompts to generate multiple samples in parallel
+            dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
+            responses = generate_loop(
+                input=dup_prompts,
+                model=policy_model,
+                max_gen=20,
+                context_length=policy_config["context_length"],
+                top_k=25,
+                temp=0,
+            )
+
+            collated_batch = batched_response_collator(
+                responses,
+                len_prompt=batch["padded_prompts"].shape[-1],
+                pad_token_id=50256,
+                device=device,
+            )
+
+            with torch.inference_mode():
+                old_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+                reference_logprobs = log_probs_per_token(
+                    logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+                # Reward model - retrieving learned advantages -
+                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+                mini_rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    collated_batch["attn_masks"],
+                ).squeeze(-1)
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+
+            advantages = z_score(rewards)  # computing outside the inference scope
+
+            policy_model.train()
+            # --- Gradient updates loop ---
+            for j in range(num_grad_updates):
+                policy_logprobs = log_probs_per_token(
+                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
+                    inputs=collated_batch["padded_responses"],
+                    attention_mask=collated_batch["attn_masks"],
+                )
+
+                # --- GRPO loss ---
+                # πθ(y_i,t | x_i, y_i,<t) / π_old(y_i,t | x_i, y_i,<t) =
+                # exp(log(y_i,t | x_i, y_i,<t)) - log(π_old(y_i,t | x_i, y_i,<t)))
+                policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
+
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
                 # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
                 surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)

@@ -6,11 +6,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import (
-    grpo_prompt_collator,
-    grpo_training_loop,
-    grpo_training_loop_single_prompt,
-)
+from llm_quest.alignment.grpo.grpo_engine import grpo_prompt_collator, grpo_training_loop
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
@@ -48,7 +44,7 @@ test_loader = DataLoader(
 policy_model = GPTModel(gpt_config)
 reference_model = GPTModel(gpt_config)
 reward_model = GPTModel(gpt_config)
-reward_model.out = nn.Linear(gpt_config["emb_dim"], 1)
+reward_model.out = nn.Linear(gpt_config["emb_dim"], 1)  # (testing untrained, otherwise no need to do this)
 
 reward_model.to(model_device)
 policy_model.to(model_device)
