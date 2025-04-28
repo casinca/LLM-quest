@@ -10,9 +10,9 @@ GRPO is a policy gradient method introduced in the DeepSeekMath paper: https://a
 mixing PPO with REINFORCE (RLOO version), by keeping the same loss function as PPO (surrogate objective with clipping)
 and a few changes:
 
-- The advantages ${A}_{i}$ aren't calculated based on an AC technique like GAE (~Multistep TD variant) but much simpler, as 
-$A_i = \frac{r_i - \text{mean}(r_1,  r_2, \dots, r_t)}{\text{std}(r_1, r_2, \dots, r_t)}$ with $r_i$ the reward of the 
-$i$-th trajectory. As we can see, there is no Critic trying to learn a state-value function $V(s)$.  
+- The advantages ${A}_{i}$ aren't calculated based on an AC technique like GAE (~Multistep TD variant) but much simpler,
+as $A_i = \frac{r_i - \text{mean}(r_1,  r_2, \dots, r_t)}{\text{std}(r_1, r_2, \dots, r_t)}$ with $r_i$ the reward of
+the $i$-th trajectory. As we can see, there is no Critic trying to learn a state-value function $V(s)$.  
 This is basically (for people familiar with Quant finance) the z-score of each reward across sampled trajectories.
 
 - The KL divergence is estimated with [(Schulman, 2020) unbiased estimator](http://joschu.net/blog/kl-approx.html)
@@ -21,20 +21,22 @@ This is basically (for people familiar with Quant finance) the z-score of each r
 
   Probability ratios for the $t$-th token of each $i$-th trajectory given the prompt $x$ and
   previous $t$ tokens in that trajectory, between the reference $\pi_{ref}$ and policy model $\pi_{\theta}$ (more details in
-  [Pipeline](#pipeline)). Can be seen as inverse policy ratio too if $\pi_{ref} = \pi_{\theta_{old}}$ <sup>1</sup>
+  [Pipeline](#pipeline)).  
+  Can be seen as inverse policy ratio too if $\pi_{ref} = \pi_{\theta_{old}}$ <sup>1</sup>
 
-  It is not injected in the trajectories' reward (per mini rewards/tokens) unlike PPO but computed afterward per token
-  with the policy ratio during the loss calculation.
+  The KL div is not injected in the trajectories' reward (per mini rewards/tokens) like PPO but computed afterward per
+  token with the policy ratio during the loss calculation.
 
 ## Pipeline
 
 ### Original GRPO<sup>2, 3</sup>
 
-3x models (here for testing the logic, 3x GPT-2 from scratch based on `llm_quest/gpt`) as:
+3x models (here for testing the logic, 3x GPT-2 from scratch based on
+[`llm_quest/gpt`](/llm_quest/gpt/)) as:
 
 - Policy model $\pi_{\theta}$:
-    - SFT or Base : Advantage of Base, we don't get SFT bias but the model will have to learn a bit more, likely requiring
-      more training since it's not SFT.
+    - SFT or Base : Advantage of Base, we don't get SFT bias, but the model will have to learn a bit more, likely
+      requiring more training since it's not SFT.
 
       DeepSeek used a Base DeepSeekMath 7B model.
 
@@ -51,7 +53,7 @@ This is basically (for people familiar with Quant finance) the z-score of each r
     - We're supposedly pretraining it in `reward_model_training.py` on a preference (pref/rej pairs) dataset, with
     $r_{\phi}$'s output head changed to $W \in \mathbb{R}^{d_{out} \times 1}$ for a single scalar reward and aimed at
     minimizing the Bradley-Terry loss $\mathcal{L}(\phi) = - \log \sigma(R_\phi(p, res_{\text{pref}}) - R_\phi(p, res_{\text{rej}}))$ with $p$ for prompt.  
-    $r_{\phi}$ is used to compute the mini rewards/per tokens of each $\pi_{\theta}$'s generated trajectory.
+    $r_{\phi}$ is used to compute the mini rewards/per tokens of each generated trajectory from $\pi_{\theta}$.
 
 &nbsp;
 
@@ -82,12 +84,12 @@ in `grpo_engine.py`, pretty much reads by itself compared to the pseudocode belo
 ***2*:** *Concerning line 6 of GRPO, it may be a misinterpretation on my part (can be modified if wrong anyway).  
 For efficiency purpose, since every new episode/batch $\pi_{\theta_{old}}$ = $\pi_{\theta}$ we can use
 $\pi_{\theta}$ for old log probabilities and generating trajectories with carefully switching from `.eval()` + `torch_inference_mode()` and
-`.train()` for gradient updates.
+`.train()` for gradient updates.*
 
 ***3***:  *The last line (12) of the GRPO Algorithm, DeepSeek included it for completeness. This is concerning the
 optional iterative RL alternative where the reward model isn't frozen anymore during RLHF, but continuously trained
 (replay mechanism). I initially went PPO style with pretraining & freezing a reward model (which is also described as
-frozen in figure 4 of the paper), thus continuous $r_{\phi}$ update is not implemented atm.*
+frozen in figure 4 of the paper), thus continuous* $r_{\phi}$ *update is not implemented atm.*
 
 ### Experimental (untested mix of GRPO iterative RL)
 
