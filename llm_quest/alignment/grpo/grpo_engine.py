@@ -41,7 +41,7 @@ def reward_model_training_eval_loop_simple(
     num_epoch,
     eval_freq,
     eval_iter=None,
-    device=None,  # not used here, as the collate func is moving to the device
+    device=None,
     beta=0.1,
 ):
     """
@@ -54,8 +54,9 @@ def reward_model_training_eval_loop_simple(
         optimizer (torch.optim.Optimizer): Optimizer for the reward model parameters.
         num_epoch (int): Total number of epochs to train for.
         eval_freq (int): Frequency (in training steps) at which to perform evaluation.
-        eval_iter (int, optional): Number of batches to use for evaluation. If None, uses all batches in `val_loader`. Defaults to None.
-        device (torch.device, optional): Device to run training on (e.g., 'cuda', 'cpu'). Note: This parameter is currently not used internally as data loading handles device placement. Defaults to None.
+                        Also used as the training loss logging interval.
+        device (torch.device, optional): Device to run training on (e.g., 'cuda', 'cpu').
+                Note: This parameter is currently not used internally as data loading handles device placement.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 0.1.
     """
     step = 0
@@ -77,11 +78,12 @@ def reward_model_training_eval_loop_simple(
             step += 1
             optimizer.zero_grad()
 
-            pref_mini_rewards = reward_model(batch["chosen"])
-            rej_mini_rewards = reward_model(batch["rejected"])
+            # shape (b, s, 1) → (b, s)
+            pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
+            rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
 
-            pref_mask = batch["chosen_mask"].unsqueeze(-1)  # shape (b, s) → (b, s, 1)
-            rej_mask = batch["rejected_mask"].unsqueeze(-1)
+            pref_mask = batch["chosen_mask"]
+            rej_mask = batch["rejected_mask"]
 
             # masking the rewards to the valid tokens
             pref_mini_rewards *= pref_mask
@@ -90,11 +92,8 @@ def reward_model_training_eval_loop_simple(
             # --- mean pooling over the sequence length ---
             num_valid_pref_tokens = pref_mask.sum(dim=1)  # we want to divide by the number of valid tokens
             num_valid_rej_tokens = rej_mask.sum(dim=1)
-            pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens  # shape (b,1)
+            pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens
             rej_rewards = rej_mini_rewards.sum(dim=1) / num_valid_rej_tokens
-
-            # shape (b,1) → (b)
-            pref_rewards, rej_rewards = pref_rewards.squeeze(-1), rej_rewards.squeeze(-1)
 
             loss = bt_loss(pref_rewards, rej_rewards)
 
@@ -102,12 +101,12 @@ def reward_model_training_eval_loop_simple(
             optimizer.step()
 
             interval_train_loss += loss.item()
-            interval_correct_pred += (pref_rewards > rej_rewards).sum().item()
+            interval_correct_pred += (pref_rewards > rej_rewards).sum().item()  # count number of correct predictions
             interval_train_count += pref_rewards.shape[0]
 
             # --- eval ---
             if step % eval_freq == 0:
-                # Calculate metrics for the interval
+                # calculate metrics for the interval
                 avg_interval_train_loss = interval_train_loss / eval_freq  # Avg loss per batch in interval
                 avg_interval_train_acc = (
                     interval_correct_pred / interval_train_count if interval_train_count > 0 else 0.0
@@ -124,6 +123,7 @@ def reward_model_training_eval_loop_simple(
                     f"Val acc: {val_acc:.5f}",
                 )
 
+                # reset interval training metrics
                 interval_train_loss = 0.0
                 interval_correct_pred = 0
                 interval_train_count = 0
@@ -131,9 +131,10 @@ def reward_model_training_eval_loop_simple(
     return tracking
 
 
+# TODO might want to customize evaluation on a customizable number of batches
 def evaluate_reward_model(val_loader, reward_model):
     """
-    Evaluate the reward model on the validation set.
+    Evaluate the reward model on the full validation set.
 
     Args:
         val_loader (DataLoader): DataLoader providing batches of chosen and rejected responses.
@@ -142,7 +143,8 @@ def evaluate_reward_model(val_loader, reward_model):
     Returns:
         tuple: A tuple containing:
             - avg_loss (float): The average loss over the validation set.
-            - avg_acc (float): The average accuracy over the validation set (proportion of batches where chosen reward > rejected reward).
+            - avg_acc (float): The average accuracy over the validation set
+            (proportion of batches where chosen reward > rejected reward).
     """
 
     total_loss = 0.0
@@ -152,11 +154,10 @@ def evaluate_reward_model(val_loader, reward_model):
     reward_model.eval()
     with torch.inference_mode():
         for batch in val_loader:
-            # shape (b, s, 1) → (b, s)
+
             pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
             rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
 
-            # shape (b, s)
             pref_mask = batch["chosen_mask"]
             rej_mask = batch["rejected_mask"]
 
@@ -182,9 +183,11 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
     Initial Collate function to pad prompts into a single tensor, preparing them for the policy model sample generations.
 
     Args:
-        prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt" whose value is a list of token IDs (int).
+        prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt"
+                whose value is a list of token IDs (int).
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length is determined by the longest prompt in the batch.
+        custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
+                is determined by the longest prompt in the batch.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
 
         Dict[str, torch.Tensor]: A dictionary containing:
@@ -218,10 +221,11 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
 
 def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     """
-    Collate sampled responses into a single tensor, preparing them for the reward model.
+    Intended for use with grpo_training_loop_single_prompt().
+    Collate sampled responses of different lengths into a single tensor, preparing them for the reward model.
 
     Args:
-        responses (List[List[int]]): list of responses, each response is the prompt + the policy's output
+        responses (List[List[int]]): list of responses: each response is the prompt + the policy's output
         len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
@@ -261,6 +265,7 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
 def batched_response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     """
     Prepare masks of multi prompts+ sampled responses preparing them for the reward model.
+
     Since we are generating responses in parallel, we don't need to pad anything, the generated tensor is already
     padded, we just need to prepare the masks.
     """

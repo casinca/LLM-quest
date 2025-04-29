@@ -13,12 +13,12 @@ from llm_quest.gpt.gpt_model import GPTModel
 # --- hyperparameters ---
 torch.manual_seed(123)
 gpt_config = config.GPT_SMALL_CONFIG
-batch_size = 2
+batch_size = 4
 lr = 1e-5
 weight_decay = 0.01
 num_epoch = 1
-num_samples = 2
-num_grad_updates = 2
+num_samples = 5
+num_grad_updates = 4
 tokenizer = tiktoken.get_encoding("gpt2")
 model_device = "cuda"
 
@@ -40,7 +40,6 @@ test_loader = DataLoader(
 
 # --- models & optimizer ---
 # note: the grpo training loop will take care of putting models on correct training/eval mode
-# note2: copying policy_model's parameters to the reference_model is also done in the grpo training loop
 policy_model = GPTModel(gpt_config)
 reference_model = GPTModel(gpt_config)
 reward_model = GPTModel(gpt_config)
