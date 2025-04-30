@@ -1,12 +1,14 @@
 # Direct Preference Optimization (DPO) step by step
 
-There weren't many details on the DPO impl, for brevity I presume as it can quickly become verbose in a notebook. So I wrote
-here my dissection of the paper: https://arxiv.org/abs/2305.18290 on how we end up, step by step, to the DPO loss
-function. Concerning the code, it follows the structure of @rasbt impl and the paper.
+There weren't many details on the DPO impl, for brevity I presume as it can quickly become verbose in a notebook.  
+So I wrote here my dissection of the paper: https://arxiv.org/abs/2305.18290 on how we end up, step by step, to the DPO loss
+function, with a little note on Conservative DPO for noisy labels.  
+Concerning the code, it follows the structure of @rasbt impl and the paper with optional cDPO.
 
 ---
 
-DPO is a lighter, more efficient approach for aligning LLMs with human preferences where only 2 models are needed vs classic RLHF.  
+DPO is a lighter, more efficient approach for aligning LLMs with human preferences where only 2 models are needed vs
+classic RLHF.  
 *Rafailov et al.* cleverly reparametrize the reward function directly based on the reference and policy models
 eliminating the need for a reward model.  
 They use a Bradley-Terry preference model and transforms the problem into a Maximum Likelihood Estimation (MLE) task.
@@ -20,7 +22,7 @@ With a pair $(i, j)$ and their scores $p_i$ and $p_j$ we can express the BT mode
 $$
 P(i > j) = \frac{p_i}{p_i + p_j} \qquad  (1)
 $$
- 
+
 Ie, the probability that $i$ is preferred (or ranks higher or wins) over $j$.
 
 Here we parametrize the BT model with instead exponential scores functions $p_i = e^{\beta_i}$ and $p_j = e^{\beta_j}$:
@@ -86,11 +88,11 @@ $$
  \mathcal{L}(r) = -\left[\log \sigma(r(x,y_1) - r(x,y_2))\right] \qquad  (9)
 $$
 
-(to be more rigorous like the paper, the $\mathbb{E}$ xpectation over all pairs for the whole dataset $D$ where $(x,y_1,y_2)$ are
-sampled from:)
+(to be more rigorous like the paper, the 𝔼xpectation over all pairs for the whole dataset $D$ where $(x,y_1,y_2)$ are
+sampled from)
 
 $$
-    \mathcal{L}(r) = -\mathbb{E}_{(x,y_1,y_2) \sim D} \left[ \log \sigma(r(x,y_1) - r(x,y_2)) \right] \qquad  (10)
+    \mathcal{L}(r) = -𝔼_{(x,y_1,y_2) \sim D} \left[ \log \sigma(r(x,y_1) - r(x,y_2)) \right] \qquad  (10)
 $$
 
 &nbsp;
@@ -103,7 +105,7 @@ divergence between the policy model $\pi_\theta$ and the reference model $\pi_{r
 (Kullback–Leibler div) penalty:
 
 $$
-\max_{\pi_\theta} \mathbb{E}\_{\pi_\theta(y|x)} \left[ r(x, y) \right] - \beta D_{KL} \left[ \pi_\theta(y|x) \parallel
+\max_{\pi_\theta} 𝔼_{\pi_\theta(y|x)} \left[ r(x, y) \right] - \beta D_{KL} \left[ \pi_\theta(y|x) \parallel
 \pi_{ref}(y|x) \right] \qquad  (11)
 $$
 
@@ -155,3 +157,38 @@ $$
 \mathcal{L}\_{DPO} = - \left[ \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)}
 \right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) \right] \tag{16}
 $$
+
+&nbsp;
+
+## In the case of noisy preferences: Conservative DPO (cDPO)
+
+*More details from a co-author of the DPO paper: https://ericmitchell.ai/cdpo.pdf*
+
+If we are unsure of the precision/veracity of our dataset labels, we can adapt DPO to noisy preferences.  
+For example, if we believe our dataset labels might be wrong $ϵ$ proportion of the time. Which means concerning our
+BCE Loss in $(6)$, we are not assuming that $y_i$ is 1 for the true label anymore, but instead we assume it's something
+like $1-ε$, with $ε \in (0, 0.5)$.
+
+So we can't simplify our BCE loss, since the 2nd term isn't null anymore.
+With $y_i = 1-ε$, $(6)$ becomes:
+
+
+$$
+L_{BCE, noisy} = -\left[ (1-\epsilon) \log(p_i) + (1 - (1-\epsilon)) \log(1 - p_i) \right]
+$$
+
+$$
+= -\left[ (1-\epsilon) \log(p_i) + \epsilon \log(1 - p_i) \right] \qquad  (17)
+$$
+
+> Notice that the second term inside the brackets, if we put back BT $(5)$, will be like $\epsilon \log (1-\sigma(z))$
+> with $z= r(x,y_1) - r(x,y_2)$ for simplicity and $1 - \sigma(z) = \sigma(-z)$, that's the simplification we use in the
+> code for the 2nd term.
+
+Anyway, $(16)$ would then become *(noisy indeed)*:
+
+$$
+\mathcal{L}\_{DPO, noisy} = - \left[ (1-\epsilon) \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) + \epsilon \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) \right) \right] \tag{18}
+$$
+
+

@@ -5,9 +5,8 @@ import torch.nn.functional as F
 
 class DPOLoss(nn.Module):
     """
-    A PyTorch module for computing Direct Preference Optimization (dpo) loss.
-
-    This class implements the dpo described in the paper and @rasbt's impl converted into a class
+    This class implements Direct Preference Optimization (DPO) loss described in the paper and @rasbt's impl converted
+    into a class. I also added back label smoothing for noisy labels.
 
     The loss is computed based on the log probabilities from a policy model and a reference
     model for both chosen and rejected responses.
@@ -15,12 +14,17 @@ class DPOLoss(nn.Module):
     Args:
         beta (float): Temperature parameter controlling the sensitivity of the loss to differences in log
         probabilities.
-
+        label_smoothing (float): Label smoothing parameter based on Eq. 3 https://ericmitchell.ai/cdpo.pdf \n
+        In the case of noisy labels, we can simulate that imprecision by adding a small parameter ϵ to soften
+        the proba distrib of the targets. Eg, you believe your dataset labels might be wrong ϵ proportion of the time.
+        ie, P(true labels) = 1-ε instead of 1, with ϵ = (0, ..., 0.5)
+        Disabled by default for original DPO behavior.
     """
 
-    def __init__(self, beta=0.1):
+    def __init__(self, beta=0.1, label_smoothing=0.0):
         super().__init__()
         self.beta = beta
+        self.label_smoothing = label_smoothing
 
     def compute_logprobs(self, logits, inputs, attention_mask=None):
         """
@@ -29,8 +33,7 @@ class DPOLoss(nn.Module):
 
         Args:
             logits (torch.Tensor): The output logits from the model, shape (b, s, v),
-                                    where b is the batch size, s is the sequence length, and v is the vocabulary
-                                    size.
+                                    where b is the batch size, s is the sequence length, and v is the vocabulary size.
             inputs (torch.Tensor): The input token IDs, shape (b, s).
             attention_mask (torch.Tensor, optional): A mask indicating which tokens should be considered.
                                                     Shape (b, s). Defaults to None.
@@ -59,7 +62,7 @@ class DPOLoss(nn.Module):
             # returning mean with excluding masked/padded tokens
             avg_label_log_probs = label_log_probs.sum(-1) / attention_mask.sum(-1)
 
-            return avg_label_log_probs  # shape (b)
+            return avg_label_log_probs  # shape (b,)
 
         else:
             return label_log_probs.mean(-1)
@@ -93,7 +96,10 @@ class DPOLoss(nn.Module):
         logits = pref_logratio - rejec_logratio
 
         # plural because it's a vector of losses (per example/seq in the batch) shape (b)
-        losses = -F.logsigmoid(self.beta * logits)
+        losses = (
+            -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
+            - F.logsigmoid(-self.beta * logits) * self.label_smoothing
+        )
         # Return averaged losses over a single batch and the detached rewards for logging
         return losses.mean(), chosen_rewards.mean(), rejected_rewards.mean()
 
