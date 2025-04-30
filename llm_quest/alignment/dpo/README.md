@@ -182,13 +182,13 @@ $$
 $$
 
 > Notice that the second term inside the brackets, if we put back BT $(5)$, will be like $\epsilon \log (1-\sigma(z))$
-> with $z= r(x,y_1) - r(x,y_2)$ for simplicity and $1 - \sigma(z) = \sigma(-z)$, that's the simplification we use in the
+> with $z = r(x,y_1) - r(x,y_2)$ for simplicity and note that $1 - \sigma(z) = \sigma(-z)$, that's the simplification we use in the
 > code for the 2nd term.
 
 Anyway, $(16)$ would then become *(noisy indeed)*:
 
 $$
-\mathcal{L}\_{DPO, noisy} = - \left[ (1-\epsilon) \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) + \epsilon \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) \right) \right] \tag{18}
+\mathcal{L}\_{DPO, noisy} = - \left[ (1-\epsilon) \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) \right) + \epsilon \log \sigma \left( \beta \log \left( \frac{\pi_\theta(y_2 \mid x)}{\pi_{ref}(y_2 \mid x)} \right) - \beta \log \left( \frac{\pi_\theta(y_1 \mid x)}{\pi_{ref}(y_1 \mid x)} \right) \right) \right] (18)
 $$
 
 
