@@ -60,7 +60,7 @@ selected experts.
 *Edit: I'm actually computing* $f_i$ *like DeepSeek and not the below formula. Instead of counting only the 1st of topk
 (argmax) I'm counting the topk*
 
-    $$f_i = \frac{1}{T} \sum_{x\in B} 1\!\!1\{\text{argmax }p(x) = i\}$$
+    $$f_i = \frac{1}{T} \sum_{x\in B} 𝟙 \{\text{argmax }p(x) = i\}$$
 
 - $P_i$ is the average probability of each expert being selected, ie the mean of the softmax of the logits.
 
