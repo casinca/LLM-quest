@@ -61,7 +61,7 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
  - Alignment:
     - DPO*, step by step
-    - GRPO from scratch (WIP)
+    - GRPO from scratch
 
 &nbsp;
     
@@ -77,7 +77,7 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 **\*** Already covered by @rasbt, my code is similar.
 
-## TODO
+## potential TODO
 - refactoring global buffers
 - non hardcoded cuda devices
 - vectorize MoE dispatching while keeping the code readable
@@ -85,4 +85,8 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 - better optim for classification: we use masks to retrieve the last valid token instead of slicing [:,-1,:]
 - add optional Conservative DPO option
 - nested TODOs
-- GRPO TODOs
+- GRPO: 
+   - add process supervision
+   - add some more training metrics
+   - GRPO iterative RL variant (continuous learning of $r_{\phi}$)
+   - we could return the model, instead of inplace

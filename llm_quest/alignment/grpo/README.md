@@ -1,9 +1,9 @@
 # GRPO from scratch on preference tuning
 
-TODO  
 Only external dependency is `tiktoken` for tokenization.  
 We're not using `transformers`, we're collating (batching, padding, masking...) ourselves & using from scratch models,
 starting with the reward model training before GRPO itself.
+
 ## GRPO
 
 GRPO is a policy gradient method introduced in the DeepSeekMath paper: https://arxiv.org/abs/2402.03300. DeepSeek is
@@ -24,7 +24,7 @@ This is basically (for people familiar with Quant finance) the z-score of each r
   [Pipeline](#pipeline)).  
   Can be seen as inverse policy ratio too if $\pi_{ref} = \pi_{\theta_{old}}$ <sup>1</sup>
 
-  The KL div is not injected in the trajectories' reward (per mini rewards/tokens) like PPO but computed afterward per
+  The KL div is not injected in the trajectories' full reward (per mini rewards/tokens) like PPO but computed afterward per
   token with the policy ratio during the loss calculation.
 
 ## Pipeline
