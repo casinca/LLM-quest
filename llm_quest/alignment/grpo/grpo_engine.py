@@ -415,7 +415,6 @@ def grpo_training_loop_single_prompt(
     for epoch in range(1, num_epoch + 1):
 
         for batch in train_loader:
-            print("start")
             reference_model.load_state_dict(policy_model.state_dict())
             reference_model.eval()
             policy_model.eval()
@@ -463,29 +462,26 @@ def grpo_training_loop_single_prompt(
 
             # --- Gradient updates loop ---
             policy_model.train()
-            for j in range(num_grad_updates):
+            for grad_step in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
 
-                # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
-                # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
                 policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
 
                 # --- GRPO loss ---
                 # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+
                 # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surrogate_loss_per_token = torch.clip(
+                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surr_obj_per_token = torch.clip(
                     policy_ratio_per_token, min=1 - eps, max=1 + eps
                 ) * advantages.unsqueeze(-1)
 
-                grpo_loss_per_token = (
-                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
-                )
+                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
                 # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
                 loss_mask = collated_batch["reward_masks"][:, 1:]
                 grpo_loss_per_token *= loss_mask
@@ -513,7 +509,7 @@ def deprecated_grpo_training_loop_variant(
     """
     This was actually my initial GRPO training loop attempt, and wasn't true to the GRPO paper, I kept it for
     reference as:
-        This update the reference model per episode/batch instead of the classic "per outer loop iteration" from the
+        This update the reference model per batch instead of the classic "per outer loop iteration" from the
         original paper. The rationale was that we could use a single model for both π_ref and π_θ_old.
 
     The drawback is that its anchor role isn't as strong, since the π_ref is updated every batch.
@@ -547,7 +543,6 @@ def deprecated_grpo_training_loop_variant(
     for epoch in range(1, num_epoch + 1):
 
         for batch in train_loader:
-            print("start")
             reference_model.load_state_dict(policy_model.state_dict())
             reference_model.eval()
             policy_model.eval()
@@ -593,29 +588,26 @@ def deprecated_grpo_training_loop_variant(
 
             # --- Gradient updates loop ---
             policy_model.train()
-            for j in range(num_grad_updates):
+            for grad_step in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                     attention_mask=collated_batch["attn_masks"],
                 )
 
-                # πθ(y_i,t | x_i, y_i,<t) / π_ref(y_i,t | x_i, y_i,<t) =
-                # exp(log(y_i,t | x_i, y_i,<t)) - log(π_ref(y_i,t | x_i, y_i,<t)))
                 policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
 
                 # --- GRPO loss ---
                 # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+
                 # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surrogate_loss_per_token = torch.clip(
+                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surr_obj_per_token = torch.clip(
                     policy_ratio_per_token, min=1 - eps, max=1 + eps
                 ) * advantages.unsqueeze(-1)
 
-                grpo_loss_per_token = (
-                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
-                )
+                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
                 # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
                 loss_mask = collated_batch["reward_masks"][:, 1:]
                 grpo_loss_per_token *= loss_mask
@@ -647,7 +639,7 @@ def grpo_training_loop_variant_experimental(
     both π_ref and π_θ_old:
 
     We are left with a single model for π_θ, π_θ_old and π_ref.
-    The drawback is that π_ref anchor role isn't as strong, since it's updated every episode/batch with π_θ_old.
+    The drawback is that π_ref anchor role isn't as strong, since it's updated every sample/batch with π_θ_old.
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
@@ -672,8 +664,7 @@ def grpo_training_loop_variant_experimental(
     for epoch in range(1, num_epoch + 1):
 
         for batch in train_loader:
-            print("start")
-            policy_model.eval()  # for every new episode, π_θ, π_θ_old and π_ref are the same
+            policy_model.eval()  # for every new batch, π_θ, π_θ_old and π_ref are the same
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
             torch.manual_seed(123)
@@ -716,7 +707,7 @@ def grpo_training_loop_variant_experimental(
 
             policy_model.train()
             # --- Gradient updates loop ---
-            for j in range(num_grad_updates):
+            for grad_step in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
@@ -728,15 +719,14 @@ def grpo_training_loop_variant_experimental(
                 policy_ratio_per_token = torch.exp(policy_logprobs - old_and_ref_logprobs)
                 # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
                 kl_div = kl_div_per_token(policy_logprobs, old_and_ref_logprobs)
+
                 # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surrogate_loss_per_token = torch.clip(
+                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surr_obj_per_token = torch.clip(
                     policy_ratio_per_token, min=1 - eps, max=1 + eps
                 ) * advantages.unsqueeze(-1)
 
-                grpo_loss_per_token = (
-                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
-                )
+                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
                 # masking prompt + padding tokens from the policy ratio+kl_div
                 # (advantages were calculated on rewards/response only, ie we didn't count the prompt + padded tokens)
                 # (log probs were calculated on prompt + policy's output only, ie we didn't count padded tokens)
@@ -794,8 +784,7 @@ def grpo_training_loop(
         reference_model.load_state_dict(policy_model.state_dict())
 
         for batch in train_loader:
-            print("start")
-            policy_model.eval()  # for every new episode, π_θ and π_θ_old are the same
+            policy_model.eval()  # for every new batch, π_θ and π_θ_old are the same
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
             torch.manual_seed(123)
@@ -842,7 +831,7 @@ def grpo_training_loop(
 
             policy_model.train()
             # --- Gradient updates loop ---
-            for j in range(num_grad_updates):
+            for grad_step in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
@@ -852,15 +841,14 @@ def grpo_training_loop(
                 # --- GRPO loss ---
                 policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
+
                 # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surrogate_loss_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surrogate_loss_per_token = torch.clip(
+                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
+                clipped_surr_obj_per_token = torch.clip(
                     policy_ratio_per_token, min=1 - eps, max=1 + eps
                 ) * advantages.unsqueeze(-1)
 
-                grpo_loss_per_token = (
-                    torch.min(surrogate_loss_per_token, clipped_surrogate_loss_per_token) - beta * kl_div
-                )
+                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
                 # masking prompt + padding tokens from the policy ratio+kl_div
                 # (advantages were calculated on rewards/response only, ie we didn't count the prompt + padded tokens)
                 # (log probs were calculated on prompt + policy's output only, ie we didn't count padded tokens)
