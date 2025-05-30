@@ -119,8 +119,9 @@ The drawback is that $\pi_{ref}$ anchor role won't be as strong and bias will in
 
 ### Additional details
 
-I chose Outcome Supervision (1 reward per trajectory, unlike Process Supervision) concerning the reward calculations,
-for simplicity BUT computed in a way that is compatible with process supervision because:
+I chose Outcome Supervision (1 reward per trajectory, unlike [Process Supervision](https://arxiv.org/abs/2312.08935))
+concerning the reward calculations, for simplicity BUT computed in a way that is compatible with process supervision
+because:
 
   - **Using mean pooling for the full reward calculation for each trajectory.**  
   My Reward model isn't an ORM but a PRM (Per-Token Reward Model) and doing mean pooling gives me the same result as an
