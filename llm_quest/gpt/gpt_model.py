@@ -51,11 +51,12 @@ class GPTModel(nn.Module):
 
         x = self.final_ln(x)
 
-        # optimization for last token prediction, ie classification, reward model, etc
-        # avoid unnecessary projection for all hidden states
+        # Dirty optimization for last token retrieval, ie classification:
+        # Retrieves the hidden state for the final token, regardless if it's a valid or padding token.
+        # Avoids unnecessary projection for all hidden states.
         if only_last_token:
             # apply output layer only to the last token's hidden state
-            # shape: (b, emb_dim) → (b, output_dim)
+            # shape: (b, emb_dim) → (b, vocab_size)
             logits = self.out(x[:, -1, :])
         else:
             # apply output layer to all hidden states

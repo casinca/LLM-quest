@@ -90,7 +90,7 @@ def classifier_training_eval_loop(
 
             logits = model(
                 input_batch, only_last_token=True
-            )  # only interested in the last tokens' logits for our classification
+            )  # only interested in the last tokens' logits for our classification (dirty - either pad or valid token)
 
             optimizer.zero_grad()
             loss = global_loss(logits, targets, model, classification=True)  # classi=True for correct loss req shape
