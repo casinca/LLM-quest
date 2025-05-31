@@ -1,9 +1,7 @@
-import torch
 import torch.nn as nn
 
+from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.gpt_to_llama3.llama_transformer_block import RMSNorm, TransformerBlock
-from llm_quest.rope import RoPE
-
 
 # replace: LayerNorm with RMSNorm
 # remove:  - absolute positional embeddings
@@ -14,30 +12,6 @@ from llm_quest.rope import RoPE
 #      (similar to @rasbt optimized imp but I'm keeping a buffer class for separation of concerns)
 #
 # Note: the way weights are tied, assume we won't load both pretrained tok embs and out embs weights
-class GlobalBuffers:
-    """
-    GlobalBuffers is a class that implements a global cache for RoPE parameters and attention masks to avoid redundant
-    computations across different transformer blocks.
-
-    Attributes:
-        _buffer (dict):
-            A class-level dictionary that stores the precomputed mask, cos, and sin values indexed by a tuple of
-            (ctx_len, rope_base, head_dim).
-    """
-
-    _buffer = {}
-
-    @staticmethod
-    def get_buffers(ctx_len, rope_base, head_dim, smooth_scaling_cfg=None):
-        key = (ctx_len, rope_base, head_dim)
-
-        if key not in GlobalBuffers._buffer:
-            mask = torch.triu(torch.ones(ctx_len, ctx_len), diagonal=1)
-            cos, sin = RoPE.compute_angles(rope_base, head_dim, ctx_len, smooth_scaling_cfg)
-
-            GlobalBuffers._buffer[key] = (mask, cos, sin)
-
-        return GlobalBuffers._buffer[key]
 
 
 class Llama3Model(nn.Module):
