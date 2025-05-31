@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import config
+from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.engine import global_loss
-from llm_quest.gpt_to_llama3.llama_model import GlobalBuffers
 from llm_quest.gpt_to_llama3.llama_transformer_block import RMSNorm
 from llm_quest.llama3_to_deepseekv3.deepseek_transformer_block import TransformerBlock
 

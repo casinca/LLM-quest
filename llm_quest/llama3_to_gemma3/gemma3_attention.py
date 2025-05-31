@@ -239,7 +239,7 @@ class GroupedQueryAttention(nn.Module):
 
 # quick test
 if __name__ == "__main__":
-    from gemma3_model import GlobalBuffers
+    from llm_quest.common.buffers import GlobalBuffers
 
     torch.manual_seed(123)
 
