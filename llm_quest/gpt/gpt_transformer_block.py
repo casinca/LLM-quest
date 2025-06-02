@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 
@@ -48,14 +50,14 @@ class GELU(nn.Module):
     GELU(x) ≈ 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
 
     but I'm using it with the error function version from the paper, using torch.erf():
-    GELU(x) = x * 0.5 * (1 + erf(x / sqrt(2)))
+    GELU(x) = x * 1/2 * (1 + erf(x / sqrt(2)))
     """
 
     def __init__(self):
         super().__init__()
 
     def forward(self, x):
-        return x * 1 / 2 * (1 + torch.erf(x / torch.sqrt(torch.tensor(2))))
+        return x * 0.5 * (1 + torch.erf(x / math.sqrt(2)))
 
 
 class FFN(nn.Module):
