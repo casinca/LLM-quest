@@ -140,7 +140,7 @@ class MultiHeadAttention(nn.Module):
         self.w_keys = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.w_values = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.dropout = nn.Dropout(dropout)
-        self.register_buffer("mask", torch.triu(torch.ones(ctx_len, ctx_len), diagonal=1))
+        self.register_buffer("mask", torch.triu(torch.ones(ctx_len, ctx_len), diagonal=1).bool())
         self.num_heads = num_heads
         self.head_dim = d_out // self.num_heads
         self.att_scaling = self.head_dim**-0.5
@@ -169,7 +169,7 @@ class MultiHeadAttention(nn.Module):
         keys = keys.transpose(1, 2)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
         # mask up to seq length/num of tokens
-        current_mask = self.mask.bool()[:seq_len, :seq_len]
+        current_mask = self.mask[:seq_len, :seq_len]
         scaled_att_scores = att_scores * self.att_scaling
         # masking in place and normalizing with softmax
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)
