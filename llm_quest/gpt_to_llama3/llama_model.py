@@ -59,7 +59,9 @@ class Llama3Model(nn.Module):
         assert self.emb_dict.weight.shape == self.out.weight.shape, "Shape mismatch for weight tying"
         self.emb_dict.weight = self.out.weight  # weights tying
 
-    def forward(self, x):
+    # TODO attention mask fused with causal
+    # (for now ghost argument for backward compatibility with evaluation _calc_loss_batch())
+    def forward(self, x, attn_mask=None):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
         for block in self.trf_blocks:

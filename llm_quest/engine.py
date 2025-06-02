@@ -103,11 +103,11 @@ def calc_loss_loader(dataloader, model, device, num_batches=None, classification
         if i < num_batches:
             if len(batch) == 3:
                 X, y, attn_mask = batch
+                loss = _calc_loss_batch(X, y, model, device, attn_mask, classification)
             else:
                 X, y = batch
-                attn_mask = None
+                loss = _calc_loss_batch(X, y, model, device, classification=classification)
 
-            loss = _calc_loss_batch(X, y, model, device, attn_mask, classification)
             total_loss += loss
 
     # returning mean
