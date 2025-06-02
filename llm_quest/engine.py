@@ -84,7 +84,6 @@ def calc_loss_loader(dataloader, model, device, num_batches=None, classification
         model (nn.Module): The model used to make predictions.
         device (torch.device): The device on which the model and tensors are located.
         num_batches (int, optional): The number of batches to evaluate (to speed up). If None, evaluates all batches.
-        attn_mask (torch.Tensor, optional): The attention mask tensor for the batch.
         classification (boolean): Tweak to adapt the loss calculation for finetuning (focusing on last pred)
 
     Returns:
