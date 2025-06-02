@@ -5,7 +5,7 @@ import torch
 from llm_quest.engine import evaluate, global_loss
 
 
-def accuracy_loader(data_loader, model, device):
+def accuracy_loader(data_loader, model, device, attn_mask=None):
     """Calculate accuracy of the model's predictions on a data loader.
 
     Args:
@@ -20,12 +20,15 @@ def accuracy_loader(data_loader, model, device):
     model.eval()
     total_correct_preds, total_num_examples = 0, 0
 
-    for X, y in data_loader:
+    for X, y, attn_mask in data_loader:
         X = X.to(device)
         y = y.to(device)
 
+        if attn_mask is not None:
+            attn_mask = attn_mask.to(device)
+
         with torch.no_grad():
-            logits = model(X, only_last_token=True)  # (b, num_classes)
+            logits = model(X, only_last_token=True, attn_mask=attn_mask)  # (b, num_classes)
 
             # Get highest preds for entire batch of sequence
             batch_preds = torch.argmax(logits, dim=-1)  # shape (b,)
@@ -69,7 +72,7 @@ def classifier_training_eval_loop(
 
     for epoch in range(1, num_epoch + 1):
         model.train()
-        for input_batch, targets in train_loader:
+        for input_batch, targets, attention_mask in train_loader:
             step += 1
 
             # lr update with warmup and cosine decay= 0.5 * (1 + cos(π * curr_step / total_step))
@@ -87,9 +90,10 @@ def classifier_training_eval_loop(
 
             input_batch = input_batch.to(device)
             targets = targets.to(device)
+            attention_mask = attention_mask.to(device)
 
             logits = model(
-                input_batch, only_last_token=True
+                input_batch, only_last_token=True, attn_mask=attention_mask
             )  # only interested in the last tokens' logits for our classification (dirty - either pad or valid token)
 
             optimizer.zero_grad()

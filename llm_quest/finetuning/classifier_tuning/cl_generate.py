@@ -1,7 +1,6 @@
 import tiktoken
 import torch
 import torch.nn as nn
-from regex import P
 
 import config
 from llm_quest.gpt.gpt_model import GPTModel
@@ -33,10 +32,12 @@ def classify_text(text, model, device, max_length=None, pad_token=50256):
     # replace all pads token below input_len by the corresponding inputs
     pads[:, :input_len] = input[:, :input_len]
 
-    print(pads.shape)
+    # This is only as a trick to retrieve the last token's logits, We don't need attn_mask for generation
+    attn_mask = torch.zeros_like(pads, dtype=torch.bool)
+    attn_mask[:, :input_len] = 1
 
     with torch.no_grad():
-        logits = model(pads, only_last_token=True)
+        logits = model(pads, only_last_token=True, attn_mask=attn_mask)
         pred = torch.argmax(logits, dim=-1)
 
         # (optional) checking confidence

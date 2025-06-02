@@ -98,6 +98,9 @@ class GPTStreamDataset(IterableDataset):
 class SpamDataset(Dataset):
     """
     SpamDataset is a custom PyTorch Dataset for preparing spam classification data.
+    It also serves as a collate function as we are padding inputs & also create attention mask to:
+    - retrieve the last token's logits
+    - as padding mask
 
     Args:
         file (str): Path to the CSV file containing spam data with 'text' and 'label' columns.
@@ -134,15 +137,19 @@ class SpamDataset(Dataset):
         # padding manually (alt: torch.nn.utils.rnn.pad_sequence)
         padded_ids = [id_vec + [pad_token] * (self.max_length - len(id_vec)) for id_vec in self.ids]
 
+        # attention_mask
+        self.attention_mask = [[1] * len(id_vec) + [0] * (self.max_length - len(id_vec)) for id_vec in self.ids]
+
         # convert to tensors
         self.input = torch.tensor(padded_ids)
         self.target = torch.tensor(self.data["label"])
+        self.attention_mask = torch.tensor(self.attention_mask, dtype=torch.bool)
 
     def __len__(self):
         return len(self.input)
 
     def __getitem__(self, index):
-        return self.input[index], self.target[index]
+        return self.input[index], self.target[index], self.attention_mask[index]
 
 
 class InstructionDataset(Dataset):
