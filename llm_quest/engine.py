@@ -125,6 +125,7 @@ def training_eval_loop_simple(
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
+        accumulation_steps (int): Number of steps/accumulated gradients before updating parameters
     """
     step = 0
     # keeping track of metrics for plotting
@@ -142,7 +143,7 @@ def training_eval_loop_simple(
             logits = model(input_batch)
             loss = global_loss(logits, targets, model=model)
 
-            if accumulation_steps > 1:
+            if step % accumulation_steps == 0 or step == len(train_loader):
                 loss = loss / accumulation_steps
 
             loss.backward()
