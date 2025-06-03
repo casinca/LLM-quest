@@ -49,7 +49,8 @@ class Gemma3Model(nn.Module):
 
         self.emb_dict.weight = self.out.weight  # weights tying
 
-    def forward(self, x):
+    # TODO attention mask (for now ghost argument for backward compatibility with evaluation _calc_loss_batch())
+    def forward(self, x, attn_mask=None):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
         for block in self.trf_blocks:

@@ -5,9 +5,10 @@ import torch
 from torch.amp import GradScaler
 
 
-def _calc_loss_batch(X, y, model, device, classification=False):
+def _calc_loss_batch(X, y, model, device, attn_mask=None, classification=False):
     """
-    Calculates the CE loss for a batch of data, used for evaluation only.
+    (Used for evaluation only)
+    Calculates the CE loss for a batch of data.
     see global_loss() for training loss calc
 
     Args:
@@ -15,6 +16,7 @@ def _calc_loss_batch(X, y, model, device, classification=False):
         y (torch.Tensor): The target tensor for the batch.
         model (nn.Module): The model used to make predictions.
         device (torch.device): The device on which the model and tensors are located.
+        attn_mask (torch.Tensor): The attention mask tensor for the batch.
         classification (boolean): Tweak to adapt the loss calculation for classification finetuning
         (ie, loss calc on last pred) or not
 
@@ -29,16 +31,19 @@ def _calc_loss_batch(X, y, model, device, classification=False):
     X = X.to(device)
     y = y.to(device)
 
+    if attn_mask is not None:
+        attn_mask = attn_mask.to(device)
+
     # in the case of classification finetuning, we're only interested in minimizing the loss based on the last tokens'
     # logits. Slicing will naturally give us a 2D shape that matches nn.F.cross_entropy() requirement.
     # logits will have a 2D shape: (b, num of classes) and targets 1D shape of true classes, thus no need to flatten.
     if classification:
-        logits = model(X, only_last_token=True)
+        logits = model(X, only_last_token=True, attn_mask=attn_mask)
         loss = torch.nn.functional.cross_entropy(logits, y)
     # but in classic causal NTP, logits have a shape (b,s,v) and targets (b, s)
     # thus we need to flatten logits to (b*s, v) and targets (b*s) for the correct format
     else:
-        logits = model(X)
+        logits = model(X, attn_mask=attn_mask)
         loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), y.flatten())
 
     return loss
@@ -93,9 +98,15 @@ def calc_loss_loader(dataloader, model, device, num_batches=None, classification
     else:
         num_batches = min(num_batches, len(dataloader))
 
-    for i, (X, y) in enumerate(dataloader):
+    for i, batch in enumerate(dataloader):
         if i < num_batches:
-            loss = _calc_loss_batch(X, y, model, device, classification)
+            if len(batch) == 3:
+                X, y, attn_mask = batch
+                loss = _calc_loss_batch(X, y, model, device, attn_mask, classification)
+            else:
+                X, y = batch
+                loss = _calc_loss_batch(X, y, model, device, classification=classification)
+
             total_loss += loss
 
     # returning mean

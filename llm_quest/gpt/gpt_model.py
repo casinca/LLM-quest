@@ -51,13 +51,13 @@ class GPTModel(nn.Module):
 
         x = self.final_ln(x)
 
-        # Dirty optimization for last token retrieval, ie classification:
-        # Retrieves the hidden state for the final token, regardless if it's a valid or padding token.
+        # Retrieves the hidden state of the final valid token and not the last token (which could be a padding token)
         # Avoids unnecessary projection for all hidden states.
         if only_last_token:
-            # apply output layer only to the last token's hidden state
-            # shape: (b, emb_dim) → (b, vocab_size)
-            logits = self.out(x[:, -1, :])
+            assert attn_mask is not None, "attn_mask are needed for only_last_token=True"
+            seq_lengths = attn_mask.sum(dim=-1)
+            # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, vocab_size)
+            logits = self.out(x[torch.arange(b), seq_lengths - 1, :])
         else:
             # apply output layer to all hidden states
             # shape: (b, s, emb_dim) → (b, s, vocab_size)
