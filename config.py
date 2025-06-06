@@ -114,6 +114,33 @@ DEEPSEEK_SMALL_CONFIG = {
     "dtype": torch.float32,
 }
 
+# ViT config (similar to the ones in the paper)
+VIT_BASE_CONFIG = {
+    "img_width": 224,
+    "img_height": 224,
+    "patch_size": 16,
+    "num_channels": 3,
+    "emb_dim": 768,
+    "n_layers": 12,
+    "n_heads": 12,
+    "drop_rate": 0.1,
+    "qkv_bias": True,
+    "num_classes": 100,
+}
+
+TINY_VIT_CONFIG = {
+    "img_width": 32,
+    "img_height": 32,
+    "patch_size": 4,  # Smaller patches for 32x32 images (8 patches total)
+    "num_channels": 3,  # RGB
+    "emb_dim": 256,
+    "n_layers": 12,
+    "n_heads": 8,
+    "drop_rate": 0.3,
+    "qkv_bias": True,
+    "num_classes": 10,  # CIFAR-10 has... 10 classes
+}
+
 
 def config_creator(gpt_size):
     """

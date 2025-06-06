@@ -5,6 +5,7 @@ import pandas as pd
 import tiktoken
 import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
+from torchvision import transforms
 
 from llm_quest.utils import alpaca_prompt_format
 
@@ -226,6 +227,45 @@ class HFDataset(Dataset):
 
     def __getitem__(self, index):
         return self.texts[index]
+
+
+# TODO for now we hardcode, HF dataset has different names for the labels keys + values for standardization
+class ImageDataset(Dataset):
+    """
+    Custom dataset class that converts PIL images from HF datasets to tensors and applies transforms.
+
+    Args:
+        hf_dataset_split (dict): Hugging Face dataset split, from the load_dataset(),
+                                ex: dataset["train"], dataset["test"]...
+        standardize(bool): Whether to standardize the images
+    """
+
+    def __init__(self, hf_dataset_split, standardize=False):
+        self.dataset = hf_dataset_split
+
+        if standardize:
+            self.transform = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    # this is hardcoded for CIFAR-10:
+                    #  https://stackoverflow.com/questions/66678052/how-to-calculate-the-mean-and-the-std-of-cifar10-data
+                    transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]),
+                ]
+            )
+        else:
+            self.transform = transforms.ToTensor()
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        image = item["img"]  # PIL Image
+        label = item["label"]  # hardcoded
+
+        image = self.transform(image)  # Convert and normalize the image to a tensor
+
+        return image, label
 
 
 class PreferenceDataset(Dataset):
