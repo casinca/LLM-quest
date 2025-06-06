@@ -25,7 +25,7 @@ def vit_training_eval_loop(
     use_amp=True,
 ):
     """
-    A  training and evaluation loop for ViT with learning rate scheduler,
+    A training and evaluation loop for ViT with learning rate scheduler,
     gradient clipping, mixed precision training (AMP), and accuracy tracking.
     Args:
         train_loader (torch.utils.data.DataLoader): DataLoader for training data
