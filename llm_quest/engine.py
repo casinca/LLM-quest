@@ -372,7 +372,7 @@ def training_eval_loop(
                 scaler.step(optimizer)
                 scaler.update()
 
-            # standard backward pass,
+            # standard backward pass
             else:
                 loss.backward()
                 # gradient clipping at a max norm of 1 (after warmup)

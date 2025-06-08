@@ -5,7 +5,7 @@ from config import VIT_BASE_CONFIG
 from llm_quest.vit.vit_transformer_block import LayerNorm, ViTTransformerBlock
 
 # Some major differences between causal decoders and ViT here.
-# First, the prepocessing step for encoding tokens vs images.
+# First, the preprocessing step for encoding tokens vs images.
 # We create a class to split our image tensors into patches of images (similar to tokens in a sequence) and project
 # these patches to the embedding dimension.
 #
@@ -17,7 +17,7 @@ from llm_quest.vit.vit_transformer_block import LayerNorm, ViTTransformerBlock
 # information of the entire image.
 
 
-# TODO  We might want to add some norm and dropout if this goes bonkers for the ffn type
+# TODO We might want to add some norm and dropout if this goes bonkers for the ffn type
 class ViTAdapter(torch.nn.Module):
     """
     Adapter/connector for ViT to LLM:

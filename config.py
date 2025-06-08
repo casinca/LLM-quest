@@ -12,7 +12,7 @@ GPT_CONFIG_124M = {
     "n_heads": 12,
     "n_layers": 12,
     "drop_rate": 0.0,
-    "qkv_bias": False,  # Query-Key-Value bias
+    "qkv_bias": True,  # Query-Key-Value bias
 }
 
 
@@ -58,7 +58,7 @@ LLAMA32_SMALL_CONFIG = {
     "num_kv_groups": 4,
     "hidden_dim": 4 * 768,  # equivalent to GPT hidden dim
     "rope_base": 10_000,  # RoPE base for θ calc
-    # this section is mainly for SFT:
+    # this section is mainly for SFT/Context length extension
     "rope_freq": {  # hparams for RoPE variant (NTK Aware + by parts/wavelength scaling)
         "factor": 32.0,  # or L'/L
         "alpha": 1.0,  # low frequency boundary
