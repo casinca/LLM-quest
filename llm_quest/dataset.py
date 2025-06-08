@@ -38,11 +38,11 @@ class GPTDataset(Dataset):
 
         self.ids = tokenizer.encode(text)
 
+        # sliding window to create sequences
         for i in range(0, len(self.ids) - max_length, stride):
             self.input.append(self.ids[i : i + max_length])
             self.target.append(self.ids[i + 1 : i + max_length + 1])
 
-        # convert to tensors
         self.input = torch.tensor(self.input)
         self.target = torch.tensor(self.target)
 
@@ -418,6 +418,7 @@ def create_dataloader(
     drop_last,
     num_workers,
     streaming=False,
+    pin_memory=False,
 ):
     """
     Wrapper
@@ -448,6 +449,7 @@ def create_dataloader(
         shuffle=shuffle,
         drop_last=drop_last,
         num_workers=num_workers,
+        pin_memory=pin_memory,
     )
 
     return dataloader
