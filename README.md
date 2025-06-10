@@ -54,7 +54,7 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 &nbsp;
 
  - GPT Fine-tuning:
-    - classifier (retrieval of the hidden state for the last real token)
+    - classifier (method: retrieval of the hidden state for the last real token)
     - instruct*
 
 &nbsp;
