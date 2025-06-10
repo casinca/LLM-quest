@@ -15,7 +15,7 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 **More details in each subfolder's `README.md`**
 
- - GPT*:
+ - GPT* (modified for attention masks $^1$):
     - MHA
     - Layer Norm
     - FFN
@@ -53,15 +53,15 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 &nbsp;
 
- - GPT Fine-tuning*:
-    - classifier
-    - instruct
+ - GPT Fine-tuning:
+    - classifier (retrieval of the hidden state for the last real token)
+    - instruct*
 
 &nbsp;
 
  - Alignment:
-    - DPO* (w/ cDPO for noisy labels), step by step
-    - GRPO from scratch
+    - DPO* (with cDPO for noisy labels), step by step
+    - RLHF GRPO from scratch
 
 &nbsp;
     
@@ -75,16 +75,26 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
 
 &nbsp;
 
-**\*** Already covered by @rasbt, my code is similar.
+*\** Already covered by @rasbt, my code is similar. 
+ 
+$^1$ The original GPT-2 implementation, at the time, didn't have attention masks but only causal masks (*in OpenAI's
+code, they call the actual causal masks ["attention
+mask"](https://github.com/openai/gpt-2/blob/9b63575ef42771a015060c964af2c3da4cf7c8ab/src/model.py#L58C1-L58C38) which
+adds confusion to the terminology*).  
+I implemented it mainly for SFT or RLHF related tasks to ensure the model doesn't attend from/to padding tokens + can be
+used for custom losses as a mask (For CE loss, Pytorch built-in function with no_loss/ignore_index=-100 tokens is
+faster).  
+It's not a problem for pretraining or inference (unless batching is desired) which were the main use cases of the
+original GPT-2.
 
-## potential TODO
+
+## potential TODOs
 - non hardcoded cuda devices
 - vectorize MoE dispatching while keeping the code readable
 - reorganize activation and normalization functions in dedicated modules
-- better optim for classification: we use masks to retrieve the last valid token instead of slicing [:,-1,:]
 - nested TODOs
 - GRPO: 
    - add process supervision
    - add some more training metrics
    - GRPO iterative RL variant (continuous learning of $r_{\phi}$)
-   - we could return the model, instead of inplace
+   - we could return the model, instead of in-place

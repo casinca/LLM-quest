@@ -319,6 +319,12 @@ class PreferenceDataset(Dataset):
         return self.instruct_ids_list[index]
 
 
+# We don't necessarily need to have attention masks because the no_loss tokens will mask padded tokens
+# during loss calc anyways.
+# Yes it's a bit of overhead but for good practice: preventing the model from paying attention from/to padded tokens.
+# We could have used attn_mask as a mask for the loss too and CE arg reduce="None", but PyTorch CE function with
+# built-in detection of -100 as no_loss token is standard practice and more efficient.
+#
 # O(3N) list comprehension was faster when benchmarking than dispatching in a single for loop in O(N)
 def collate_function(batch, custom_max_len=None, device="cpu"):
     """
