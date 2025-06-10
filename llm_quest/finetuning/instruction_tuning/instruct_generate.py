@@ -31,7 +31,7 @@ model.eval()
 
 for instruct in test_txt[4:7]:
 
-    input_txt = alpaca_prompt_format(instruct, response=False)
+    input_txt = alpaca_prompt_format(instruct, include_output=False)
 
     output = generate_loop(
         text_to_ids(input_txt, tokenizer),

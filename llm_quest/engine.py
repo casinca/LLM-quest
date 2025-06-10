@@ -145,21 +145,28 @@ def training_eval_loop_simple(
     for epoch in range(1, num_epoch + 1):
         model.train()
 
-        for input_batch, targets in train_loader:
+        for i, batch in enumerate(train_loader):
             step += 1
+
+            if len(batch) == 3:
+                input_batch, targets, attn_mask = batch
+                attn_mask = attn_mask.to(device)
+
+            else:
+                input_batch, targets = batch
+                attn_mask = None
 
             input_batch = input_batch.to(device)
             targets = targets.to(device)
 
-            logits = model(input_batch)
-            loss = global_loss(logits, targets, model=model)
+            logits = model(input_batch, attn_mask=attn_mask)
 
-            if step % accumulation_steps == 0 or step == len(train_loader):
-                loss = loss / accumulation_steps
+            loss = global_loss(logits, targets, model=model)
+            loss = loss / accumulation_steps
 
             loss.backward()
 
-            if step % accumulation_steps == 0:
+            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
                 optimizer.step()
                 optimizer.zero_grad()
 

@@ -319,6 +319,7 @@ class PreferenceDataset(Dataset):
         return self.instruct_ids_list[index]
 
 
+# O(3N) list comprehension was faster when benchmarking than dispatching in a single for loop in O(N)
 def collate_function(batch, custom_max_len=None, device="cpu"):
     """
     Custom collate function for batching sequences of variable lengths used with InstructionDataset class.
@@ -334,6 +335,7 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
         tuple: A tuple containing:
             - torch.Tensor: Padded input sequences
             - torch.Tensor: Padded target sequences shifted by 1 position
+            - torch.Tensor: Attention mask (1 for real tokens, 0 for padding)
     """
     pad_token_id = 50256  # id of the "<|endoftext|>" token
     no_loss_id = -100  # default Pytorch Cross Entropy ignore_index=-100 for ignoring this token id during loss calc
@@ -345,6 +347,7 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
         truncated_batch = batch
 
     batch_max_len = max(len(sample) for sample in truncated_batch)
+
     # padding a batch's inputs to the max sample's length it contains
     # (each batch will have their own custom len rather than a fixed universal dataset len)
     padded_inputs = [sample + [pad_token_id] * (batch_max_len - len(sample)) for sample in truncated_batch]
@@ -353,8 +356,14 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
     padded_targets = [
         sample[1:] + [pad_token_id] + [no_loss_id] * (batch_max_len - len(sample)) for sample in truncated_batch
     ]
+    # attention masks: 1 for real tokens, 0 for padding
+    attention_masks = [[1] * len(sample) + [0] * (batch_max_len - len(sample)) for sample in truncated_batch]
 
-    return torch.tensor(padded_inputs).to(device), torch.tensor(padded_targets).to(device)
+    return (
+        torch.tensor(padded_inputs).to(device),
+        torch.tensor(padded_targets).to(device),
+        torch.tensor(attention_masks, dtype=torch.bool).to(device),
+    )
 
 
 def custom_collate_fn(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
@@ -433,6 +442,7 @@ def create_dataloader(
         shuffle (bool): Whether to shuffle the dataset.
         drop_last (bool): Whether to drop the last batch if it's not a full batch.
         num_workers (int): The number of workers to use for data loading.
+        pin_memory (bool): Whether to pin memory for faster transfer to GPU.
         streaming (bool): Whether to use streaming for large datasets.
 
     Returns:
