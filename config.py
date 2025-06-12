@@ -186,6 +186,10 @@ instruct_train_path = root_dir / "data" / "instruction_processed" / "train_set.j
 instruct_val_path = root_dir / "data" / "instruction_processed" / "val_set.json"
 instruct_test_path = root_dir / "data" / "instruction_processed" / "test_set.json"
 
+instruct_alpaca_train_path = root_dir / "data" / "instruct_alpaca" / "train_set.json"
+instruct_alpaca_val_path = root_dir / "data" / "instruct_alpaca" / "val_set.json"
+instruct_alpaca_test_path = root_dir / "data" / "instruct_alpaca" / "test_set.json"
+
 instruct_preference_train_path = root_dir / "data" / "instruct_preference_processed" / "train_set.json"
 instruct_preference_val_path = root_dir / "data" / "instruct_preference_processed" / "val_set.json"
 instruct_preference_test_path = root_dir / "data" / "instruct_preference_processed" / "test_set.json"

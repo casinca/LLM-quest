@@ -179,6 +179,7 @@ def training_eval_loop_simple(
                 print(
                     f"Epoch: {epoch}, Step: {step}",
                     f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
+                    f"Δ: {val_loss - train_loss:.3f} ({((val_loss - train_loss) / train_loss * 100):.2f}%)",
                 )
 
 
@@ -303,6 +304,7 @@ def training_eval_loop(
     eval_freq,
     eval_iter,
     device,
+    accumulation_steps=1,
     use_amp=True,
 ):
     """A more robust training+eval loop with learning rate scheduler: warmup, decay (cosine), gradient clipping and
@@ -322,6 +324,7 @@ def training_eval_loop(
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
+        accumulation_steps (int): Number of steps/accumulated gradients before updating parameters
         use_amp (bool): Whether to use Automatic Mixed Precision training
     """
     step = -1
@@ -339,12 +342,14 @@ def training_eval_loop(
     for epoch in range(1, num_epoch + 1):
         model.train()
 
-        for input_batch, targets in train_loader:
+        for i, batch in enumerate(train_loader):
             step += 1
 
-            # Learning rate scheduler logic:
+            # --- Learning rate scheduler ---
             # lr update with warmup and cosine decay = 0.5 * (1 + cos(π * curr_step / total_step))
             # curr_step and total_step are steps after the warmup, thus needs to be adjusted for the warmup difference
+            if step == warmup_steps:
+                print(f"Warmup finished at step {step}. Peak LR reached: {peak_lr:.1e}")
             if step < warmup_steps:
                 lr = init_lr + step * lr_increment
             else:
@@ -358,45 +363,58 @@ def training_eval_loop(
                 if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
                     param_group["lr"] = lr
 
+            # --- Forward pass ---
+            if len(batch) == 3:
+                input_batch, targets, attn_mask = batch
+                attn_mask = attn_mask.to(device)
+            else:
+                input_batch, targets = batch
+                attn_mask = None
+
             input_batch = input_batch.to(device)
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
             with torch.autocast("cuda", enabled=use_amp):
-                logits = model(input_batch)
+                logits = model(input_batch, attn_mask=attn_mask)
                 loss = global_loss(logits, targets, model=model)
+                loss = loss / accumulation_steps
 
-            optimizer.zero_grad()
-
-            # mixed precision backward pass and optimizer step
-            if use_amp:
+            # --- Backward pass ---
+            if use_amp:  # mixed precision backward pass
                 scaler.scale(loss).backward()
-                # gradient clipping
-                if step >= warmup_steps:
-                    scaler.unscale_(optimizer)  # unscale before clipping
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-
-                scaler.step(optimizer)
-                scaler.update()
-
-            # standard backward pass
-            else:
+            else:  # standard backward pass
                 loss.backward()
-                # gradient clipping at a max norm of 1 (after warmup)
-                if step >= warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
-                optimizer.step()
+            # --- Optimizer step ---
+            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
 
-            # eval (AMP disabled for evaluation with torch no_grad in evaluate())
+                if use_amp:
+                    scaler.unscale_(optimizer)  # unscale before clipping
+                    if step >= warmup_steps:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                    scaler.step(optimizer)
+                    scaler.update()
+
+                else:
+                    # gradient clipping at a max norm of 1 (after warmup)
+                    if step >= warmup_steps:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                    optimizer.step()
+
+                optimizer.zero_grad()
+
+            # --- Evaluation --- (AMP disabled for evaluation with torch no_grad in evaluate())
             if step % eval_freq == 0:
                 train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
                 train_losses.append(train_loss.item())
                 val_losses.append(val_loss.item())
 
                 print(
-                    f"Epoch: {epoch}, Step: {step}",
-                    f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
+                    f"Epoch: {epoch}, Step: {step}  | ",
+                    f"Train loss: {train_loss:.5f}  Val loss: {val_loss:.5f}  | ",
+                    f"Δ: {val_loss - train_loss:.3f} ({((val_loss - train_loss) / train_loss * 100):.2f}%)  | ",
+                    f"lr: {lr:.1e}",
                 )
 
     return train_losses, val_losses

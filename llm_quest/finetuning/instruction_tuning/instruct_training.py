@@ -13,9 +13,10 @@ peak_lr = 1e-5
 warmup_percent = 0
 init_lr = 1e-5
 min_lr = 1e-5
-eval_freq = 10
+eval_freq = 100
 eval_iter = 10
 weight_decay = 0.1
+accumulation_steps = 2
 num_workers = 0
 pin_memory = False
 use_amp = True
@@ -40,8 +41,8 @@ if __name__ == "__main__":
     model = GPTModel(model_cfg)
     load_weights_into_gpt(model, params)
 
-    train_set = InstructionDataset(config.instruct_train_path, tokenizer)
-    val_set = InstructionDataset(config.instruct_val_path, tokenizer)
+    train_set = InstructionDataset(config.instruct_alpaca_train_path, tokenizer)
+    val_set = InstructionDataset(config.instruct_alpaca_val_path, tokenizer)
 
     # using partial() to hardcode device and custom_max_len args for the loader
     custom_collate = partial(
@@ -87,6 +88,7 @@ if __name__ == "__main__":
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=model_device,
+        accumulation_steps=accumulation_steps,
         use_amp=use_amp,
     )
 

@@ -1,4 +1,4 @@
-# GPT2 arch
+# GPT2 architecture
 
 - GPT: https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf
 - GPT-3: https://arxiv.org/abs/2005.14165
