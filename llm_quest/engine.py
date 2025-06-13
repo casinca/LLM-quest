@@ -107,7 +107,7 @@ def calc_loss_loader(dataloader, model, device, num_batches=None, classification
                 X, y = batch
                 loss = _calc_loss_batch(X, y, model, device, classification=classification)
 
-            total_loss += loss
+            total_loss += loss.item()
 
     # returning mean
     return total_loss / num_batches
@@ -407,8 +407,8 @@ def training_eval_loop(
             # --- Evaluation --- (AMP disabled for evaluation with torch no_grad in evaluate())
             if step % eval_freq == 0:
                 train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
-                train_losses.append(train_loss.item())
-                val_losses.append(val_loss.item())
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
 
                 print(
                     f"Epoch: {epoch}, Step: {step}  | ",
@@ -528,8 +528,8 @@ def training_eval_loop_deprecated(
             if step % eval_freq == 0:
                 # eval
                 train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
-                train_losses.append(train_loss.item())
-                val_losses.append(val_loss.item())
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
 
                 print(
                     f"Epoch: {epoch}, Step: {step}",
@@ -667,8 +667,8 @@ def profile_training_eval_loop(
                 # Evaluation
                 if step % eval_freq == 0:
                     train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
-                    train_losses.append(train_loss.item())
-                    val_losses.append(val_loss.item())
+                    train_losses.append(train_loss)
+                    val_losses.append(val_loss)
 
                     print(
                         f"Epoch: {epoch}, Step: {step}",
