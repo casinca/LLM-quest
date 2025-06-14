@@ -1,7 +1,5 @@
 # Vision Transformer (ViT) from scratch
 
-*note: when I mention "hidden states" I mean the final hidden states/latent representations, output of the last layer before
-reducing to logits.*
 
 This from-scratch ViT implementation is an intermediate step towards multimodal models. The goal is to reuse the ViT as
 an image encoder for an LLM.  
