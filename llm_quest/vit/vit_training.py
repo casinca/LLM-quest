@@ -8,7 +8,7 @@ from llm_quest.vit.vit_engine import vit_training_eval_loop
 from llm_quest.vit.vit_model import ViTModel
 
 # --- Hyperparameters ---
-batch_size = 512
+batch_size = 256
 num_epochs = 20
 peak_lr = 8e-4
 init_lr = 1e-6
@@ -20,9 +20,10 @@ eval_iter = 25
 num_workers = 10
 pin_memory = True
 persistent_workers = False
-
+amp = True
 
 if __name__ == "__main__":
+    torch.manual_seed(123)
 
     # --- Loaders ---
     print("Loading dataset...")
@@ -59,20 +60,14 @@ if __name__ == "__main__":
 
     torch.set_float32_matmul_precision("high")
     model = ViTModel(TINY_VIT_CONFIG)
-    model.bfloat16().to(device)
+    model.to(device)
 
     # model info
     total_params = sum(p.numel() for p in model.parameters())
     print(f"ViT model created with {total_params:,} parameters")
     print(f"Model configuration: {TINY_VIT_CONFIG}")
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=peak_lr,
-        weight_decay=weight_decay,
-        betas=(0.9, 0.999),
-        fused=True,
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay, fused=True)
 
     print("\nStarting training...")
 
@@ -90,7 +85,7 @@ if __name__ == "__main__":
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=device,
-        use_amp=False,
+        use_amp=amp,
     )
 
     print(f"Final training accuracy: {train_accus[-1]*100:.2f}%")

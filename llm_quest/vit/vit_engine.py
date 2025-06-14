@@ -84,7 +84,7 @@ def vit_training_eval_loop(
                 if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
                     param_group["lr"] = lr
 
-            input_batch = input_batch.to(device).bfloat16()
+            input_batch = input_batch.to(device)
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
@@ -117,8 +117,8 @@ def vit_training_eval_loop(
             # eval (AMP disabled for evaluation with torch no_grad in evaluate())
             if step % eval_freq == 0:
                 train_loss, val_loss = ViT.evaluate(train_loader, val_loader, model, eval_iter, device)
-                train_losses.append(train_loss.item())
-                val_losses.append(val_loss.item())
+                train_losses.append(train_loss)
+                val_losses.append(val_loss)
 
                 print(
                     f"Epoch: {epoch}, Step: {step}",
@@ -163,7 +163,7 @@ class ViT:
         with torch.no_grad():
             for X, y in data_loader:
 
-                X = X.to(device).bfloat16()
+                X = X.to(device)
                 y = y.to(device)
 
                 logits = model(X)  # (b, num_classes)
@@ -229,7 +229,7 @@ class ViT:
         for i, (X, y) in enumerate(dataloader):
             if i < num_batches:
                 loss = ViT._calc_loss_batch(X, y, model, device)
-                total_loss += loss
+                total_loss += loss.item()
 
         # Return mean loss
         return total_loss / num_batches
@@ -248,7 +248,7 @@ class ViT:
         Returns:
             torch.Tensor: The loss for the batch.
         """
-        X = X.to(device).bfloat16()
+        X = X.to(device)
         y = y.to(device)
 
         logits = model(X)
