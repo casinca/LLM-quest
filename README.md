@@ -93,7 +93,12 @@ original GPT-2.
 - vectorize MoE dispatching while keeping the code readable
 - reorganize activation and normalization functions in dedicated modules
 - nested TODOs
-- GRPO: 
+- Confusing names: model attn_mask arg (padding tokens only) and attention_mask used as loss mask for alignment
+- GRPO:  
+   - simplify masking: curr masking padding tokens only for logprobs and not prompt tokens too. Use reward_masks
+     (prompt+padding) for everything. so that we don't need to mask the loss again at the end.
+     We can keep these attention_mask in case for the model with optional return argument `include_attention_mask` in
+     `batched_response_collator`
    - add process supervision
    - add some more training metrics
    - GRPO iterative RL variant (continuous learning of $r_{\phi}$)

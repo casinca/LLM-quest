@@ -271,6 +271,7 @@ class ImageDataset(Dataset):
 class PreferenceDataset(Dataset):
     """
     PreferenceDataset is a custom PyTorch Dataset for preparing preference tuning data, similar to InstructionDataset.
+    We return the tokenized prompt (instruction+question), prompt+chosen response, and prompt+rejected response.
 
     Args:
         file (str): Path to the JSON file containing preference examples with 'instruction',
@@ -372,6 +373,10 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
     )
 
 
+# NOTE: these masks aren't passed to the model as an argument attn_mask=..., because not only padding tokens are masked
+# but also prompt tokens. This is more of a mask used for the loss calculation. Response tokens do need to attend to the
+# prompt tokens, thus I can't use the attn_mask argument because it would also mask the prompt tokens with
+# mask_prompt_tokens=True.
 def custom_collate_fn(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
     """
     Copy of @rasbt's custom collate function for alignment finetuning
