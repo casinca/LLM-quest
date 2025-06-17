@@ -86,18 +86,19 @@ def alpaca_prompt_format(entry, include_output=True):
         else ""
     )
 
-    output_txt = (
-        "\n\n### Response:"
-        f"\n{entry['output']}"
-
-        if entry["output"]
-        else ""
-    )
-    # fmt: on
-
+    # small optimization to avoid processing output if not needed
     if not include_output:
         return instruction_txt + input_txt
+    
     else:
+        output_txt = (
+            "\n\n### Response:"
+            f"\n{entry['output']}"
+
+            if entry["output"]
+            else ""
+        )
+
         return instruction_txt + input_txt + output_txt
 
 
