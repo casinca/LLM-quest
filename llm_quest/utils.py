@@ -71,42 +71,34 @@ def alpaca_prompt_format(entry, include_output=True):
             in the Alpaca format.
     """
 
-    instruction_txt = f"""
-Below is an instruction that describes a task. Write a response that appropriately completes the request.
+    instruction_txt = (
+        "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+        "\n\n### Instruction:"
+        f"\n{entry['instruction']}"
+    )
 
-### Instruction:
-{entry['instruction']}
-"""
-
+    # fmt: off
     input_txt = (
-        f"""
-### Input:
-{entry['input']}
-"""
+        "\n\n### Input:"
+        f"\n{entry['input']}"
+        
         if entry["input"]
         else ""
     )
 
-    output_txt = f"""
-### Response:
-{entry['output']}
-"""
+    output_txt = (
+        "\n\n### Response:"
+        f"\n{entry['output']}"
+
+        if entry["output"]
+        else ""
+    )
+    # fmt: on
+
     if not include_output:
         return instruction_txt + input_txt
     else:
         return instruction_txt + input_txt + output_txt
-
-
-def alpaca_prompt_format2(entry):
-    instruction_text = (
-        f"Below is an instruction that describes a task. "
-        f"Write a response that appropriately completes the request."
-        f"\n\n### Instruction:\n{entry['instruction']}"
-    )
-
-    input_text = f"\n\n### Input:\n{entry['input']}" if entry["input"] else ""
-
-    return instruction_text + input_text
 
 
 # @rasbt's CH5 copy, util function for OpenAI's weights matching
