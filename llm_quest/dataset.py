@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 from torchvision import transforms
 
-from llm_quest.utils import alpaca_prompt_format
+from llm_quest.utils import alpaca_deepseek_format, alpaca_prompt_format
 
 
 class GPTDataset(Dataset):
@@ -155,30 +155,48 @@ class SpamDataset(Dataset):
 
 class InstructionDataset(Dataset):
     """
-    InstructionDataset is a custom PyTorch Dataset for preparing instruction tuning data:
-    formatting to Alpaca + tokenizing
+    InstructionDataset is a custom PyTorch Dataset designed for loading, formatting, and tokenizing
+    instruction-following data. It supports different file formats (JSON, JSONL) and allows for custom formatting
+    functions.
 
     Args:
-        file (str): Path to the JSON file  containing instruction examples with 'instruction',
-                    'input', and 'output' keys.
-        tokenizer (Tokenizer): The tokenizer object used to encode the text.
+        file (str): Path to the dataset file. This can be a JSON file (e.g., Alpaca format) or a JSONL file (gsm8k),
+                    containing full instruction examples.
+        tokenizer (Tokenizer): The tokenizer object (e.g., from `tiktoken`) used to encode the text.
+        formatting_func (callable, optional): The function used to format the instruction examples:
+            - alpaca_prompt_format: for Alpaca format
+            - alpaca_deepseek_format: for Alpaca + DeepSeek R1 reasoning format
+            Defaults to `alpaca_prompt_format` (backward compatibility).
+        file_format (str, optional): The format of the input file. Supported values are "json"
+                                        and "jsonl". Defaults to "json".
 
     Attributes:
-        instruct_ids_list (list): List of tokenized instruction sequences.
+        instruct_ids_list (list): A list where each element is a list of token IDs, representing
+                                    a tokenized and formatted instruction sequence.
 
     Methods:
         __len__(): Returns the number of samples in the dataset.
         __getitem__(index): Returns the tokenized instruction sequence at the given index.
     """
 
-    def __init__(self, file, tokenizer):
-        with open(file, "r") as f:
-            text = json.load(f)
-
+    def __init__(self, file, tokenizer, formatting_func=alpaca_prompt_format, file_format="json"):
         self.instruct_ids_list = []
-        for instruct in text:
-            formatted_instruct = alpaca_prompt_format(instruct)
-            self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
+
+        if file_format == "json":
+            with open(file, "r") as f:
+                text = json.load(f)
+                for instruct in text:
+                    formatted_instruct = formatting_func(instruct)
+                    self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
+
+        elif file_format == "jsonl":
+            with open(file, "r") as f:
+                for line in f:
+                    text = json.loads(line)
+                    formatted_instruct = formatting_func(text)
+                    self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
+        else:
+            raise ValueError(f"Invalid file format: {file_format}")
 
     def __len__(self):
         return len(self.instruct_ids_list)

@@ -102,6 +102,62 @@ def alpaca_prompt_format(entry, include_output=True):
         return instruction_txt + input_txt + output_txt
 
 
+def alpaca_deepseek_format(entry, include_answer=True):
+    """
+    Formats a GSM8K entry into a DeepSeek reasoning format (R1 paper) adapted with alpaca style instruction:
+    - includes alpaca style instruction
+    - includes reasoning and final answer tags for the answer
+
+
+    Args:
+        entry (dict): A dictionary containing 'question' and 'answer' keys
+                        representing a math problem example with reasoning and final answer.
+        include_answer (bool): If set to False, will remove the formatted answer from the output.
+
+    Returns:
+        str: A formatted prompt string containing the question and, optionally, the structured answer following DeepSeek
+        R1 paper format (with <think> and <answer> tags) adapted to the alpaca style instruction.
+    """
+
+    # TODO: test some different good instructs that aren't too long and complex + close semantically to alpaca SFT and
+    # see if it improves the performance
+    instruction = (
+        "Below is a question concerning a math problem. "
+        "Your role as an assistant is to reason step by step and provide the final answer to the problem. "
+        "It is very important that you structure your response into 2 main sections: reasoning and answer. "
+        "You must enclose your reasoning process in <think> </think> tags and final answer in <answer> </answer> tags. "
+        "For example: <think> reasoning process here </think> <answer> answer here </answer>. "
+        "Following the above instructions, try to solve the question:"
+    )
+
+    # fmt: off
+    input_txt = (
+        "\n\n### Input:"
+        f"\n{entry['question']}"
+        
+        if entry["question"]
+        else ""
+    )
+
+    # small optimization to avoid processing answer if not needed
+    if not include_answer:
+        return instruction + input_txt
+
+    else:
+        reasoning_part, separator, answer_part = entry["answer"].partition("\n#### ")
+        answer_formatted = f"<think>{reasoning_part}</think> <answer>{answer_part}</answer>"
+        
+        answer = (
+            "\n\n### Response:"
+            f"\n{answer_formatted}"
+
+            if entry["answer"]
+            else ""
+        )
+
+        return instruction + input_txt + answer
+
+
 # @rasbt's CH5 copy, util function for OpenAI's weights matching
 def assign(left, right):
     if left.shape != right.shape:
