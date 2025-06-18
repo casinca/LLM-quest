@@ -79,7 +79,7 @@ def training_eval_loop_mtp(
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
-            with torch.autocast("cuda", enabled=use_amp):
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 loss = model(input_batch, targets, mtp_inputs, mtp_targets)
 
             optimizer.zero_grad()

@@ -375,7 +375,7 @@ def training_eval_loop(
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
-            with torch.autocast("cuda", enabled=use_amp):
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 logits = model(input_batch, attn_mask=attn_mask)
                 loss = global_loss(logits, targets, model=model)
                 loss = loss / accumulation_steps
@@ -644,7 +644,7 @@ def profile_training_eval_loop(
                 targets = targets.to(device)
 
                 # Forward pass with autocast
-                with torch.autocast("cuda", enabled=use_amp):
+                with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                     logits = model(input_batch)
                     loss = global_loss(logits, targets, model=model)
 
