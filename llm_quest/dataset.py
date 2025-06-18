@@ -167,7 +167,7 @@ class InstructionDataset(Dataset):
             - alpaca_prompt_format: for Alpaca format
             - alpaca_deepseek_format: for Alpaca + DeepSeek R1 reasoning format
             Defaults to `alpaca_prompt_format` (backward compatibility).
-        file_format (str, optional): The format of the input file. Supported values are "json"
+        file_type (str, optional): The format of the input file. Supported values are "json"
                                         and "jsonl". Defaults to "json".
 
     Attributes:
@@ -179,24 +179,24 @@ class InstructionDataset(Dataset):
         __getitem__(index): Returns the tokenized instruction sequence at the given index.
     """
 
-    def __init__(self, file, tokenizer, formatting_func=alpaca_prompt_format, file_format="json"):
+    def __init__(self, file, tokenizer, formatting_func=alpaca_prompt_format, file_type="json"):
         self.instruct_ids_list = []
 
-        if file_format == "json":
+        if file_type == "json":
             with open(file, "r") as f:
                 text = json.load(f)
                 for instruct in text:
                     formatted_instruct = formatting_func(instruct)
                     self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
 
-        elif file_format == "jsonl":
+        elif file_type == "jsonl":
             with open(file, "r") as f:
                 for line in f:
                     text = json.loads(line)
                     formatted_instruct = formatting_func(text)
                     self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
         else:
-            raise ValueError(f"Invalid file format: {file_format}")
+            raise ValueError(f"Invalid file type: {file_type}")
 
     def __len__(self):
         return len(self.instruct_ids_list)
