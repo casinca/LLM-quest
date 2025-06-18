@@ -81,7 +81,7 @@ if __name__ == "__main__":
     torch.save(
         {
             "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
+            # "optimizer_state_dict": optimizer.state_dict(),
         },
         config.ft_classifier_w_gpt2,
     )

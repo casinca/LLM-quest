@@ -96,7 +96,7 @@ if __name__ == "__main__":
     torch.save(
         {
             "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
+            # "optimizer_state_dict": optimizer.state_dict(),
             "config": TINY_VIT_CONFIG,
             "train_losses": train_losses,
             "val_losses": val_losses,
