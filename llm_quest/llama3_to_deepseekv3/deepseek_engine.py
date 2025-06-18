@@ -2,7 +2,6 @@ import math
 import time
 
 import torch
-from torch.amp import GradScaler
 
 
 def training_eval_loop_mtp(
@@ -50,9 +49,6 @@ def training_eval_loop_mtp(
     # Keep a record of metrics for plotting.
     train_losses, val_losses = [], []
 
-    # Initialize gradient scaler for AMP
-    scaler = GradScaler("cuda", enabled=use_amp)
-
     for epoch in range(1, num_epoch + 1):
         model.train()
 
@@ -84,25 +80,12 @@ def training_eval_loop_mtp(
 
             optimizer.zero_grad()
 
-            # Mixed precision backward pass and optimizer step
-            if use_amp:
-                scaler.scale(loss).backward()
-                # gradient clipping
-                if step >= warmup_steps:
-                    scaler.unscale_(optimizer)  # unscale before clipping
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-
-                scaler.step(optimizer)
-                scaler.update()
-
-            # Standard backward pass
-            else:
-                loss.backward()
-                # gradient clipping at a max norm of 1 (after warmup)
-                if step >= warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-
-                optimizer.step()
+            # Backward pass and optimizer step (simplified - no scaler needed for bfloat16)
+            loss.backward()
+            # gradient clipping at a max norm of 1 (after warmup)
+            if step >= warmup_steps:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+            optimizer.step()
 
             # eval (AMP disabled for evaluation with torch no grad in evaluate())
             if step % eval_freq == 0:
