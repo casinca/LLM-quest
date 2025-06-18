@@ -2,7 +2,6 @@ import math
 import time
 
 import torch
-from torch.amp import GradScaler
 
 
 def _calc_loss_batch(X, y, model, device, attn_mask=None, classification=False):
@@ -336,9 +335,6 @@ def training_eval_loop(
     # Keep a record of metrics for plotting.
     train_losses, val_losses = [], []
 
-    # Initialize gradient scaler for AMP
-    scaler = GradScaler("cuda", enabled=use_amp)
-
     for epoch in range(1, num_epoch + 1):
         model.train()
 
@@ -380,28 +376,14 @@ def training_eval_loop(
                 loss = global_loss(logits, targets, model=model)
                 loss = loss / accumulation_steps
 
-            # --- Backward pass ---
-            if use_amp:  # mixed precision backward pass
-                scaler.scale(loss).backward()
-            else:  # standard backward pass
-                loss.backward()
+            loss.backward()
 
             # --- Optimizer step ---
             if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
-
-                if use_amp:
-                    scaler.unscale_(optimizer)  # unscale before clipping
-                    if step >= warmup_steps:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                else:
-                    # gradient clipping at a max norm of 1 (after warmup)
-                    if step >= warmup_steps:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-                    optimizer.step()
-
+                # gradient clipping at a max norm of 1 (after warmup)
+                if step >= warmup_steps:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                optimizer.step()
                 optimizer.zero_grad()
 
             # --- Evaluation --- (AMP disabled for evaluation with torch no_grad in evaluate())
@@ -607,9 +589,6 @@ def profile_training_eval_loop(
     if warmup_percent and warmup_steps:
         lr_increment = (peak_lr - init_lr) / warmup_steps
 
-    # Initialize gradient scaler for AMP
-    scaler = torch.amp.GradScaler(enabled=use_amp)
-
     # Create profiler
     with profile(
         activities=activities,
@@ -650,19 +629,11 @@ def profile_training_eval_loop(
 
                 optimizer.zero_grad()
 
-                # Mixed precision backward and optimizer step
-                if use_amp:
-                    scaler.scale(loss).backward()
-                    if step >= warmup_steps:
-                        scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    if step >= warmup_steps:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-                    optimizer.step()
+                # Backward and optimizer step (simplified - no scaler needed for bfloat16)
+                loss.backward()
+                if step >= warmup_steps:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                optimizer.step()
 
                 # Evaluation
                 if step % eval_freq == 0:
