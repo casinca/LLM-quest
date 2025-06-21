@@ -122,6 +122,7 @@ def alpaca_deepseek_format(entry, include_answer=True):
     # TODO: test some different good instructs that aren't too long and complex + close semantically to alpaca SFT and
     # see if it improves the performance
     instruction = (
+        "### Instruction:\n"
         "Below is a question concerning a math problem. "
         "Your role as an assistant is to reason step by step and provide the final answer to the problem. "
         "It is very important that you structure your response into 2 main sections: reasoning and answer. "
