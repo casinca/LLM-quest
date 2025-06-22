@@ -507,10 +507,10 @@ def grpo_training_loop_variant_experimental(
 ):
     """
     GRPO training with just 2 models (1 policy + 1 reward model).
-    This experimental version is based on the assumption that we can use a single policy for both π_θ and π_θ_old from
-    the grpo_training_loop() func implementation.
-    From that assumption and mixed with the deprecated_grpo_training_loop_variant() where we used a single model for
-    both π_ref and π_θ_old:
+    This experimental version is based on 2 assumptions:
+    - we can use a single policy for both π_θ and π_θ_old from the grpo_training_loop() func implementation.
+    - we can use a single model for both π_ref and π_θ_old from a deprecated_grpo_training_loop_variant() I removed.
+        see commit: https://github.com/casinca/LLM-quest/commit/21c477d247d2a7a2092f3eff951d41b02fc633b7
 
     We are left with a single model for π_θ, π_θ_old and π_ref.
     The drawback is that π_ref anchor role isn't as strong, since it's updated every sample/batch with π_θ_old.
