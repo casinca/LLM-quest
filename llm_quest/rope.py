@@ -7,12 +7,12 @@ class RoPE:
     @staticmethod
     def ntk_aware_base_scaling(theta_base, head_dim, ctx_len, old_ctx_len):
         """
-        Fixed NTK aware scaling for theta base following @block97 and YaRN paper
+        Fixed NTK aware scaling for theta base, following @block97 and YaRN paper
         """
         return theta_base * (ctx_len / old_ctx_len) ** (head_dim / (head_dim - 2))
 
     @staticmethod
-    def wavelength_scaling(base, head_dim, freq_cfg, ntk_aware_scaling=True):
+    def wavelength_scaling(base, head_dim, freq_cfg, ntk_aware_scaling=True, dtype=torch.float32):
         """
         Implements smooth frequency scaling with three bands (NTK by parts):
         - High frequency band: No interpolation (λ < ctx_len)
@@ -25,6 +25,7 @@ class RoPE:
             head_dim (int): Dimension of each attention head, must be even
             freq_cfg (dict): Configuration for frequency scaling
             ntk_aware_scaling (bool, optional): Enable NTK aware scaling
+            dtype (torch.dtype, optional): Data type for the angles computation
 
 
         Returns:
@@ -33,7 +34,7 @@ class RoPE:
         # base frequencies
         if ntk_aware_scaling:
             base = RoPE.ntk_aware_base_scaling(base, head_dim, freq_cfg["ctx_len"], freq_cfg["og_ctx_len"])
-        theta = 1 / base ** (2 * (torch.arange(0, head_dim // 2)) / head_dim)
+        theta = 1 / base ** (2 * (torch.arange(0, head_dim // 2, dtype=dtype)) / head_dim)
 
         wavelen = 2 * torch.pi / theta
 
@@ -69,7 +70,7 @@ class RoPE:
         return final_theta
 
     @staticmethod
-    def compute_angles(base, head_dim, ctx_len, smooth_scaling_cfg=None, ntk_aware_scaling=True):
+    def compute_angles(base, head_dim, ctx_len, smooth_scaling_cfg=None, ntk_aware_scaling=True, dtype=torch.float32):
         """
         Computes the sine and cosine of the angles for RoPE, optionally smooth frequency scaling.
 
@@ -79,6 +80,8 @@ class RoPE:
             ctx_len (int): The maximum context length.
             smooth_scaling_cfg (dict, optional): Configuration for YaRN smooth frequency scaling.
                 If None, standard RoPE scaling is applied. Defaults to None.
+            ntk_aware_scaling (bool, optional): Enable NTK aware scaling. Defaults to True.
+            dtype (torch.dtype, optional): Data type for the angles computation.
 
         Returns:
             tuple (torch.Tensor, torch.Tensor): A tuple containing the cosine and sine of the computed angles.
@@ -96,11 +99,12 @@ class RoPE:
                 head_dim,
                 smooth_scaling_cfg,
                 ntk_aware_scaling,
+                dtype,
             )
         else:
-            theta = 1 / base ** (2 * (torch.arange(0, head_dim // 2)) / head_dim)
+            theta = 1 / base ** (2 * (torch.arange(0, head_dim // 2, dtype=dtype)) / head_dim)
 
-        positions = torch.arange(0, ctx_len)  # absolute position ("m" in the paper)
+        positions = torch.arange(0, ctx_len, dtype=dtype)  # absolute position ("m" in the paper)
 
         # m ⊗ Θ, outer product to insert respective positions to all Θ in the matrix m0*vec0, m1*vec1, etc...
         angles = torch.outer(positions, theta)  # shape (ctx_len, head_dim //2)
@@ -153,8 +157,8 @@ class RoPE:
 
         # preparing 2nd coordinates/embs matrix for calc optimization
         rotated = torch.concat((-h2, h1), dim=-1)
-        # setting cos & sin up to seq_len. shape (ctx_len, head_dim) → (seq_len, head_dim)
-        cos, sin = cos[:seq_length, :], sin[:seq_length, :]
+        # setting cos & sin up to seq_len. shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
+        cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
 
         # apply RoPE efficiently
         res = cos * x + sin * rotated

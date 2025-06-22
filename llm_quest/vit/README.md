@@ -73,11 +73,18 @@ Classification Head (CLS token only)
 Class Logits ("num classes" classes)
 ```
 
+## Quick training test & results
+
+From-scratch TinyViT (9.5M params) did "OK" on CIFAR-10 pre-training (20 epochs, ~10 mins).  
+71.82% accuracy on the latest validation checkpoint. That is without any data augmentation (probably the largest source
+of perf as regularization) or any optimization tricks. Pure GPT architecture conversion by following the paper.
+
+
 ## Towards Multimodal LLMs
 
 
 Once the ViT is trained for classification, we can use it as an image encoder for the multimodal SFT/VQA training of our
-LLM. Alternatively we can still load a pretrained battle-tested ViT from a CLIP model: https://github.com/openai/CLIP.
+LLM. Alternatively we can still load a pre-trained battle-tested ViT from a CLIP model: https://github.com/openai/CLIP.
 
 There are multiple ways to inject our hidden states into the LLM aka "modality fusion", 2 known methods are:
 - Concatenating the ViT's image embeddings/hidden states with the LLM's text input embeddings, also known as Early

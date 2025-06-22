@@ -46,16 +46,24 @@ familiar with the LLM from scratch repo/book should be familiar with the code he
     - Logit softcapping (Gemma 2, kept for reference)
 
 &nbsp;
+
+ - GPT to Vision Transformer (ViT) from scratch:
+    - Image encoding: Image patches + learnable CLS token + positional encoding
+    - Full Attention
+    - Image Classification head
+    - ViT↔LLM adapter for multimodal alignment/fine-tuning
+
+&nbsp;
     
- - MoE:
+ - Mixture of Experts (MoE) from scratch:
     - Sparse MoE with classic auxiliary loss + z router loss
     - DeepSeek MoE variant: fine-grained + shared expert isolation + auxiliary loss free load balancing
 
 &nbsp;
 
- - GPT Fine-tuning:
+ - GPT Fine-tuning (SFT):
     - classifier (method: retrieval of the hidden state for the last real token)
-    - instruct*
+    - instruction*
 
 &nbsp;
 
