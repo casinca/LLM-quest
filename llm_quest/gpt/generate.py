@@ -1,10 +1,4 @@
-import tiktoken
 import torch
-
-import config
-from gpt_download import download_and_load_gpt2
-from llm_quest.gpt.gpt_model import GPTModel
-from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
 
 
 def generate_simple_loop(input, model, max_gen, context_length):
@@ -110,6 +104,13 @@ def top_k_sampling(logits, k):
 # test code
 if __name__ == "__main__":
 
+    import tiktoken
+
+    import config
+    from gpt_download import download_and_load_gpt2
+    from llm_quest.gpt.gpt_model import GPTModel
+    from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
+
     # ---------------------------- PART A ------- Testing simple func generation without pretrained weights
 
     # print("START")
@@ -180,7 +181,7 @@ if __name__ == "__main__":
     model.to(device)  # we move the model to GPU *after* loading weights
 
     output3 = generate_loop(
-        input=text_to_ids("This is where it", tokenizer=tokenizer),
+        input=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
         model=model,
         max_gen=20,
         context_length=model_settings["context_length"],
@@ -188,4 +189,5 @@ if __name__ == "__main__":
         temp=1.4,
     )
 
-    print(f"OUTPUT3: {ids_to_text(output3, tokenizer)}")
+    for tensor in output3:
+        print(ids_to_text(tensor, tokenizer))
