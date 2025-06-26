@@ -125,14 +125,14 @@ def reward_model_training_eval_loop_simple(
     return tracking
 
 
-# TODO might want to customize evaluation on a customizable number of batches
-def evaluate_reward_model(val_loader, reward_model):
+def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
     """
     Evaluate the reward model on the full validation set.
 
     Args:
         val_loader (DataLoader): DataLoader providing batches of chosen and rejected responses.
         reward_model (nn.Module): The reward model being evaluated.
+        eval_num_batches (int, optional): Number of batches to evaluate. If None, evaluate the whole validation set.
 
     Returns:
         tuple: A tuple containing:
@@ -145,9 +145,13 @@ def evaluate_reward_model(val_loader, reward_model):
     correct = 0
     count = 0
 
+    num_batches_to_eval = min(eval_num_batches, len(val_loader)) if eval_num_batches else len(val_loader)
+
     reward_model.eval()
     with torch.inference_mode():
-        for batch in val_loader:
+        for i, batch in enumerate(val_loader):
+            if i >= num_batches_to_eval:
+                break
 
             pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
             rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
@@ -165,7 +169,7 @@ def evaluate_reward_model(val_loader, reward_model):
             correct += (pref_reward > rej_reward).sum().item()
             count += pref_reward.shape[0]
 
-        avg_loss = total_loss / len(val_loader)
+        avg_loss = total_loss / num_batches_to_eval
         avg_acc = correct / count
 
     reward_model.train()
@@ -815,10 +819,10 @@ class GRPOEvaluator:
         total_reward = 0.0
         total_kl_div = 0.0
 
-        num_batches_to_run = min(eval_num_batches, len(loader)) if eval_num_batches else len(loader)
+        num_batches_to_eval = min(eval_num_batches, len(loader)) if eval_num_batches else len(loader)
 
         for i, batch in enumerate(loader):
-            if i >= num_batches_to_run:
+            if i >= num_batches_to_eval:
                 break
 
             # --- Sampling responses ---
@@ -876,8 +880,8 @@ class GRPOEvaluator:
             total_reward += mean_batch_rewards.item()
             total_kl_div += mean_batch_kl_div.item()
 
-        avg_reward = total_reward / num_batches_to_run
-        avg_kl_div = total_kl_div / num_batches_to_run
+        avg_reward = total_reward / num_batches_to_eval
+        avg_kl_div = total_kl_div / num_batches_to_eval
 
         return {"reward": avg_reward, "kl_div": avg_kl_div}
 
