@@ -33,7 +33,7 @@ def reward_model_training_eval_loop_simple(
     optimizer,
     num_epoch,
     eval_freq,
-    eval_iter=None,
+    eval_num_batches=None,
     device=None,
     beta=0.1,
 ):
@@ -48,7 +48,7 @@ def reward_model_training_eval_loop_simple(
         num_epoch (int): Total number of epochs to train for.
         eval_freq (int): Frequency (in training steps) at which to perform evaluation.
                         Also used as the training loss logging interval.
-        eval_iter (int, optional): Number of batches to use for evaluation. If None, evaluate the whole validation set.
+        eval_num_batches (int, optional): Number of batches to use for evaluation. If None, evaluate the whole validation set.
         device (torch.device, optional): Device to run training on (e.g., 'cuda', 'cpu').
                 Note: This parameter is currently not used internally as data loading handles device placement.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 0.1.
@@ -105,16 +105,14 @@ def reward_model_training_eval_loop_simple(
                 avg_interval_train_acc = (
                     interval_correct_pred / interval_train_count if interval_train_count > 0 else 0.0
                 )
-                val_loss, val_acc = evaluate_reward_model(val_loader, reward_model)
+                val_loss, val_acc = evaluate_reward_model(val_loader, reward_model, eval_num_batches)
                 tracking["val_losses"].append(val_loss)
                 tracking["val_acc"].append(val_acc)
 
                 print(
-                    f"Epoch: {epoch}, Step: {step}",
-                    f"Train loss: {avg_interval_train_loss:.5f}",
-                    f"Train acc: {avg_interval_train_acc:.5f}",
-                    f"Val loss: {val_loss:.5f}",
-                    f"Val acc: {val_acc:.5f}",
+                    f"Epoch: {epoch}, Step: {step} |",
+                    f"T. loss: {avg_interval_train_loss:.5f}, V. loss: {val_loss:.5f} |",
+                    f"T. acc: {avg_interval_train_acc*100:.2f}%, V. acc: {val_acc*100:.2f}%",
                 )
 
                 # reset interval training metrics
@@ -789,9 +787,9 @@ def grpo_training_loop(
                 )
                 print(
                     f"Step {step} | "
-                    f"Avg GRPO Loss: {avg_grpo_loss:.4f}, "
-                    f"Train Reward: {eval_metrics['train_reward']:.4f}, Train KL Div: {eval_metrics['train_kl_div']:.4f}, "
-                    f"Val Reward: {eval_metrics['val_reward']:.4f}, Val KL Div: {eval_metrics['val_kl_div']:.4f}"
+                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | "
+                    f"T. Rwd: {eval_metrics['train_reward']:.4f}, T. KL Div: {eval_metrics['train_kl_div']:.4f} | "
+                    f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
 
 

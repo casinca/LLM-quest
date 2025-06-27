@@ -11,12 +11,10 @@ from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
 # --- hyperparameters ---
-torch.manual_seed(123)
-tokenizer = tiktoken.get_encoding("gpt2")
-gpt_config = config.GPT_SMALL_CONFIG
+gpt_config = config.config_creator("gpt_m")
 model_device = "cuda"
 # optimizer hparams
-lr = 1e-5
+lr = 1e-4
 weight_decay = 0.01
 # training hparams
 batch_size = 4
@@ -28,10 +26,10 @@ max_gen = 35
 eps = 0.2
 beta = 1.0
 # evaluation hparams
-eval_freq = 5
 evaluation = True
-eval_batches = 1
-eval_num_samples = 1
+eval_freq = 10
+eval_batches = 2
+eval_num_samples = 2
 # loader hparams
 num_workers = 0
 pin_memory = False
@@ -39,6 +37,9 @@ persistent_workers = False
 
 
 if __name__ == "__main__":
+
+    torch.manual_seed(123)
+    tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- datasets & loaders ---
     train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer)
@@ -72,16 +73,22 @@ if __name__ == "__main__":
         persistent_workers=persistent_workers,
     )
 
-    # --- models & optimizer ---
+    # --- models initialization & loading ---
     # note: the grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
     reward_model = GPTModel(gpt_config)
-    reward_model.out = nn.Linear(gpt_config["emb_dim"], 1)  # (testing untrained, otherwise no need to do this)
+    reward_model.out = nn.Linear(gpt_config["emb_dim"], 1)
 
-    reward_model.to(model_device)
-    policy_model.to(model_device)
-    reference_model.to(model_device)
+    pol_checkpoint = torch.load(config.ft_instruct_w_gpt2, map_location="cpu", weights_only=True)
+    reward_checkpoint = torch.load(config.reward_model_pref_tuning, map_location="cpu", weights_only=True)
+    policy_model.load_state_dict(pol_checkpoint["model_state_dict"])
+    reward_model.load_state_dict(reward_checkpoint["model_state_dict"])
+    del pol_checkpoint, reward_checkpoint  # removing upfront rather than waiting for gc to kick in
+
+    reward_model.to(device=model_device, dtype=torch.bfloat16)
+    policy_model.to(device=model_device, dtype=torch.bfloat16)
+    reference_model.to(device=model_device, dtype=torch.bfloat16)
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay)
 
