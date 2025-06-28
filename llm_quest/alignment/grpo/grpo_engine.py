@@ -711,7 +711,7 @@ def grpo_training_loop(
             )
 
             with torch.inference_mode():
-                # see why intermediary masking with loss_mask is recommended for logprobs: TODO
+                # why intermediate masking with loss_mask for logprobs : TODO
                 loss_mask = collated_batch["reward_masks"][:, 1:]
 
                 old_logprobs = log_probs_per_token(  # shape: (B, S-1)

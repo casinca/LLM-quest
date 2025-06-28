@@ -1,8 +1,8 @@
-# GRPO from scratch on preference tuning
+# RLHF with GRPO from scratch on preference tuning
 
 Only external dependency is `tiktoken` for tokenization.  
-We're not using `transformers`, we're collating (batching, padding, masking...) ourselves & using from scratch models,
-starting with the reward model training before GRPO itself.
+Not using `transformers`, we're collating (batching, padding, masking...) ourselves & only starting with models
+from scratch (base/pretrained by loading OpenAI weights).
 
 ## GRPO
 
@@ -35,14 +35,12 @@ This is basically the z-score (for people familiar with Quant finance) of each r
 
 ### Original GRPO<sup>2, 3</sup>
 
-3x models (here for testing the logic, 3x GPT-2 from scratch based on
-[`llm_quest/gpt`](/llm_quest/gpt/)) as:
+As mentioned, we start with 3x from scratch models and OpenAI weights as our pretrained/base GPT-2 models (mostly for
+testing the logic/exp than aiming for SOTA perfs...) based on [`llm_quest/gpt`](/llm_quest/gpt/):
 
 - Policy model $\pi_{\theta}$:
-    - SFT or Base : Advantage of Base, we don't get SFT bias, but the model will have to learn a bit more, likely
-      requiring more training since it's not SFT.
-
-      DeepSeek used a Base DeepSeekMath 7B model.
+    - SFT or Base : DeepSeek used a Base DeepSeekMath 7B model (for RLVR with R1 Zero), but here for RLHF and smaller
+      models, it made more sense to do SFT first on the Alpaca dataset ([in instruction_tuning](/llm_quest/finetuning/instruction_tuning)).
 
     - $\pi_{\theta}$ is also used for $\pi_{\theta_{old}}$, not using a separate model<sup>2</sup> for sampling +
     policy ratio $\frac{\pi_\theta(y_{i,t} | x, y_{i,<t})}{\pi_{\theta_{old}}(y_{i,t} | x, y_{i,<t})}$
@@ -54,15 +52,21 @@ This is basically the z-score (for people familiar with Quant finance) of each r
 
 
 - Reward model $r_{\phi}$:
-    - We're supposedly pretraining it in `reward_model_training.py` on a preference (pref/rej pairs) dataset, with
+    - We're first doing SFT (actually a copy of $\pi_{\theta}$) then pref training in `reward_model_training.py` on a preference (pref/rej pairs) dataset, with
     $r_{\phi}$'s output head changed to $W \in \mathbb{R}^{d_{out} \times 1}$ for a single scalar reward and aimed at
-    minimizing the Bradley-Terry loss $\mathcal{L}(\phi) = - \log \sigma(R_\phi(p, res_{\text{pref}}) - R_\phi(p, res_{\text{rej}}))$ with $p$ for prompt.  
+    minimizing the Bradley-Terry loss 
+    $\mathcal{L}(\phi) = - \log \sigma(R_\phi(p, res_{\text{pref}}) - R_\phi(p, res_{\text{rej}}))$ *with $p$ for prompt.*   
     $r_{\phi}$ is used to compute the mini rewards/per tokens of each generated trajectory from $\pi_{\theta}$.
+
+### Visualization of my pipeline:
+
+<img src="_mermaid_visual.png" alt="mermaid diagram" width="50%">
 
 &nbsp;
 
-*GRPO Algorithm's description from the DeepSeekMath paper*, recopied for reference, imo, the `grpo_training_loop` function
-in `grpo_engine.py`, pretty much reads by itself compared to the pseudocode below, so I won't go into unnecessary details.
+*GRPO Algorithm's description from the DeepSeekMath paper below*, recopied for reference, imo, the `grpo_training_loop`
+function in `grpo_engine.py`, pretty much reads by itself compared to the pseudocode, so I won't go into
+unnecessary details.
 
 
 > **Input:** initial policy model $\pi_{\theta_{init}}$; reward models $r_{\phi}$; task prompts $\mathcal{D}$; hyperparameters $\epsilon, \beta, \mu$
@@ -119,6 +123,8 @@ The drawback is that $\pi_{ref}$ anchor role won't be as strong and bias will in
 
 ### Additional details
 
+#### Outcome Supervision vs Process Supervision
+
 I chose Outcome Supervision (1 reward per trajectory, unlike [Process Supervision](https://arxiv.org/abs/2312.08935))
 concerning the reward calculations, for simplicity BUT computed in a way that is compatible with process supervision
 because:
@@ -135,4 +141,15 @@ because:
     The alternative Outcome Supervision method of using "last token only" wouldn't be retro compatible with process
     supervision.
 
+
+#### Difficulties encountered
+
+- Gradient underflow
+
+  Aggressive memory optimization, particularly casting models to bf16 and not using Automatic Mixed Precision (AMP), had
+  major drawbacks. While it was acceptable for SFT, it caused issues during the reward model training and RLHF.  
+  Specifically: small learning rates (e.g., 1e-5) resulted in gradient updates that were too small to be represented in
+  bf16, subsequently rounded to zero, leading to stagnant training.  
+  Switching to fp32 or increasing the learning rate (at risk) clearly mitigated the issue, (ie, showed the
+  impact of precision on gradient representation during training.)
 
