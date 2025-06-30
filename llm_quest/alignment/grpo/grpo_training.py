@@ -18,13 +18,13 @@ lr = 5e-5
 weight_decay = 0.01
 # training hparams
 batch_size = 4
-num_samples = 10
+num_samples = 6
 num_epoch = 1
-num_grad_updates = 5
+num_grad_updates = 3
 max_gen = 35
 # GRPO hparams
 eps = 0.2
-beta = 0.5
+beta = 0.05
 # evaluation hparams
 evaluation = True
 eval_freq = 10

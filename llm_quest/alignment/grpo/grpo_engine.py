@@ -285,6 +285,7 @@ def batched_responses_collator(responses, len_prompt, pad_token_id=50256, device
             attn_masks: Boolean tensor of the same shape with masked: padding tokens.
     """
     attn_masks = responses != pad_token_id
+
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
 
@@ -682,16 +683,15 @@ def grpo_training_loop(
         for batch in train_loader:
             step += 1
             policy_model.eval()  # for every new batch, π_θ and π_θ_old are the same
-            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
+            # note: generate_loop() comes with torch.inference_mode() and to gpu device, no need to reapply here
 
-            torch.manual_seed(123)  # TODO: remove this
             # --- Sampling responses ---
             # interleaving the prompts to generate multiple samples/responses in parallel
             # ex: batch size = 2, num_samples = 3 → [p1, p2] → [p1, p1, p1, p2, p2, p2]
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             responses = (  # 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
                 generate_loop(
-                    input=dup_prompts,
+                    input_tensor=dup_prompts,
                     model=policy_model,
                     max_gen=max_gen,
                     context_length=policy_config["context_length"],
@@ -758,11 +758,11 @@ def grpo_training_loop(
                 grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
                 grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
 
-                cum_grpo_loss += grpo_loss.item()
-
                 optimizer.zero_grad()
                 grpo_loss.backward()
                 optimizer.step()
+
+                cum_grpo_loss += grpo_loss.item()
 
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
@@ -823,7 +823,7 @@ class GRPOEvaluator:
             # --- Sampling responses ---
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
             responses = generate_loop(
-                input=dup_prompts,
+                input_tensor=dup_prompts,
                 model=policy_model,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
