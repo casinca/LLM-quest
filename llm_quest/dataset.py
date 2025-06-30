@@ -169,6 +169,10 @@ class InstructionDataset(Dataset):
     Methods:
         __len__(): Returns the number of samples in the dataset.
         __getitem__(index): Returns the tokenized instruction sequence at the given index.
+
+    Returns:
+        list[int]: A list of token IDs representing a tokenized and formatted instruction sequence, ie:
+        instruction + input (if any) + response
     """
 
     def __init__(self, file, tokenizer):
