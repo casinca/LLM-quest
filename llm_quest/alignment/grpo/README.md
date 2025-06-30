@@ -30,7 +30,9 @@ This is basically the z-score (for people familiar with Quant finance) of each r
   
 - No Entropy bonus $H(\pi_\theta(\cdot | x, y_{<t}))$ for the exploration/exploitation tradeoff. No mention as to why
   but one probable reason is that sampling inherently increases stochasticity.
-  
+
+&nbsp;
+
 ## Pipeline
 
 ### Original GRPO<sup>2, 3</sup>
@@ -120,10 +122,11 @@ The drawback is that $\pi_{ref}$ anchor role won't be as strong and bias will in
 - Reward model $r_{\phi}$:
     - Same as original GRPO minus ***3*** mentioned above.
 
+&nbsp;
 
-### Additional details
+## Additional details
 
-#### Outcome Supervision vs Process Supervision
+### Outcome Supervision vs Process Supervision
 
 I chose Outcome Supervision (1 reward per trajectory, unlike [Process Supervision](https://arxiv.org/abs/2312.08935))
 concerning the reward calculations, for simplicity BUT computed in a way that is compatible with process supervision
@@ -142,7 +145,7 @@ because:
     supervision.
 
 
-#### Difficulties encountered
+### Difficulties encountered
 
 - Gradient underflow
 

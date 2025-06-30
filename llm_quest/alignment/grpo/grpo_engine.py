@@ -174,6 +174,7 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
     return avg_loss, avg_acc
 
 
+# NOTE: we don't need prompt_mask after all, for now im commenting it out in case it might be useful later.
 def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
@@ -189,7 +190,7 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
 
         Dict[str, torch.Tensor]: A dictionary containing:
             padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
-            prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
+            #prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
     """
 
     max_length = max(len(item["prompt"]) + 1 for item in prompts)
@@ -197,28 +198,28 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
         max_length = min(max_length, custom_max_length)
 
     padded_prompts = []
-    prompt_masks = []
+    # prompt_masks = []
 
     for item in prompts:
         prompt_len = len(item["prompt"])
         padded_prompt = item["prompt"] + [pad_token_id] * (max_length - prompt_len)
-        prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
+        # prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
 
         padded_prompts.append(padded_prompt)
-        prompt_masks.append(prompt_mask)
+        # prompt_masks.append(prompt_mask)
 
     padded_prompts = torch.tensor(padded_prompts)
-    prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
+    # prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
 
     return {
         "padded_prompts": padded_prompts.to(device),
-        "prompt_masks": prompt_masks.to(device),
+        # "prompt_masks": prompt_masks.to(device),
     }
 
 
 def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     """
-    Intended for use with grpo_training_loop_single_prompt().
+    Intended for use with grpo_training_loop_single_prompt() only.
     Collate sampled responses of different lengths into a single tensor, preparing them for the reward model.
 
     Args:
@@ -283,14 +284,9 @@ def batched_responses_collator(responses, len_prompt, pad_token_id=50256, device
             reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
             attn_masks: Boolean tensor of the same shape with masked: padding tokens.
     """
-    b, max_len = responses.shape
-
-    attn_masks = torch.ones(b, max_len, dtype=torch.bool)
     attn_masks = responses != pad_token_id
-
-    reward_masks = torch.ones(b, max_len, dtype=torch.bool)
+    reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
-    reward_masks[:, len_prompt:] = responses[:, len_prompt:] != pad_token_id
 
     return {
         "padded_responses": responses.to(device),
@@ -333,8 +329,8 @@ def log_probs_per_token(logits, inputs, attention_mask=None):
     Args:
         logits (torch.Tensor): Tensor of shape (B*, S*, vocab_size) containing the logits.
         inputs (torch.Tensor): Tensor of shape (B*, S*) containing the generated tokens from the policy.
-        attention_mask (torch.Tensor, optional): Tensor of shape (B*, S*) containing the attention
-                                                mask (ie, padded tokens are masked). Defaults to None.
+        attention_mask (torch.Tensor, optional): Tensor of shape (B*, S*) for masking prompt+padding tokens.
+
         *considering B as batch_size * num_samples and S as prompt_len+max_gen.
 
     Returns:
@@ -380,6 +376,7 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
+# TODO: update in line with the updated grpo_training_loop() func
 def grpo_training_loop_single_prompt(
     train_loader,
     policy_model,
@@ -504,7 +501,7 @@ def grpo_training_loop_single_prompt(
                 optimizer.step()
 
 
-# TODO: to update in line with the updated grpo_training_loop() func
+# TODO: update in line with the updated grpo_training_loop() func
 def grpo_training_loop_variant_experimental(
     train_loader,
     policy_model,
@@ -687,7 +684,7 @@ def grpo_training_loop(
             policy_model.eval()  # for every new batch, π_θ and π_θ_old are the same
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
-            torch.manual_seed(123)
+            torch.manual_seed(123)  # TODO: remove this
             # --- Sampling responses ---
             # interleaving the prompts to generate multiple samples/responses in parallel
             # ex: batch size = 2, num_samples = 3 → [p1, p2] → [p1, p1, p1, p2, p2, p2]

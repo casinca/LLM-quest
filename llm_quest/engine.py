@@ -37,7 +37,7 @@ def _calc_loss_batch(X, y, model, device, attn_mask=None, classification=False):
     # logits. Slicing will naturally give us a 2D shape that matches nn.F.cross_entropy() requirement.
     # logits will have a 2D shape: (b, num of classes) and targets 1D shape of true classes, thus no need to flatten.
     if classification:
-        logits = model(X, only_last_token=True, attn_mask=attn_mask)
+        logits = model(X, last_token_only=True, attn_mask=attn_mask)
         loss = torch.nn.functional.cross_entropy(logits, y)
     # but in classic causal NTP, logits have a shape (b,s,v) and targets (b, s)
     # thus we need to flatten logits to (b*s, v) and targets (b*s) for the correct format
@@ -430,95 +430,6 @@ def evaluate(train_loader, val_loader, model, eval_iter, device, classification=
     model.train()
 
     return train_loss, val_loss
-
-
-# deprecated in favor of training_eval_loop func with AMP choice
-def training_eval_loop_deprecated(
-    train_loader,
-    val_loader,
-    model,
-    optimizer,
-    num_epoch,
-    warmup_percent,
-    init_lr,
-    peak_lr,
-    min_lr,
-    eval_freq,
-    eval_iter,
-    device,
-):
-    """A more robust training+eval loop with learning rate warmup, cosine decay and gradient clipping.
-
-    Args:
-        train_loader (torch.utils.data.DataLoader): DataLoader for training data
-        val_loader (torch.utils.data.DataLoader): DataLoader for validation data
-        model (torch.nn.Module): Model to train
-        optimizer (torch.optim.Optimizer): Optimizer to use for training
-        num_epoch (int): Number of epochs to train for
-        warmup_percent (float): Percentage of total steps to use for learning rate warmup,
-                                if set to 0.0, will disable warmup
-        init_lr (float): Initial learning rate for warmup (value doesn't matter if warmup disabled)
-        peak_lr (float): Peak learning rate after warmup
-        min_lr (float): Minimum learning rate for cosine decay (if same as peak_lr, will disable decay)
-        eval_freq (int): Number of steps between evaluations
-        eval_iter (int): Number of batches to use during evaluation
-        device (torch.device): Device to run training on (cuda/cpu)
-    """
-    step = -1
-    total_steps = len(train_loader) * num_epoch
-    warmup_steps = int(warmup_percent * total_steps)
-    if warmup_percent:
-        lr_increment = (peak_lr - init_lr) / warmup_steps
-
-    # keeping record of metrics for plotting
-    train_losses, val_losses = [], []
-
-    for epoch in range(1, num_epoch + 1):
-        model.train()
-        for input_batch, targets in train_loader:
-            step += 1
-
-            # lr update with warmup and cosine decay= 0.5 * (1 + cos(π * curr_step / total_step))
-            # curr_step and total_step are steps after the warmup, thus needs to be adjusted for the warmup difference
-            if step < warmup_steps:
-                lr = init_lr + step * lr_increment
-            else:
-                decay_steps = total_steps - warmup_steps  # total step adjusted for warmup
-                curr_step = step - warmup_steps  # curr decay step adjusted for warmup
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_step / decay_steps))
-                lr = min_lr + (peak_lr - min_lr) * cosine_decay
-
-            for param_group in optimizer.param_groups:
-                if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
-                    param_group["lr"] = lr
-
-            input_batch = input_batch.to(device)
-            targets = targets.to(device)
-
-            logits = model(input_batch)
-
-            optimizer.zero_grad()
-            loss = global_loss(logits, targets, model=model)
-            loss.backward()
-
-            # gradient clipping at a max norm of 1 (after warmup)
-            if step >= warmup_steps:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
-
-            optimizer.step()
-
-            if step % eval_freq == 0:
-                # eval
-                train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
-
-                print(
-                    f"Epoch: {epoch}, Step: {step}",
-                    f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
-                )
-
-    return train_losses, val_losses
 
 
 def profile_training_eval_loop(

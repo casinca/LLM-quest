@@ -112,3 +112,10 @@ if __name__ == "__main__":
         eval_batches=eval_batches,
         eval_num_samples=eval_num_samples,
     )
+
+    torch.save(
+        {
+            "model_state_dict": policy_model.state_dict(),
+        },
+        config.grpo_policy_model,
+    )
