@@ -34,7 +34,7 @@ class GPTModel(nn.Module):
         # projecting output to vocab_size to get logits
         self.out = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
-    def forward(self, x, attn_mask=None, only_last_token=False):
+    def forward(self, x, attn_mask=None, last_token_only=False):
         b, seq_len = x.shape
 
         # shape (b, s) → (b, s, emb_dim)
@@ -53,8 +53,8 @@ class GPTModel(nn.Module):
 
         # Retrieves the hidden state of the final valid token and not the last token (which could be a padding token)
         # Avoids unnecessary projection for all hidden states.
-        if only_last_token:
-            assert attn_mask is not None, "attn_mask are needed for only_last_token=True"
+        if last_token_only:
+            assert attn_mask is not None, "attn_mask are needed for last_token_only=True"
             seq_lengths = attn_mask.sum(dim=-1)
             # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, vocab_size)
             logits = self.out(x[torch.arange(b), seq_lengths - 1, :])

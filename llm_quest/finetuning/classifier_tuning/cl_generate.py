@@ -37,7 +37,7 @@ def classify_text(text, model, device, max_length=None, pad_token=50256):
     attn_mask[:, :input_len] = 1
 
     with torch.no_grad():
-        logits = model(pads, only_last_token=True, attn_mask=attn_mask)
+        logits = model(pads, last_token_only=True, attn_mask=attn_mask)
         pred = torch.argmax(logits, dim=-1)
 
         # (optional) checking confidence

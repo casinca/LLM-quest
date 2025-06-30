@@ -296,9 +296,9 @@ def dpo_training_eval_loop_simple(
 
                 print(
                     f"Epoch: {epoch}, Step: {step}",
-                    f"Train loss: {res["train_loss"]:.5f}, Val loss: {res["val_loss"]:.5f}",
-                    f"Train chosen reward: {res["train_chosen_reward"]:.5f}"
-                    f"Val chosen reward: {res["val_chosen_reward"]:.5f}",
+                    f"Train loss: {res['train_loss']:.5f}, Val loss: {res['val_loss']:.5f}",
+                    f"Train chosen reward: {res['train_chosen_reward']:.5f}",
+                    f"Val chosen reward: {res['val_chosen_reward']:.5f}",
                 )
 
     return tracking

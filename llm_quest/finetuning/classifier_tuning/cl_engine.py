@@ -28,7 +28,7 @@ def accuracy_loader(data_loader, model, device, attn_mask=None):
             attn_mask = attn_mask.to(device)
 
         with torch.no_grad():
-            logits = model(X, only_last_token=True, attn_mask=attn_mask)  # (b, num_classes)
+            logits = model(X, last_token_only=True, attn_mask=attn_mask)  # (b, num_classes)
 
             # Get highest preds for entire batch of sequence
             batch_preds = torch.argmax(logits, dim=-1)  # shape (b,)
@@ -93,7 +93,7 @@ def classifier_training_eval_loop(
             attention_mask = attention_mask.to(device)
 
             logits = model(
-                input_batch, only_last_token=True, attn_mask=attention_mask
+                input_batch, last_token_only=True, attn_mask=attention_mask
             )  # only interested in the last tokens' logits for our classification (dirty - either pad or valid token)
 
             optimizer.zero_grad()

@@ -1,33 +1,29 @@
-import tiktoken
 import torch
 
-import config
-from gpt_download import download_and_load_gpt2
-from llm_quest.gpt.gpt_model import GPTModel
-from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
 
-
-def generate_simple_loop(input, model, max_gen, context_length):
+def generate_simple_loop(input_tensor, model, max_gen, context_length):
     """
     simplified generate_loop function
     """
     for i in range(max_gen):
         # truncate token ids to compatible context size, shape (b, seq_len) → (b, ctx_len)
-        trunc_input = input[:, -context_length:]
+        trunc_input = input_tensor[:, -context_length:]
 
         with torch.inference_mode():  # no need for grad as we're generating
             logits = model(trunc_input)
         # taking last vector since goal is "next word" prediction, and getting idx of the highest logit
         logits = logits[:, -1, :]
         tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim to concat (needs same dim)
-        input = torch.cat((input, tok_id_next), dim=-1)  # adding predicted token id back to the input for the next loop
+        input_tensor = torch.cat(
+            (input_tensor, tok_id_next), dim=-1
+        )  # adding predicted token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted token ids
-    return input
+    return input_tensor
 
 
 def generate_loop(
-    input,
+    input_tensor,
     model,
     max_gen,
     context_length,
@@ -40,7 +36,7 @@ def generate_loop(
     Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
 
     Args:
-        input (torch.Tensor): Input tensor of token IDs with shape [batch_size, seq_len]
+        input_tensor (torch.Tensor): Input tensor of token IDs with shape [batch_size, seq_len]
         model (nn.Module): The gpt model used for text generation
         max_gen (int): Maximum number of tokens to generate
         context_length (int): Maximum context length the model can process
@@ -57,11 +53,11 @@ def generate_loop(
     Returns:
         torch.Tensor: Input tensor concatenated with generated token IDs
     """
-    input = input.to(device)
+    input_tensor = input_tensor.to(device)
 
     for i in range(max_gen):
         # truncate input to compatible context size, shape (b, ctx_len)
-        trunc_input = input[:, -context_length:]
+        trunc_input = input_tensor[:, -context_length:]
 
         with torch.inference_mode():  # no need for grads as we're generating
             logits = model(trunc_input)
@@ -80,10 +76,12 @@ def generate_loop(
         if tok_id_next == eos_id:  # if a EoT is seen stops the generation earlier
             break
 
-        input = torch.cat((input, tok_id_next), dim=-1)  # adding chosen token id back to the input for the next loop
+        input_tensor = torch.cat(
+            (input_tensor, tok_id_next), dim=-1
+        )  # adding chosen token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted words
-    return input
+    return input_tensor
 
 
 def top_k_sampling(logits, k):
@@ -109,6 +107,13 @@ def top_k_sampling(logits, k):
 
 # test code
 if __name__ == "__main__":
+
+    import tiktoken
+
+    import config
+    from gpt_download import download_and_load_gpt2
+    from llm_quest.gpt.gpt_model import GPTModel
+    from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
 
     # ---------------------------- PART A ------- Testing simple func generation without pretrained weights
 
@@ -180,7 +185,7 @@ if __name__ == "__main__":
     model.to(device)  # we move the model to GPU *after* loading weights
 
     output3 = generate_loop(
-        input=text_to_ids("This is where it", tokenizer=tokenizer),
+        input=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
         model=model,
         max_gen=20,
         context_length=model_settings["context_length"],
@@ -188,4 +193,5 @@ if __name__ == "__main__":
         temp=1.4,
     )
 
-    print(f"OUTPUT3: {ids_to_text(output3, tokenizer)}")
+    for tensor in output3:
+        print(ids_to_text(tensor, tokenizer))

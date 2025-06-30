@@ -187,3 +187,6 @@ pyrightconfig.json
 checkpoints/
 data/
 llm_quest/alignment/dpo/instruction-data-with-preference.json
+
+# diagrams
+*.mermaid
