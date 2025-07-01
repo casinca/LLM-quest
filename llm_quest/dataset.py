@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 from torchvision import transforms
 
-from llm_quest.utils import alpaca_deepseek_format, alpaca_prompt_format
+from llm_quest.utils import ResponseExtractor, alpaca_deepseek_format, alpaca_prompt_format
 
 
 class GPTDataset(Dataset):
@@ -339,6 +339,72 @@ class PreferenceDataset(Dataset):
                     "rejected": tokenized_rejected_full,
                 }
             )
+
+    def __len__(self):
+        return len(self.instruct_ids_list)
+
+    def __getitem__(self, index):
+        return self.instruct_ids_list[index]
+
+
+class ReasoningDataset(Dataset):
+    """
+    ReasoningDataset is a custom PyTorch Dataset for preparing reasoning data, similar to InstructionDataset.
+
+    Args:
+        file (str): Path to the JSONL file containing reasoning examples with 'question' and 'answer' keys.
+        tokenizer (Tokenizer): The tokenizer object used to encode the text.
+
+    Attributes:
+        instruct_ids_list (list): List of dictionaries, each containing tokenized prompt, full response,
+                                    and the extracted answer.
+
+    Methods:
+        __len__(): Returns the number of samples in the dataset.
+        __getitem__(index): Returns the tokenized prompt, full response, and extracted answer at the given index.
+
+    Returns:
+        dict[str, list[int]]: A dictionary containing:
+            - prompt: Tokenized prompt (instruction+question).
+            - full_response: Tokenized prompt + full generated response (including reasoning and answer tags).
+            - answer: Tokenized final answer extracted from the full response.
+
+    """
+
+    def __init__(self, file, tokenizer):
+        self.instruct_ids_list = []
+        with open(file, "r") as f:
+            for line in f:
+                text = json.loads(line)
+
+            # convert to alpaca format instructions + reasoning & answer tags format
+            formatted_reasoning = alpaca_deepseek_format(text, include_answer=True)
+            prompt, full_response, answer = self._get_prompt_response_answer(formatted_reasoning)
+
+            # tokenize
+            tokenized_prompt = tokenizer.encode(prompt)
+            tokenized_full_response = tokenizer.encode(full_response)
+            tokenized_answer = tokenizer.encode(answer)
+
+            self.instruct_ids_list.append(
+                {
+                    "prompt": tokenized_prompt,
+                    "full_response": tokenized_full_response,
+                    "answer": tokenized_answer,
+                }
+            )
+
+    def _get_prompt_response_answer(self, formatted_text):
+        """
+        helper function to get the prompt, full_response (prompt + response), and answer from the formatted reasoning
+        text.
+        """
+        prompt, sep, response = formatted_text.partition("### Response:")
+        prompt = prompt + sep  # prompt also include "### Response:"
+        full_response = response.strip()
+        answer = ResponseExtractor.get_answer(full_response)
+
+        return prompt, full_response, answer
 
     def __len__(self):
         return len(self.instruct_ids_list)
