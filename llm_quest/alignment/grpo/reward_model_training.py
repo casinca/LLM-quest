@@ -15,6 +15,7 @@ batch_size = 8
 lr = 1e-4
 weight_decay = 0.01
 num_epoch = 2
+beta = 1.0
 data_device = "cpu"
 model_device = "cuda"
 model_cfg = config.config_creator("gpt_m")
@@ -80,6 +81,7 @@ if __name__ == "__main__":
         num_epoch,
         eval_freq=eval_freq,
         eval_num_batches=eval_num_batches,
+        beta=beta,
     )
 
     torch.save(

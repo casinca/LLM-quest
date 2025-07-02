@@ -34,8 +34,8 @@ def reward_model_training_eval_loop_simple(
     num_epoch,
     eval_freq,
     eval_num_batches=None,
-    device=None,
-    beta=0.1,
+    beta=1.0,
+    pad_token_id=50256,
 ):
     """
     A simple training and evaluation loop for the reward model.
@@ -49,9 +49,8 @@ def reward_model_training_eval_loop_simple(
         eval_freq (int): Frequency (in training steps) at which to perform evaluation.
                         Also used as the training loss logging interval.
         eval_num_batches (int, optional): Number of batches to use for evaluation. If None, evaluate the whole validation set.
-        device (torch.device, optional): Device to run training on (e.g., 'cuda', 'cpu').
-                Note: This parameter is currently not used internally as data loading handles device placement.
-        beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 0.1.
+        beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
+        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
     """
     step = 0
     interval_train_loss = 0.0
@@ -65,21 +64,23 @@ def reward_model_training_eval_loop_simple(
         "val_acc": [],
     }
 
-    for epoch in range(1, num_epoch + 1):
-        reward_model.train()
+    reward_model.train()
 
-        for batch in train_loader:
+    for epoch in range(1, num_epoch + 1):
+
+        for batch in train_loader:  # batch is already on the correct device via the collate func
             step += 1
-            optimizer.zero_grad()
+
+            pref_attn_mask = batch["chosen"] != pad_token_id
+            rej_attn_mask = batch["rejected"] != pad_token_id
 
             # shape (b, s, 1) → (b, s)
-            pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
-
-            pref_mask = batch["chosen_mask"]
-            rej_mask = batch["rejected_mask"]
+            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
+            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
 
             # masking the rewards to the valid tokens
+            pref_mask = batch["chosen_mask"]
+            rej_mask = batch["rejected_mask"]
             pref_mini_rewards *= pref_mask
             rej_mini_rewards *= rej_mask
 
@@ -89,10 +90,11 @@ def reward_model_training_eval_loop_simple(
             pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens
             rej_rewards = rej_mini_rewards.sum(dim=1) / num_valid_rej_tokens
 
-            loss = bt_loss(pref_rewards, rej_rewards)
+            loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
 
             loss.backward()
             optimizer.step()
+            optimizer.zero_grad()
 
             interval_train_loss += loss.item()
             interval_correct_pred += (pref_rewards > rej_rewards).sum().item()  # count number of correct predictions
@@ -105,7 +107,7 @@ def reward_model_training_eval_loop_simple(
                 avg_interval_train_acc = (
                     interval_correct_pred / interval_train_count if interval_train_count > 0 else 0.0
                 )
-                val_loss, val_acc = evaluate_reward_model(val_loader, reward_model, eval_num_batches)
+                val_loss, val_acc = evaluate_reward_model(val_loader, reward_model, eval_num_batches, beta=beta)
                 tracking["val_losses"].append(val_loss)
                 tracking["val_acc"].append(val_acc)
 
@@ -123,7 +125,7 @@ def reward_model_training_eval_loop_simple(
     return tracking
 
 
-def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
+def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=1.0, pad_token_id=50256):
     """
     Evaluate the reward model on the validation set.
 
@@ -131,6 +133,8 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
         val_loader (DataLoader): DataLoader providing batches of chosen and rejected responses.
         reward_model (nn.Module): The reward model being evaluated.
         eval_num_batches (int, optional): Number of batches to evaluate. If None, evaluate the whole validation set.
+        beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
+        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
 
     Returns:
         tuple: A tuple containing:
@@ -151,8 +155,11 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
             if i >= num_batches_to_eval:
                 break
 
-            pref_mini_rewards = reward_model(batch["chosen"]).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"]).squeeze(-1)
+            pref_attn_mask = batch["chosen"] != pad_token_id
+            rej_attn_mask = batch["rejected"] != pad_token_id
+
+            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
+            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
 
             pref_mask = batch["chosen_mask"]
             rej_mask = batch["rejected_mask"]
@@ -160,7 +167,7 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
             pref_reward = (pref_mini_rewards * pref_mask).sum(dim=1) / pref_mask.sum(dim=1)
             rej_reward = (rej_mini_rewards * rej_mask).sum(dim=1) / rej_mask.sum(dim=1)
 
-            loss = bt_loss(pref_reward, rej_reward)
+            loss = bt_loss(pref_reward, rej_reward, beta=beta)
             total_loss += loss.item()
 
             # count the number of correct predictions
@@ -688,10 +695,12 @@ def grpo_training_loop(
             # interleaving the prompts to generate multiple samples/responses in parallel
             # ex: batch size = 2, num_samples = 3 → [p1, p2] → [p1, p1, p1, p2, p2, p2]
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
+            dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             responses = (  # 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
                 generate_loop(
                     input_tensor=dup_prompts,
                     model=policy_model,
+                    attention_mask=dup_prompts_masks,
                     max_gen=max_gen,
                     context_length=policy_config["context_length"],
                     top_k=20,
@@ -817,9 +826,11 @@ class GRPOEvaluator:
 
             # --- Sampling responses ---
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
+            dup_prompts_masks = batch["prompt_masks"].repeat_interleave(eval_num_samples, dim=0)
             responses = generate_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
+                attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
                 top_k=20,

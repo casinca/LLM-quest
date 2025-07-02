@@ -31,6 +31,7 @@ def generate_loop(
     temp=0.0,
     eos_id=None,
     device="cuda",
+    attention_mask=None,
 ):
     """
     Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
@@ -59,8 +60,13 @@ def generate_loop(
         # truncate input to compatible context size, shape (b, ctx_len)
         trunc_input = input_tensor[:, -context_length:]
 
+        if attention_mask is not None:
+            curr_mask = attention_mask[:, -context_length:].to(device)
+        else:
+            curr_mask = None
+
         with torch.inference_mode():  # no need for grads as we're generating
-            logits = model(trunc_input)
+            logits = model(trunc_input, attn_mask=curr_mask)
         # taking last vector since goal is "next word" prediction
         logits = logits[:, -1, :]
 
@@ -79,6 +85,10 @@ def generate_loop(
         input_tensor = torch.cat(
             (input_tensor, tok_id_next), dim=-1
         )  # adding chosen token id back to the input for the next loop
+
+        if attention_mask is not None:
+            new_mask = torch.ones_like(tok_id_next, dtype=torch.bool)
+            attention_mask = torch.cat((attention_mask, new_mask), dim=-1)
 
     # final "input" is actually initial input+all predicted words
     return input_tensor
