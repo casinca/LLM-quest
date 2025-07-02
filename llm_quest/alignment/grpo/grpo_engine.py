@@ -125,7 +125,7 @@ def reward_model_training_eval_loop_simple(
 
 def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
     """
-    Evaluate the reward model on the full validation set.
+    Evaluate the reward model on the validation set.
 
     Args:
         val_loader (DataLoader): DataLoader providing batches of chosen and rejected responses.
@@ -174,7 +174,6 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None):
     return avg_loss, avg_acc
 
 
-# NOTE: we don't need prompt_mask after all, for now im commenting it out in case it might be useful later.
 def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
@@ -190,30 +189,30 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
 
         Dict[str, torch.Tensor]: A dictionary containing:
             padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
-            #prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
+            prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
     """
 
-    max_length = max(len(item["prompt"]) + 1 for item in prompts)
+    max_length = max(len(item["prompt"]) for item in prompts)
     if custom_max_length is not None:
         max_length = min(max_length, custom_max_length)
 
     padded_prompts = []
-    # prompt_masks = []
+    prompt_masks = []
 
     for item in prompts:
         prompt_len = len(item["prompt"])
         padded_prompt = item["prompt"] + [pad_token_id] * (max_length - prompt_len)
-        # prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
+        prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
 
         padded_prompts.append(padded_prompt)
-        # prompt_masks.append(prompt_mask)
+        prompt_masks.append(prompt_mask)
 
     padded_prompts = torch.tensor(padded_prompts)
-    # prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
+    prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
 
     return {
         "padded_prompts": padded_prompts.to(device),
-        # "prompt_masks": prompt_masks.to(device),
+        "prompt_masks": prompt_masks.to(device),
     }
 
 
@@ -779,8 +778,6 @@ def grpo_training_loop(
                     max_gen=max_gen,
                     eval_num_samples=eval_num_samples,
                     eval_num_batches=eval_batches,
-                    eps=eps,
-                    beta=beta,
                 )
                 print(
                     f"Step {step} | "
@@ -807,8 +804,6 @@ class GRPOEvaluator:
         max_gen,
         eval_num_samples,
         eval_num_batches,
-        eps,
-        beta,
     ):
 
         total_reward = 0.0
@@ -892,8 +887,6 @@ class GRPOEvaluator:
         max_gen,
         eval_num_samples=1,
         eval_num_batches=None,
-        eps=0.2,
-        beta=1.0,
     ):
         """
         Evaluates the performance of the policy model on both training and validation datasets.
@@ -929,8 +922,6 @@ class GRPOEvaluator:
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
-                eps,
-                beta,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
@@ -942,8 +933,6 @@ class GRPOEvaluator:
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
-                eps,
-                beta,
             )
 
         policy_model.train()
