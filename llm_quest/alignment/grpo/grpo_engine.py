@@ -85,10 +85,8 @@ def reward_model_training_eval_loop_simple(
             rej_mini_rewards *= rej_mask
 
             # --- mean pooling over the sequence length ---
-            num_valid_pref_tokens = pref_mask.sum(dim=1)  # we want to divide by the number of valid tokens
-            num_valid_rej_tokens = rej_mask.sum(dim=1)
-            pref_rewards = pref_mini_rewards.sum(dim=1) / num_valid_pref_tokens
-            rej_rewards = rej_mini_rewards.sum(dim=1) / num_valid_rej_tokens
+            pref_rewards = pref_mini_rewards.sum(dim=1) / pref_mask.sum(dim=1)
+            rej_rewards = rej_mini_rewards.sum(dim=1) / rej_mask.sum(dim=1)
 
             loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
 

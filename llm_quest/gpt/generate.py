@@ -195,7 +195,7 @@ if __name__ == "__main__":
     model.to(device)  # we move the model to GPU *after* loading weights
 
     output3 = generate_loop(
-        input=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
+        input_tensor=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
         model=model,
         max_gen=20,
         context_length=model_settings["context_length"],
