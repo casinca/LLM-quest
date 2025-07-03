@@ -55,26 +55,21 @@ def generate_loop(
         torch.Tensor: Input tensor concatenated with generated token IDs
     """
     input_tensor = input_tensor.to(device)
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device)
 
     for i in range(max_gen):
         # truncate input to compatible context size, shape (b, ctx_len)
         trunc_input = input_tensor[:, -context_length:]
-
-        if attention_mask is not None:
-            curr_mask = attention_mask[:, -context_length:].to(device)
-        else:
-            curr_mask = None
+        curr_mask = attention_mask[:, -context_length:] if attention_mask is not None else None
 
         with torch.inference_mode():  # no need for grads as we're generating
-            logits = model(trunc_input, attn_mask=curr_mask)
-        # taking last vector since goal is "next word" prediction
-        logits = logits[:, -1, :]
+            logits = model(trunc_input, attn_mask=curr_mask)[:, -1, :]  # taking last vector (next word prediction)
 
         if top_k:
             logits = top_k_sampling(logits, top_k)
         if temp > 0:
-            logits = logits / temp
-            probas = torch.softmax(logits, dim=-1)
+            probas = torch.softmax(logits / temp, dim=-1)
             tok_id_next = torch.multinomial(probas, num_samples=1)  # next tok id is taken from the prob distrib
         else:
             tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
@@ -91,7 +86,7 @@ def generate_loop(
             attention_mask = torch.cat((attention_mask, new_mask), dim=-1)
 
     # final "input" is actually initial input+all predicted words
-    return input_tensor
+    return (input_tensor, attention_mask) if attention_mask is not None else input_tensor
 
 
 def top_k_sampling(logits, k):

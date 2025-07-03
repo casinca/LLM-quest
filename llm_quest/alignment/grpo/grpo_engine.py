@@ -267,7 +267,7 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
 # TODO NOTE here responses are naturally padded/truncated to the same length with `max_gen` from generate_loop()
 # so it's mostly about retrieving masks.
 # We could do a new generate function with responses of variable length and dynamic padding to go with this func too.
-def batched_responses_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
+def batched_responses_collator(responses, responses_mask, len_prompt, device="cuda"):
     """
     Prepare batched sampled responses for the reward model.
 
@@ -277,8 +277,8 @@ def batched_responses_collator(responses, len_prompt, pad_token_id=50256, device
     Args:
         responses (torch.Tensor): shape (batch_size * num_samples, prompt_len + max_gen)
                                 responses = prompt + policy's output as padded token IDs.
+        responses_mask (torch.Tensor): The corresponding attention mask for the responses, from generate_loop.
         len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
 
     Returns:
@@ -288,7 +288,7 @@ def batched_responses_collator(responses, len_prompt, pad_token_id=50256, device
             reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
             attn_masks: Boolean tensor of the same shape with masked: padding tokens.
     """
-    attn_masks = responses != pad_token_id
+    attn_masks = responses_mask
 
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
@@ -694,22 +694,23 @@ def grpo_training_loop(
             # ex: batch size = 2, num_samples = 3 → [p1, p2] → [p1, p1, p1, p2, p2, p2]
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
-            responses = (  # 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
-                generate_loop(
-                    input_tensor=dup_prompts,
-                    model=policy_model,
-                    attention_mask=dup_prompts_masks,
-                    max_gen=max_gen,
-                    context_length=policy_config["context_length"],
-                    top_k=20,
-                    temp=1,
-                )
+            (
+                responses,
+                responses_mask,
+            ) = generate_loop(  # 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
+                input_tensor=dup_prompts,
+                model=policy_model,
+                attention_mask=dup_prompts_masks,
+                max_gen=max_gen,
+                context_length=policy_config["context_length"],
+                top_k=20,
+                temp=1,
             )
 
             collated_batch = batched_responses_collator(
                 responses,
+                responses_mask,
                 len_prompt=batch["padded_prompts"].shape[-1],
-                pad_token_id=50256,
                 device=device,
             )
 
@@ -825,7 +826,7 @@ class GRPOEvaluator:
             # --- Sampling responses ---
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(eval_num_samples, dim=0)
-            responses = generate_loop(
+            responses, responses_mask = generate_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
@@ -837,8 +838,8 @@ class GRPOEvaluator:
 
             collated_batch = batched_responses_collator(
                 responses,
+                responses_mask,
                 len_prompt=batch["padded_prompts"].shape[-1],
-                pad_token_id=50256,
                 device=device,
             )
 
@@ -1006,8 +1007,8 @@ if __name__ == "__main__":
 
     collated_batch = batched_responses_collator(
         responses,
+        responses != 50256,
         len_prompt=3,
-        pad_token_id=50256,
         device="cuda",
     )
 
