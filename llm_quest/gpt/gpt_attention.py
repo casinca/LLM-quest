@@ -103,16 +103,6 @@ class MultiHeadAttentionWrapper(nn.Module):
 
 
 # MHA optimized, splitting our tensors per head then merging back
-#
-# Instead of masking rows & cols queries/keys with attention mask, we could have also masked only the keys and apply
-# the mask to the context vectors at the end like:
-#
-#   key_mask = attn_mask[:, None, None, :]  # (b,1,1,seq_len)
-#   scaled_att_scores.masked_fill_(~key_mask, -inf)
-#   attn_weights = softmax(scaled_att_scores, dim=-1)
-#   ctx = attn_weights @ values
-#   # zero out any padded positions at the end
-#   ctx = ctx * attn_mask.unsqueeze(-1)  # (b,seq_len,1) broadcasted
 class MultiHeadAttention(nn.Module):
     """
     Multi-head attention module that processes input through multiple attention heads in parallel.
@@ -184,15 +174,10 @@ class MultiHeadAttention(nn.Module):
         # masking in place and normalizing with softmax
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)
         if attn_mask is not None:
-            # could have used 2 .view() or 2 .unsqueeze() to reshape too
-            key_mask = attn_mask[:, None, None, :]  # (b, 1, 1, seq_len)
-            query_mask = attn_mask[:, None, :, None]  # (b, 1, seq_len, 1)
-            combined = key_mask & query_mask  # (b, 1, seq_len, seq_len)
-            scaled_att_scores.masked_fill_(~combined, -torch.inf)
+            attn_mask = attn_mask.view(b, 1, 1, seq_len)  # reshaping to match att_scores shape
+            scaled_att_scores.masked_fill_(~attn_mask, -torch.inf)  # mask where attn_mask is False
 
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
-        att_weights = torch.nan_to_num(att_weights)
-
         att_weights = self.dropout(att_weights)  # reg
 
         values = values.transpose(1, 2)  # transposing head dim and seq len of V for correct matmul
@@ -259,3 +244,6 @@ if __name__ == "__main__":
 
     unoptim_multi_head = MultiHeadAttentionWrapper(d_in, d_out, 0.5, 6, 2)
     print(unoptim_multi_head.forward(input_batch))
+
+    multi_head = MultiHeadAttention(d_in, d_out, 0.5, 6, 2)
+    print(multi_head(input_batch))
