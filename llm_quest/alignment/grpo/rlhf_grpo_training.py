@@ -13,23 +13,24 @@ from llm_quest.gpt.gpt_model import GPTModel
 # --- hyperparameters ---
 gpt_config = config.config_creator("gpt_m")
 model_device = "cuda"
-# optimizer hparams
-lr = 5e-5
+# optimizer hparams (alt hparams in comments: slower, more stable, learning)
+lr = 5e-5  # alt 3e-5
 weight_decay = 0.01
 # training hparams
-batch_size = 4
-num_samples = 6
-num_epoch = 1
-num_grad_updates = 3
+batch_size = 4  # alt 8
+num_samples = 6  # alt 4
+num_epoch = 1  # alt 2
+num_grad_updates = 3  # alt 1
 max_gen = 35
 # GRPO hparams
-eps = 0.2
-beta = 0.05
+eps = 0.2  # alt 0.15
+beta = 0.2  # alt 0.1
 # evaluation hparams
 evaluation = True
-eval_freq = 10
-eval_batches = 1
-eval_num_samples = 5
+eval_freq = 10  # alt 20
+eval_batches = 1  # alt 2
+eval_num_samples = 5  # alt 4
+kl_div_threshold = 0.75  # alt 0.5
 # loader hparams
 num_workers = 0
 pin_memory = False
@@ -111,11 +112,5 @@ if __name__ == "__main__":
         eval_freq=eval_freq,
         eval_batches=eval_batches,
         eval_num_samples=eval_num_samples,
-    )
-
-    torch.save(
-        {
-            "model_state_dict": policy_model.state_dict(),
-        },
-        config.grpo_policy_model,
+        kl_div_threshold=kl_div_threshold,
     )

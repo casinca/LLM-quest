@@ -33,14 +33,18 @@ if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
 
     with open(config.instruct_preference_test_path, "r") as f:
-        test_data = json.load(f)[30:34]
+        test_data = json.load(f)[55:58]  # same samples that were used in llm-from-scratch repo for DPO comparison
 
     # --- Model Config and Loading ---
     model_cfg = config.config_creator("gpt_m")
 
     policy_model = GPTModel(model_cfg)
-    policy_checkpoint = torch.load(config.grpo_policy_model, map_location=model_device, weights_only=True)
-    policy_model.load_state_dict(policy_checkpoint["model_state_dict"])
+    policy_checkpoint = torch.load(
+        config.checkpoint_dir / "best_checkpoint_220_score_8.863.pt",
+        map_location=model_device,
+        weights_only=True,
+    )
+    policy_model.load_state_dict(policy_checkpoint)
     policy_model.to(model_device)
     policy_model.eval()
 
@@ -57,7 +61,7 @@ if __name__ == "__main__":
         reference_response_text = generate_response(reference_model, input_text)
         policy_response_text = generate_response(policy_model, input_text)
 
-        print(input_text)
+        print(input_text.replace("\n\n### Response:", "").strip())
         print(f"\nCorrect response:\n>> {entry['output']}")
         print(f"\nReference model response:\n>> {reference_response_text}")
         print(f"\nPolicy model response:\n>> {policy_response_text}")

@@ -205,3 +205,4 @@ ft_classifier_w_gpt2 = root_dir / "checkpoints" / "ft_classifier_model_and_optim
 ft_instruct_w_gpt2 = root_dir / "checkpoints" / "ft_instruct_model_and_optim_save.pth"
 reward_model_pref_tuning = root_dir / "checkpoints" / "reward_model_pref_tuning.pth"
 grpo_policy_model = root_dir / "checkpoints" / "grpo_policy_model.pth"
+checkpoint_dir = root_dir / "checkpoints" / "rlhf_grpo_checkpoints"

@@ -1,7 +1,11 @@
+import os
+
 import torch
 import torch.nn.functional as F
 
+import config
 from llm_quest.gpt.generate import generate_loop
+from llm_quest.utils import CheckpointEvaluator
 
 
 def bt_loss(chosen_logits, rejected_logits, beta=1.0):
@@ -48,7 +52,8 @@ def reward_model_training_eval_loop_simple(
         num_epoch (int): Total number of epochs to train for.
         eval_freq (int): Frequency (in training steps) at which to perform evaluation.
                         Also used as the training loss logging interval.
-        eval_num_batches (int, optional): Number of batches to use for evaluation. If None, evaluate the whole validation set.
+        eval_num_batches (int, optional): Number of batches to use for evaluation.
+                                            If None, evaluate the whole validation set.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
     """
@@ -648,6 +653,7 @@ def grpo_training_loop(
     eval_freq=None,
     eval_batches=None,
     eval_num_samples=1,
+    kl_div_threshold=0.5,
 ):
     """
     GRPO training loop.
@@ -672,6 +678,7 @@ def grpo_training_loop(
         eval_freq (int, optional): Frequency (in training steps) at which to perform evaluation. Defaults to None.
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
+        kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -679,6 +686,7 @@ def grpo_training_loop(
     """
     reward_model.eval()
     reference_model.eval()
+    chkp_eval = CheckpointEvaluator(kl_div_threshold, beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):
@@ -793,6 +801,13 @@ def grpo_training_loop(
                     f"T. Rwd: {eval_metrics['train_reward']:.4f}, T. KL Div: {eval_metrics['train_kl_div']:.4f} | "
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
+
+                # save new best checkpoint
+                if chkp_eval.is_rlhf_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                    save_path = os.path.join(
+                        config.checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
+                    )
+                    torch.save(policy_model.state_dict(), save_path)
 
 
 class GRPOEvaluator:

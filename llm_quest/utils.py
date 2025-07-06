@@ -88,7 +88,7 @@ def alpaca_prompt_format(entry, include_output=True):
 
     # small optimization to avoid processing output if not needed
     if not include_output:
-        return instruction_txt + input_txt
+        return instruction_txt + input_txt + "\n\n### Response:\n"
     
     else:
         output_txt = (
@@ -100,6 +100,34 @@ def alpaca_prompt_format(entry, include_output=True):
         )
 
         return instruction_txt + input_txt + output_txt
+
+
+class CheckpointEvaluator:
+    """
+    Evaluator class to check for the best checkpoint in order to save it.
+    works with:
+    - RLHF GRPO
+    """
+
+    def __init__(self, kl_div_threshold=0.5, beta=1.0):
+        self.kl_div_threshold = kl_div_threshold
+        self.beta = beta
+        self.max_score = float("-inf")
+
+    def is_rlhf_best(self, kl_div, reward):
+        """
+        Method of eval: Simple KL div penalized reward.
+        """
+        if kl_div > self.kl_div_threshold:
+            return False
+
+        score = reward - (self.beta * kl_div)
+        if score > self.max_score:
+            print(f"New max score found {score:.3f} - saving checkpoint")
+            self.max_score = score
+            return True
+
+        return False
 
 
 # @rasbt's CH5 copy, util function for OpenAI's weights matching

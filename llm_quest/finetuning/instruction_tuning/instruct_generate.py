@@ -45,8 +45,8 @@ for instruct in test_txt[4:7]:
     )
 
     generated_text = ids_to_text(output, tokenizer)
-    response_text = generated_text[len(input_txt) :].replace("### Response:", "").strip()
-    print(input_txt)
+    response_text = generated_text[len(input_txt) :].strip()
+    print(input_txt.replace("\n\n### Response:\n", ""))
     print(f"\nCorrect response:\n>> {instruct['output']}")
     print(f"\nModel response:\n>> {response_text.strip()}")
     print("-------------------------------------")
