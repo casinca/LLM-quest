@@ -176,7 +176,7 @@ class InstructionDataset(Dataset):
     """
 
     def __init__(self, file, tokenizer):
-        with open(file, "r") as f:
+        with open(file, "r", encoding="utf-8") as f:
             text = json.load(f)
 
         self.instruct_ids_list = []
@@ -298,7 +298,7 @@ class PreferenceDataset(Dataset):
     """
 
     def __init__(self, file, tokenizer):
-        with open(file, "r") as f:
+        with open(file, "r", encoding="utf-8") as f:
             text = json.load(f)
 
         self.instruct_ids_list = []

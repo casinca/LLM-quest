@@ -168,14 +168,18 @@ class MultiHeadAttention(nn.Module):
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
-        # mask up to seq length/num of tokens
-        current_mask = self.mask[:seq_len, :seq_len]
         scaled_att_scores = att_scores * self.att_scaling
+
         # masking in place and normalizing with softmax
-        scaled_att_scores.masked_fill_(current_mask, -torch.inf)
+        current_mask = self.mask[:seq_len, :seq_len]  # mask up to seq length/num of tokens
         if attn_mask is not None:
-            attn_mask = attn_mask.view(b, 1, 1, seq_len)  # reshaping to match att_scores shape
-            scaled_att_scores.masked_fill_(~attn_mask, -torch.inf)  # mask where attn_mask is False
+            # reshape & combine masks (invert attn_mask to get True = padding)
+            current_mask = current_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+        # using a small value instead of -inf for padding tokens attending to padding tokens:
+        # this is an edge case in left padding where pad x pad becomes a full vector of -infs and softmax will NaN.
+        # https://github.com/huggingface/transformers/issues/32390
+        mask_value = torch.finfo(scaled_att_scores.dtype).min / 2
+        scaled_att_scores.masked_fill_(current_mask, mask_value)  # mask where True
 
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
         att_weights = self.dropout(att_weights)  # reg
@@ -208,6 +212,12 @@ if __name__ == "__main__":
             [0.05, 0.80, 0.55],  # step (x^6)
         ]
     )
+    attn_mask = torch.tensor(
+        [
+            [1, 1, 1, 1, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
 
     d_in = inputs.shape[-1]
     d_out = 2
@@ -220,11 +230,11 @@ if __name__ == "__main__":
     query_t = attv2.w_queries(inputs)
 
     raw_att = query_t @ key_t.T
-    print(raw_att)
+    # print(raw_att)
 
     mask = torch.triu(torch.ones(raw_att.shape), diagonal=1)
     masked_raw_att = raw_att.masked_fill(mask.bool(), -torch.inf)
-    print(masked_raw_att)
+    # print(masked_raw_att)
 
     # alt
     # mask_raw_att = torch.tril(raw_att, diagonal=0)
@@ -234,16 +244,19 @@ if __name__ == "__main__":
     # V3 -------------------
 
     input_batch = torch.stack((inputs, inputs), dim=0)
+    attn_mask = torch.stack((attn_mask, attn_mask), dim=0)
     # context length/ seq length (b, s, emb_dim)
     ctx_len = input_batch.shape[1]
 
-    attv3 = SelfAttention_v3(d_in, d_out, 0.5, ctx_len)
-    print(attv3.forward(input_batch))
+    attv3 = SelfAttention_v3(d_in, d_out, 0.1, ctx_len)
+    # print(attv3.forward(input_batch))
 
     # MHAs -------------------
 
+    # print("unoptim_multi_head\n")
     unoptim_multi_head = MultiHeadAttentionWrapper(d_in, d_out, 0.5, 6, 2)
-    print(unoptim_multi_head.forward(input_batch))
+    # print(unoptim_multi_head.forward(input_batch))
 
-    multi_head = MultiHeadAttention(d_in, d_out, 0.5, 6, 2)
-    print(multi_head(input_batch))
+    print("multi_head\n")
+    multi_head = MultiHeadAttention(d_in, d_out, 0.0, 6, 2)
+    print(multi_head(input_batch, attn_mask))
