@@ -4,7 +4,7 @@ Only external dependency is `tiktoken` for tokenization.
 Not using `transformers`, we're collating (batching, padding, masking...) ourselves & only starting with models
 from scratch.
 
-See [visualization](#visualization-of-my-pipeline) for the pipeline or jump straight to some interesting
+See [visualization](#visualization-of-the-pipeline) for the pipeline or jump straight to some interesting
 [results](#results) (or funny reward hacking [example](#reward-hacking-and-model-collapse)).
 
 ## GRPO
