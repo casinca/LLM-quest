@@ -31,16 +31,16 @@ def generate_loop(
     temp=0.0,
     eos_id=None,
     device="cuda",
-    attention_mask=None,
 ):
     """
     Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
 
     Args:
-        input_tensor (torch.Tensor): Input tensor of token IDs with shape [batch_size, seq_len]
-        model (nn.Module): The gpt model used for text generation
-        max_gen (int): Maximum number of tokens to generate
-        context_length (int): Maximum context length the model can process
+        input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
+        IDs.
+        model (nn.Module): The GPT model used for text generation.
+        max_gen (int): The maximum number of new tokens to generate for each sequence.
+        context_length (int): The maximum sequence length (context window) the model can handle.
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         temp (float, optional): Temperature for softmax sampling:
                                 - if >1, increases entropy (randomness)
@@ -55,16 +55,13 @@ def generate_loop(
         torch.Tensor: Input tensor concatenated with generated token IDs
     """
     input_tensor = input_tensor.to(device)
-    if attention_mask is not None:
-        attention_mask = attention_mask.to(device)
 
     for i in range(max_gen):
         # truncate input to compatible context size, shape (b, ctx_len)
         trunc_input = input_tensor[:, -context_length:]
-        curr_mask = attention_mask[:, -context_length:] if attention_mask is not None else None
 
         with torch.inference_mode():  # no need for grads as we're generating
-            logits = model(trunc_input, attn_mask=curr_mask)[:, -1, :]  # taking last vector (next word prediction)
+            logits = model(trunc_input)[:, -1, :]  # taking last vector (next word prediction)
 
         if top_k:
             logits = top_k_sampling(logits, top_k)
@@ -81,12 +78,114 @@ def generate_loop(
             (input_tensor, tok_id_next), dim=-1
         )  # adding chosen token id back to the input for the next loop
 
-        if attention_mask is not None:
-            new_mask = torch.ones_like(tok_id_next, dtype=torch.bool)
-            attention_mask = torch.cat((attention_mask, new_mask), dim=-1)
-
     # final "input" is actually initial input+all predicted words
-    return (input_tensor, attention_mask) if attention_mask is not None else input_tensor
+    return input_tensor
+
+
+# It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
+# NOTE: this is still a bit dirty and done to make proper right padding works, it won't work with left padding atm.
+# This is also to avoid having to implement KVCache solely for a single function.
+#
+# dynamic attention_mask: Avoid padding tokens from shorter prompts while generating
+# dynamic generation:
+#   - only generating for unfinished prompts (more efficient vs continue useless generations after EoS)
+#   - early finished generations are out of the loop and padded with eos_id
+# retrieving the last real token's prediction for the first step in the right padding case
+def generate_batched_loop(
+    input_tensor,
+    model,
+    max_gen,
+    context_length,
+    top_k=None,
+    temp=0.0,
+    eos_id=50256,
+    device="cuda",
+    attention_mask=None,
+    last_real=None,
+):
+    """
+    Generates text from batched prompts, handling dynamic attention masks and early stopping for individual sequences.
+    We retrieve the last real token's prediction for the first step for right padding case.
+
+    Args:
+        input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
+        IDs.
+        model (nn.Module): The model used for generation.
+        max_gen (int): The maximum number of new tokens to generate for each sequence.
+        context_length (int): The maximum sequence length (context window) the model can handle.
+        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        temp (float, optional): Sampling temperature. A higher value makes the output more random.
+                                Defaults to 0.0 (greedy sampling).
+        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to 50256 (GPT-2 EOS token).
+        device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
+        attention_mask (torch.Tensor, optional): A boolean tensor of shape (batch_size, sequence_length) indicating
+                                                which tokens are real (True) and which are padding (False).
+                                                Used during attention calculation. Defaults to None.
+        last_real (torch.Tensor, optional): A tensor of shape (batch_size,) indicating the index of the last real token
+                                            in each prompt of `input_tensor`. Used in the first generation step to
+                                            correctly extract logits for right-padded inputs. Defaults to None.
+
+    Returns:
+        torch.Tensor: A tensor of shape (batch_size, initial_sequence_length + generated_length) containing the
+                        original prompts concatenated with the generated token IDs. Sequences that finished early will
+                        be padded with `eos_id` up to `max_gen` length.
+    """
+    input_tensor = input_tensor.to(device)
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device)
+    if last_real is not None:
+        last_real = last_real.to(device)
+
+    batch_size = input_tensor.shape[0]
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=device)  # tracking if a generation is finished
+
+    for step in range(max_gen):
+        if finished.all():  # early exit
+            break
+
+        # we build the input only for unfinished rows/sequences
+        # for simplicity, calling "N_active" the number of True values in the mask/batch.
+        unfinished = ~finished  # bool mask of unfinished generations (batch_size,)
+        trunc_input = input_tensor[unfinished, -context_length:]
+
+        curr_mask = None
+        if attention_mask is not None:
+            curr_mask = attention_mask[unfinished, -context_length:]
+
+        with torch.inference_mode():
+            logits = model(trunc_input, attn_mask=curr_mask)  # (N_active, seq_len, v)
+
+        if step == 0 and last_real is not None:
+            seq_pos = torch.arange(batch_size, device=device)  # N_active=batch size for the first step
+            logits = logits[seq_pos, last_real[unfinished], :]
+        else:
+            logits = logits[:, -1, :]  # (N_active, v)
+
+        # sample for the N_active/unfinished rows
+        if top_k:
+            logits = top_k_sampling(logits, top_k)
+
+        if temp > 0:
+            probs = torch.softmax(logits / temp, dim=-1)
+            next_toks = torch.multinomial(probs, num_samples=1)  # (N_active, 1)
+        else:
+            next_toks = logits.argmax(dim=-1, keepdim=True)  # (N_active, 1)
+
+        # create a tensor full of eos_id, insert sampled tokens back into the batch only for unfinished generations
+        full_next_toks = torch.full((batch_size, 1), eos_id, device=device, dtype=torch.long)
+        full_next_toks[unfinished] = next_toks
+
+        # append to running tensors
+        input_tensor = torch.cat([input_tensor, full_next_toks], dim=-1)
+        if attention_mask is not None:
+            new_mask = torch.ones_like(full_next_toks, dtype=torch.bool)
+            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
+
+        # update finished flag
+        finished |= full_next_toks.squeeze(1) == eos_id
+
+    return input_tensor
 
 
 def top_k_sampling(logits, k):

@@ -250,6 +250,52 @@ because:
   >> I would suggest you use a simile to describe the car as it is. I would be very grateful if you would consider this suggestion. I would love to hear your thoughts and I would be more than happy to help
   ```
 
+#### Rigorous prompts batching for generation
+
+  We have to batch prompts for efficient generations in parallel, the problem is that the model will see padding tokens
+  for shorter prompts during generation.
+
+  **If we pad left**, so that it sees: `<EoS><EoS><Instructions...>+"### Response:" START GEN`
+  - Pros: 
+    - handy for generation as the last prediction retrieval will be guaranteed to be coming from a real token and not a
+    padding one.  
+    We can keep the typical `[:, -1, :]` slicing to retrieve the real last token's prediction.
+  - Cons: 
+    - Since the first tokens are padding, the model will inject positional information for them as the beginning of the
+    sequence, and the real beginning of the sequence will get incorrect positional encoding. (*Maybe for large models
+    this is less of a problem but for a small model like this one, it completely ruins the generation: spitting
+    nonsense*) 
+
+      *Possible solution*: keeping track of the real tokens' positions and using that for the positional encoding.
+
+    - Classic attention mask with masking value as `-inf` will trigger an edge case where the first token (padding)
+      will only attend to itself, resulting in an attention scores' vector of all `-inf` values, which will
+      consequently trigger a softmax of all `NaN` values and ruin the training.  
+
+      *Possible solution*: using `torch.finfo().min` as masking value (the loss mask will remove the padding tokens from
+      the loss in any case).
+
+  **If we keep pad right**: `<Instructions...>+"### Response:"<EoS><EoS> START GEN`
+  Unless we're fine retrieving the prediction of the last EoS token, right padding has pros and cons too.
+
+  - Pros:
+    - Don't have to deal with positional encoding.
+    - The model will never see padding tokens in its context for the first step/gen if we retrieve the last real token.
+
+  - Cons:
+    - Since the last token will not be real one but padding, we can't easily slice with `[:, -1, :]` to retrieve logits
+      of the last real token for the first step.
+
+      *Possible solution*: Via the collator, we can keep track of the position of the last real tokens for each prompt
+      and pass it to the generation function and slice with real positions.
+
+
+  In both cases, attention mask helps prevent the model from attending to padding tokens.  
+
+  **3rd inefficient option**, is simply doing 1 prompt at a time and increasing `num_samples` (for better perfs).
+
+  **Also helpful**:
+  - Sorting the prompts/dynamic batching by length helps limit the amount of padding tokens per batch.
 
 #### Hyperparameters tuning
 
