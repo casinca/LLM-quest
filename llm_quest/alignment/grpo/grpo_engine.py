@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 
 import config
-from llm_quest.gpt.generate import generate_loop
-from llm_quest.utils import CheckpointEvaluator
+from llm_quest.gpt.generate import generate_batched_loop, generate_loop
+from llm_quest.utils import CheckpointEvaluator, ids_to_text
 
 
 def bt_loss(chosen_logits, rejected_logits, beta=1.0):
@@ -184,7 +184,7 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     return avg_loss, avg_acc
 
 
-def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
+def grpo_prompt_collator(prompts, pad_token_id=50256, left_padding=False, custom_max_length=None, device="cpu"):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
     sample generations.
@@ -193,6 +193,7 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
         prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt"
                 whose value is a list of token IDs (int).
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
+        left_padding (bool, optional): Whether to pad on the left side of the prompt. Defaults to False.
         custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
                 is determined by the longest prompt in the batch.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
@@ -200,6 +201,7 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
         Dict[str, torch.Tensor]: A dictionary containing:
             padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
             prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
+            last_real_pos: Tensor of shape (batch_size,) containing the position of the last real token in each prompt.
     """
 
     max_length = max(len(item["prompt"]) for item in prompts)
@@ -208,21 +210,31 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, de
 
     padded_prompts = []
     prompt_masks = []
+    last_real_pos = []
 
     for item in prompts:
         prompt_len = len(item["prompt"])
-        padded_prompt = item["prompt"] + [pad_token_id] * (max_length - prompt_len)
-        prompt_mask = [True] * prompt_len + [False] * (max_length - prompt_len)
+        padding_needed = max_length - prompt_len
 
+        if left_padding:
+            padded_prompt = [pad_token_id] * padding_needed + item["prompt"]
+            prompt_mask = [False] * padding_needed + [True] * prompt_len
+        else:
+            padded_prompt = item["prompt"] + [pad_token_id] * padding_needed
+            prompt_mask = [True] * prompt_len + [False] * padding_needed
+
+        last_real_pos.append(prompt_len - 1)
         padded_prompts.append(padded_prompt)
         prompt_masks.append(prompt_mask)
 
     padded_prompts = torch.tensor(padded_prompts)
     prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
+    last_real_pos = torch.tensor(last_real_pos, dtype=torch.long)
 
     return {
         "padded_prompts": padded_prompts.to(device),
         "prompt_masks": prompt_masks.to(device),
+        "last_real_pos": last_real_pos.to(device),
     }
 
 
@@ -269,20 +281,13 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     }
 
 
-# TODO NOTE here responses are naturally padded/truncated to the same length with `max_gen` from generate_loop()
-# so it's mostly about retrieving masks.
-# We could do a new generate function with responses of variable length and dynamic padding to go with this func too.
-def batched_responses_collator(responses, responses_mask, len_prompt, device="cuda"):
+def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
     """
     Prepare batched sampled responses for the reward model.
-
-    Since we are generating responses in parallel from generate_loop(), we don't need to pad anything, the generated
-    tensor is already padded (with max_gen argument), we just need to prepare the masks.
 
     Args:
         responses (torch.Tensor): shape (batch_size * num_samples, prompt_len + max_gen)
                                 responses = prompt + policy's output as padded token IDs.
-        responses_mask (torch.Tensor): The corresponding attention mask for the responses, from generate_loop.
         len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
 
@@ -290,10 +295,18 @@ def batched_responses_collator(responses, responses_mask, len_prompt, device="cu
         Dict[str, torch.Tensor]: A dictionary containing:
             padded_responses: shape (batch_size * num_samples, prompt_len + max_gen)
                 responses = prompt + policy's output as padded token IDs.
-            reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
-            attn_masks: Boolean tensor of the same shape with masked: padding tokens.
+            reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens*.
+            attn_masks: Boolean tensor of the same shape with masked: padding tokens*
+
+            *Except the first EoS/pad token in the response part.
     """
-    attn_masks = responses_mask
+    pad_mask = responses == pad_token_id
+
+    first_eos_mask = pad_mask.clone()
+    first_eos_mask[:, :len_prompt] = False
+    first_eos_mask = first_eos_mask.cumsum(dim=1) == 1  # trick to retrieve the first EoS/pad in the response part
+
+    attn_masks = ~pad_mask | first_eos_mask  # True for: real tokens + 1st EoS/pad in the response part
 
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
@@ -702,10 +715,8 @@ def grpo_training_loop(
             # ex: batch size = 2, num_samples = 3 → [p1, p2] → [p1, p1, p1, p2, p2, p2]
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
-            (
-                responses,
-                responses_mask,
-            ) = generate_loop(  # 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
+            last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
+            responses = generate_batched_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
@@ -713,11 +724,11 @@ def grpo_training_loop(
                 context_length=policy_config["context_length"],
                 top_k=20,
                 temp=1,
-            )
+                last_real=last_real_pos,
+            )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
                 responses,
-                responses_mask,
                 len_prompt=batch["padded_prompts"].shape[-1],
                 device=device,
             )
@@ -841,7 +852,8 @@ class GRPOEvaluator:
             # --- Sampling responses ---
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(eval_num_samples, dim=0)
-            responses, responses_mask = generate_loop(
+            last_real_pos = batch["last_real_pos"].repeat_interleave(eval_num_samples, dim=0)
+            responses = generate_batched_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
@@ -849,11 +861,11 @@ class GRPOEvaluator:
                 context_length=policy_config["context_length"],
                 top_k=20,
                 temp=1.0,
+                last_real=last_real_pos,
             )
 
             collated_batch = batched_responses_collator(
                 responses,
-                responses_mask,
                 len_prompt=batch["padded_prompts"].shape[-1],
                 device=device,
             )
@@ -1022,7 +1034,6 @@ if __name__ == "__main__":
 
     collated_batch = batched_responses_collator(
         responses,
-        responses != 50256,
         len_prompt=3,
         device="cuda",
     )

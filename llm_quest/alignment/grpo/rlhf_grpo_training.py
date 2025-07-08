@@ -20,7 +20,7 @@ weight_decay = 0.01
 batch_size = 4  # alt 8
 num_samples = 6  # alt 4
 num_epoch = 1  # alt 2
-num_grad_updates = 3  # alt 1
+num_grad_updates = 3  # alt 1 or 2
 max_gen = 35
 # GRPO hparams
 eps = 0.2  # alt 0.15

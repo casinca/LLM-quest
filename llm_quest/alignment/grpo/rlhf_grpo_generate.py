@@ -32,7 +32,7 @@ def generate_response(model, input_text):
 if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    with open(config.instruct_preference_test_path, "r") as f:
+    with open(config.instruct_preference_test_path, "r", encoding="utf-8") as f:
         test_data = json.load(f)[55:58]  # same samples that were used in llm-from-scratch repo for DPO comparison
 
     # --- Model Config and Loading ---
