@@ -103,16 +103,6 @@ class MultiHeadAttentionWrapper(nn.Module):
 
 
 # MHA optimized, splitting our tensors per head then merging back
-#
-# Instead of masking rows & cols queries/keys with attention mask, we could have also masked only the keys and apply
-# the mask to the context vectors at the end like:
-#
-#   key_mask = attn_mask[:, None, None, :]  # (b,1,1,seq_len)
-#   scaled_att_scores.masked_fill_(~key_mask, -inf)
-#   attn_weights = softmax(scaled_att_scores, dim=-1)
-#   ctx = attn_weights @ values
-#   # zero out any padded positions at the end
-#   ctx = ctx * attn_mask.unsqueeze(-1)  # (b,seq_len,1) broadcasted
 class MultiHeadAttention(nn.Module):
     """
     Multi-head attention module that processes input through multiple attention heads in parallel.
@@ -178,21 +168,20 @@ class MultiHeadAttention(nn.Module):
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
-        # mask up to seq length/num of tokens
-        current_mask = self.mask[:seq_len, :seq_len]
         scaled_att_scores = att_scores * self.att_scaling
+
         # masking in place and normalizing with softmax
-        scaled_att_scores.masked_fill_(current_mask, -torch.inf)
+        current_mask = self.mask[:seq_len, :seq_len]  # mask up to seq length/num of tokens
         if attn_mask is not None:
-            # could have used 2 .view() or 2 .unsqueeze() to reshape too
-            key_mask = attn_mask[:, None, None, :]  # (b, 1, 1, seq_len)
-            query_mask = attn_mask[:, None, :, None]  # (b, 1, seq_len, 1)
-            combined = key_mask & query_mask  # (b, 1, seq_len, seq_len)
-            scaled_att_scores.masked_fill_(~combined, -torch.inf)
+            # reshape & combine masks (invert attn_mask to get True = padding)
+            current_mask = current_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+        # using a small value instead of -inf for padding tokens attending to padding tokens:
+        # this is an edge case in left padding where pad x pad becomes a full vector of -infs and softmax will NaN.
+        # https://github.com/huggingface/transformers/issues/32390
+        mask_value = torch.finfo(scaled_att_scores.dtype).min / 2
+        scaled_att_scores.masked_fill_(current_mask, mask_value)  # mask where True
 
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
-        att_weights = torch.nan_to_num(att_weights)
-
         att_weights = self.dropout(att_weights)  # reg
 
         values = values.transpose(1, 2)  # transposing head dim and seq len of V for correct matmul
@@ -223,6 +212,12 @@ if __name__ == "__main__":
             [0.05, 0.80, 0.55],  # step (x^6)
         ]
     )
+    attn_mask = torch.tensor(
+        [
+            [1, 1, 1, 1, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
 
     d_in = inputs.shape[-1]
     d_out = 2
@@ -235,11 +230,11 @@ if __name__ == "__main__":
     query_t = attv2.w_queries(inputs)
 
     raw_att = query_t @ key_t.T
-    print(raw_att)
+    # print(raw_att)
 
     mask = torch.triu(torch.ones(raw_att.shape), diagonal=1)
     masked_raw_att = raw_att.masked_fill(mask.bool(), -torch.inf)
-    print(masked_raw_att)
+    # print(masked_raw_att)
 
     # alt
     # mask_raw_att = torch.tril(raw_att, diagonal=0)
@@ -249,13 +244,19 @@ if __name__ == "__main__":
     # V3 -------------------
 
     input_batch = torch.stack((inputs, inputs), dim=0)
+    attn_mask = torch.stack((attn_mask, attn_mask), dim=0)
     # context length/ seq length (b, s, emb_dim)
     ctx_len = input_batch.shape[1]
 
-    attv3 = SelfAttention_v3(d_in, d_out, 0.5, ctx_len)
-    print(attv3.forward(input_batch))
+    attv3 = SelfAttention_v3(d_in, d_out, 0.1, ctx_len)
+    # print(attv3.forward(input_batch))
 
     # MHAs -------------------
 
+    # print("unoptim_multi_head\n")
     unoptim_multi_head = MultiHeadAttentionWrapper(d_in, d_out, 0.5, 6, 2)
-    print(unoptim_multi_head.forward(input_batch))
+    # print(unoptim_multi_head.forward(input_batch))
+
+    print("multi_head\n")
+    multi_head = MultiHeadAttention(d_in, d_out, 0.0, 6, 2)
+    print(multi_head(input_batch, attn_mask))
