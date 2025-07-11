@@ -1,19 +1,29 @@
-# LLM Quest: Models, architectures, research papers from scratch
+# LLM Quest: Architectures, techniques, research papers from scratch
 
 This repo is a constant WIP.  
 It was initially a "package like" version following the great
 [LLM from scratch repo/book](https://github.com/rasbt/LLMs-from-scratch) structure from [@rasbt](https://github.com/rasbt).
 
-Little by little, it served me as a base for verbose re-implementations of different architectures, research
-papers or experiments from scratch, such as: Mixture of Experts (MoE), Gemma 3, DeepSeek V3...  
-Put simply, SOTA LLM stuff that piques my interest for experiments and learning.
+Little by little, it served me as a base for verbose re-implementations of different architectures and research
+papers. Put simply, LLM stuff that piques my interest for experiments and learning.
 
-Even though the code is mine (unless explicitly mentioned like `gpt_download.py`), anyone
-familiar with the LLM from scratch repo/book should be familiar with the code here.
+
+## Latest
+
+- Vision Transformer (ViT) from scratch
+- RLHF GRPO from scratch
+- Gemma 3 architecture from scratch
+- DeepSeek V3, R1 architecture from scratch
+- Mixture of Experts (MoE) from scratch
+
+<sub><sup>(did I mention "from scratch"?)</sup></sub>
+
+&nbsp;
+
 
 ## Content
 
-**More details in each subfolder's `README.md`**
+*More details in each subfolder's `README.md`*
 
  - GPT* (modified for attention masks $^1$):
     - MHA
@@ -95,6 +105,7 @@ faster).
 It's not a problem for pretraining or inference (unless batching is desired) which were the main use cases of the
 original GPT-2.
 
+&nbsp;
 
 ## potential TODOs
 - non hardcoded cuda devices
