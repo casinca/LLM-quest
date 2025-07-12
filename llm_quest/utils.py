@@ -103,7 +103,7 @@ def alpaca_prompt_format(entry, include_output=True):
         return instruction_txt + input_txt + output_txt
 
 
-def alpaca_deepseek_format(entry, include_answer=True):
+def alpaca_deepseek_format(entry, include_response=True):
     """
     Formats a GSM8K entry into a DeepSeek reasoning format (R1 paper) adapted with alpaca style instruction:
     - includes alpaca style instruction
@@ -113,7 +113,7 @@ def alpaca_deepseek_format(entry, include_answer=True):
     Args:
         entry (dict): A dictionary containing 'question' and 'answer' keys
                         representing a math problem example with reasoning and final answer.
-        include_answer (bool): If set to False, will remove the formatted answer(reasoning+answer) from the output.
+        include_response (bool): If set to False, will remove the formatted response (reasoning+answer) from the output.
 
     Returns:
         str: A formatted prompt string containing the question and, optionally, the structured answer following DeepSeek
@@ -141,23 +141,23 @@ def alpaca_deepseek_format(entry, include_answer=True):
         else ""
     )
 
-    # small optimization to avoid processing answer if not needed
-    if not include_answer:
+    # small optimization to avoid processing response if not needed
+    if not include_response:
         return instruction + input_txt
 
     else:
         reasoning_part, separator, answer_part = entry["answer"].partition("\n#### ")
-        answer_formatted = f"<think>{reasoning_part}</think> <answer>{answer_part}</answer>"
+        response_formatted = f"<think>{reasoning_part}</think> <answer>{answer_part}</answer>"
         
-        answer = (
+        response = (
             "\n\n### Response:"
-            f"\n{answer_formatted}"
+            f"\n{response_formatted}"
 
             if entry["answer"]
             else ""
         )
 
-        return instruction +input_txt + answer
+        return instruction +input_txt + response
 
 
 class ResponseExtractor:

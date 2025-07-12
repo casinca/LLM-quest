@@ -324,8 +324,8 @@ class PreferenceDataset(Dataset):
             formatted_instruct = alpaca_prompt_format(instruct, include_output=False)
             chosen_response = instruct["chosen"]
             rejected_response = instruct["rejected"]
-            formatted_chosen_full = f"{formatted_instruct}\n\n### Response:\n{chosen_response}"
-            formatted_rejected_full = f"{formatted_instruct}\n\n### Response:\n{rejected_response}"
+            formatted_chosen_full = f"{formatted_instruct}{chosen_response}"
+            formatted_rejected_full = f"{formatted_instruct}{rejected_response}"
             # tokenize
             tokenized_formatted_instruct = tokenizer.encode(formatted_instruct)
             tokenized_chosen_full = tokenizer.encode(formatted_chosen_full)
@@ -377,7 +377,7 @@ class ReasoningDataset(Dataset):
                 text = json.loads(line)
 
             # convert to alpaca format instructions + reasoning & answer tags format
-            formatted_reasoning = alpaca_deepseek_format(text, include_answer=True)
+            formatted_reasoning = alpaca_deepseek_format(text, include_response=True)
             prompt, full_response, answer = self._get_prompt_response_answer(formatted_reasoning)
 
             # tokenize
