@@ -29,7 +29,7 @@ Test
 
 # potential improvements:
 
-- Make a custom gsm8k dataset sorted by difficulty
+- Make a custom gsm8k dataset sorted by difficulty (curriculum learning style?)
 - better "instruction" prompt in alpaca_deepseek_format()
 - making sure SFT is properly learned canary style testing
 - switch to process supervision
