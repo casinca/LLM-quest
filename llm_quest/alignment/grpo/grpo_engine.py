@@ -797,6 +797,7 @@ def grpo_training_loop(
                     val_loader=val_loader,
                     policy_model=policy_model,
                     reference_model=reference_model,
+                    evaluation_type="rlhf",
                     reward_model=reward_model,
                     policy_config=policy_config,
                     device=device,
@@ -821,7 +822,7 @@ def grpo_training_loop(
 
 class GRPOEvaluator:
     """
-    Evaluator class for GRPO.
+    Evaluator class for GRPO that works for both RLHF and RLVR.
     Computes the average reward and KL divergence of the policy model on both training and validation datasets.
     """
 
@@ -830,12 +831,14 @@ class GRPOEvaluator:
         loader,
         policy_model,
         reference_model,
-        reward_model,
         policy_config,
         device,
         max_gen,
         eval_num_samples,
         eval_num_batches,
+        evaluation_type="rlhf",
+        reward_model=None,
+        reward_calculator=None,
     ):
         total_reward = 0.0
         total_kl_div = 0.0
@@ -882,17 +885,26 @@ class GRPOEvaluator:
             )
 
             # --- Get rewards ---
-            mini_rewards = reward_model(
-                collated_batch["padded_responses"],
-                collated_batch["attn_masks"],
-            ).squeeze(-1)
-            mini_rewards *= collated_batch["reward_masks"]
+            if evaluation_type == "rlhf":
+                mini_rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    collated_batch["attn_masks"],
+                ).squeeze(-1)
 
-            # TODO NOTE optional edge case: and for KL div too + training loop if worth it
-            # Avoid division by zero if reward_masks is all False
-            # reward_mask_sum = collated_batch["reward_masks"].sum(dim=1)
-            # reward_mask_sum = torch.where(reward_mask_sum > 0, reward_mask_sum, torch.ones_like(reward_mask_sum))
-            rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+                # TODO NOTE optional edge case: and for KL div too + training loop if worth it
+                # Avoid division by zero if reward_masks is all False
+                # reward_mask_sum = collated_batch["reward_masks"].sum(dim=1)
+                # reward_mask_sum = torch.where(reward_mask_sum > 0, reward_mask_sum, torch.ones_like(reward_mask_sum))
+                mini_rewards *= collated_batch["reward_masks"]
+                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+            elif evaluation_type == "rlvr":
+                # duping answers to match the number of samples
+                correct_answers = [ans for ans in batch["answers"] for _ in range(eval_num_samples)]
+                rewards = reward_calculator(
+                    model_responses=collated_batch["padded_responses"],
+                    correct_answers=correct_answers,
+                )
+
             mean_batch_rewards = rewards.mean()
 
             # --- KL Divergence ---
@@ -915,10 +927,12 @@ class GRPOEvaluator:
         val_loader,
         policy_model,
         reference_model,
-        reward_model,
         policy_config,
         device,
         max_gen,
+        evaluation_type="rlhf",
+        reward_model=None,
+        reward_calculator=None,
         eval_num_samples=1,
         eval_num_batches=None,
     ):
@@ -929,44 +943,57 @@ class GRPOEvaluator:
             val_loader (DataLoader): DataLoader for the validation prompts.
             policy_model (nn.Module): The policy model to evaluate.
             reference_model (nn.Module): The reference model for KL divergence calculation.
-            reward_model (nn.Module): The reward model to score generated responses.
+            evaluation_type (str): The type of evaluation to perform ("rlhf" or "rlvr").
+            reward_model (nn.Module, optional): The reward model to score generated responses (for RLHF).
+            reward_calculator (Callable, optional): The reward calculator to score generated responses (for RLVR).
             policy_config (dict): Configuration dictionary for the policy model (used for context length).
             device (str): The device to run evaluation on.
             max_gen (int): Maximum number of tokens to generate for each response.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
             eval_num_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
-            eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
-            beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
-                        trade-off between maximizing reward and staying close to the reference policy.
         Returns:
             dict[str, float]: A dictionary containing evaluation metrics: average reward and KL divergence.
         """
+        # checks for the evaluation type
+        if evaluation_type == "rlhf":
+            if reward_model is None:
+                raise ValueError("reward_model is required for RLHF evaluation")
+            reward_model.eval()
+        elif evaluation_type == "rlvr":
+            if reward_calculator is None:
+                raise ValueError("reward_calculator is required for RLVR evaluation")
+        else:
+            raise ValueError(f"Invalid evaluation type: {evaluation_type}")
+
         policy_model.eval()
         reference_model.eval()
-        reward_model.eval()
 
         with torch.inference_mode():
             train_metrics = GRPOEvaluator._compute_grpo_metrics(
                 train_loader,
                 policy_model,
                 reference_model,
-                reward_model,
                 policy_config,
                 device,
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
+                evaluation_type=evaluation_type,
+                reward_model=reward_model,
+                reward_calculator=reward_calculator,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
                 policy_model,
                 reference_model,
-                reward_model,
                 policy_config,
                 device,
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
+                evaluation_type=evaluation_type,
+                reward_model=reward_model,
+                reward_calculator=reward_calculator,
             )
 
         policy_model.train()
