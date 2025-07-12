@@ -72,7 +72,6 @@ def reward_model_training_eval_loop_simple(
     reward_model.train()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:  # batch is already on the correct device via the collate func
             step += 1
 
@@ -117,7 +116,7 @@ def reward_model_training_eval_loop_simple(
                 print(
                     f"Epoch: {epoch}, Step: {step} |",
                     f"T. loss: {avg_interval_train_loss:.5f}, V. loss: {val_loss:.5f} |",
-                    f"T. acc: {avg_interval_train_acc*100:.2f}%, V. acc: {val_acc*100:.2f}%",
+                    f"T. acc: {avg_interval_train_acc * 100:.2f}%, V. acc: {val_acc * 100:.2f}%",
                 )
 
                 # reset interval training metrics
@@ -445,7 +444,6 @@ def grpo_training_loop_single_prompt(
     reward_model.eval()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:
             reference_model.load_state_dict(policy_model.state_dict())
             reference_model.eval()
@@ -569,7 +567,6 @@ def grpo_training_loop_variant_experimental(
     reward_model.eval()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:
             policy_model.eval()  # for every new batch, π_θ, π_θ_old and π_ref are the same
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
@@ -716,6 +713,7 @@ def grpo_training_loop(
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
+
             responses = generate_batched_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
@@ -814,7 +812,7 @@ def grpo_training_loop(
                 )
 
                 # save new best checkpoint
-                if chkp_eval.is_rlhf_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                if chkp_eval.is_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
                     save_path = os.path.join(
                         config.checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
                     )
@@ -839,7 +837,6 @@ class GRPOEvaluator:
         eval_num_samples,
         eval_num_batches,
     ):
-
         total_reward = 0.0
         total_kl_div = 0.0
 

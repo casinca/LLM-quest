@@ -77,7 +77,6 @@ class GPTStreamDataset(IterableDataset):
 
     def __iter__(self):
         for sample in self.stream:
-
             if "text" not in sample:
                 raise KeyError('Missing "text" key in sample.')
 
@@ -187,14 +186,14 @@ class InstructionDataset(Dataset):
         self.instruct_ids_list = []
 
         if file_type == "json":
-            with open(file, "r") as f:
+            with open(file, "r", encoding="utf-8") as f:
                 text = json.load(f)
                 for instruct in text:
                     formatted_instruct = formatting_func(instruct)
                     self.instruct_ids_list.append(tokenizer.encode(formatted_instruct))
 
         elif file_type == "jsonl":
-            with open(file, "r") as f:
+            with open(file, "r", encoding="utf-8") as f:
                 for line in f:
                     text = json.loads(line)
                     formatted_instruct = formatting_func(text)

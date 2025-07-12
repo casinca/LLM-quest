@@ -34,9 +34,9 @@ Test
 - making sure SFT is properly learned canary style testing
 - switch to process supervision
 
+# checks:
 
-- reflect on completion
-- assess the solution
+- (reasoning rewards later) reflect on completion
 - confirm the approach
 
 ## Importance of Process supervision vs Outcome supervision

@@ -1,4 +1,5 @@
 import functools
+import re
 import time
 
 import numpy as np
@@ -89,7 +90,7 @@ def alpaca_prompt_format(entry, include_output=True):
     # small optimization to avoid processing output if not needed
     if not include_output:
         return instruction_txt + input_txt + "\n\n### Response:\n"
-    
+
     else:
         output_txt = (
             "\n\n### Response:"
@@ -112,7 +113,7 @@ def alpaca_deepseek_format(entry, include_answer=True):
     Args:
         entry (dict): A dictionary containing 'question' and 'answer' keys
                         representing a math problem example with reasoning and final answer.
-        include_answer (bool): If set to False, will remove the formatted answer from the output.
+        include_answer (bool): If set to False, will remove the formatted answer(reasoning+answer) from the output.
 
     Returns:
         str: A formatted prompt string containing the question and, optionally, the structured answer following DeepSeek
@@ -156,7 +157,51 @@ def alpaca_deepseek_format(entry, include_answer=True):
             else ""
         )
 
-        return instruction + input_txt + answer
+        return instruction +input_txt + answer
+
+
+class ResponseExtractor:
+    """
+    Static functions using regex to find content in the response.
+    """
+
+    @staticmethod
+    def get_reasoning(response):
+        """
+        Extracts the reasoning content from <think> tags in the response.
+
+        Args:
+            response (str): The response text containing <think> tags
+
+        Returns:
+            str: The reasoning content, or None if not found
+        """
+
+        # important re.DOTALL not to stop at the end of a line, match newlines as well
+        match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+
+        if match:
+            return match.group(1).strip()  # strip whitespace and return the reasoning content
+        return None
+
+    @staticmethod
+    def get_answer(response):
+        """
+        Extracts the final answer content from <answer> tags in the response.
+
+        Args:
+            response (str): The response text containing <answer> tags
+
+        Returns:
+            str: The answer content, or None if not found
+        """
+
+        # important re.DOTALL not to stop at the end of a line, match newlines as well
+        match = re.search(r"<answer>(.*?)</answer>", response, re.DOTALL)
+
+        if match:
+            return match.group(1).strip()  # strip whitespace and return the answer content
+        return None
 
 
 class CheckpointEvaluator:
@@ -166,16 +211,23 @@ class CheckpointEvaluator:
     - RLHF GRPO
     """
 
-    def __init__(self, kl_div_threshold=0.5, beta=1.0):
+    def __init__(self, kl_div_threshold=0.5, min_score_threshold=6.0, beta=1.0):
+        """
+        Args:
+            kl_div_threshold (float): A threshold for saving the checkpoint based on the KL divergence.
+            min_score_threshold (float): A threshold for saving the checkpoint based on the reward score.
+            beta (float): Coeff for the KL divergence penalty.
+        """
         self.kl_div_threshold = kl_div_threshold
+        self.min_score_threshold = min_score_threshold
         self.beta = beta
         self.max_score = float("-inf")
 
-    def is_rlhf_best(self, kl_div, reward):
+    def is_grpo_best(self, kl_div, reward):
         """
         Method of eval: Simple KL div penalized reward.
         """
-        if kl_div > self.kl_div_threshold:
+        if kl_div > self.kl_div_threshold or reward < self.min_score_threshold:
             return False
 
         score = reward - (self.beta * kl_div)
