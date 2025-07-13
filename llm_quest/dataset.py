@@ -471,7 +471,7 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
 # mask_prompt_tokens=True.
 def custom_collate_fn(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
     """
-    Copy of @rasbt's custom collate function for alignment finetuning
+    Copy of @rasbt's custom collate function edited with removed +2 masked tokens for alignment finetuning
     """
     # Initialize lists to hold batch data
     batch_data = {"prompt": [], "chosen": [], "rejected": [], "rejected_mask": [], "chosen_mask": []}
@@ -498,9 +498,8 @@ def custom_collate_fn(batch, pad_token_id=50256, allowed_max_length=None, mask_p
             mask[len(sequence) :] = False
 
             # Set mask for all input tokens to False
-            # +2 sets the 2 newline ("\n") tokens before "### Response" to False
             if mask_prompt_tokens:
-                mask[: prompt.shape[0] + 2] = False
+                mask[: prompt.shape[0]] = False
 
             batch_data[key].append(torch.tensor(padded))
             batch_data[f"{key}_mask"].append(mask)

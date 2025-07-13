@@ -28,8 +28,7 @@ model.to(model_device)
 model.eval()
 
 for instruct in test_txt[0:4]:
-
-    input_txt = alpaca_deepseek_format(instruct, include_answer=False)
+    input_txt = alpaca_deepseek_format(instruct, include_response=False)
 
     output = generate_loop(
         text_to_ids(input_txt, tokenizer),
