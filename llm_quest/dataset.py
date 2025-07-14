@@ -314,7 +314,7 @@ class PreferenceDataset(Dataset):
 
     """
 
-    def __init__(self, file, tokenizer):
+    def __init__(self, file, tokenizer, prompts_only=False):
         with open(file, "r", encoding="utf-8") as f:
             text = json.load(f)
 
@@ -331,13 +331,16 @@ class PreferenceDataset(Dataset):
             tokenized_chosen_full = tokenizer.encode(formatted_chosen_full)
             tokenized_rejected_full = tokenizer.encode(formatted_rejected_full)
 
-            self.instruct_ids_list.append(
-                {
-                    "prompt": tokenized_formatted_instruct,
-                    "chosen": tokenized_chosen_full,
-                    "rejected": tokenized_rejected_full,
-                }
-            )
+            if prompts_only:
+                self.instruct_ids_list.append(tokenized_formatted_instruct)
+            else:
+                self.instruct_ids_list.append(
+                    {
+                        "prompt": tokenized_formatted_instruct,
+                        "chosen": tokenized_chosen_full,
+                        "rejected": tokenized_rejected_full,
+                    }
+                )
 
     def __len__(self):
         return len(self.instruct_ids_list)
