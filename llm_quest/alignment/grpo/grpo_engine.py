@@ -183,16 +183,14 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     return avg_loss, avg_acc
 
 
-def grpo_prompt_collator(prompts, pad_token_id=50256, left_padding=False, custom_max_length=None, device="cpu"):
+def grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
     sample generations.
 
     Args:
-        prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt"
-                whose value is a list of token IDs (int).
+        prompts (List[List[int]]): A list of lists of token IDs.
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        left_padding (bool, optional): Whether to pad on the left side of the prompt. Defaults to False.
         custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
                 is determined by the longest prompt in the batch.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
@@ -203,26 +201,24 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, left_padding=False, custom
             last_real_pos: Tensor of shape (batch_size,) containing the position of the last real token in each prompt.
     """
 
-    max_length = max(len(item["prompt"]) for item in prompts)
+    max_length = max(len(sample) for sample in prompts)
+
     if custom_max_length is not None:
+        prompts = [prompt[:custom_max_length] for prompt in prompts]
         max_length = min(max_length, custom_max_length)
 
     padded_prompts = []
     prompt_masks = []
     last_real_pos = []
 
-    for item in prompts:
-        prompt_len = len(item["prompt"])
+    for sample in prompts:
+        prompt_len = len(sample)
         padding_needed = max_length - prompt_len
 
-        if left_padding:
-            padded_prompt = [pad_token_id] * padding_needed + item["prompt"]
-            prompt_mask = [False] * padding_needed + [True] * prompt_len
-        else:
-            padded_prompt = item["prompt"] + [pad_token_id] * padding_needed
-            prompt_mask = [True] * prompt_len + [False] * padding_needed
+        padded_prompt = sample + [pad_token_id] * padding_needed
+        prompt_mask = [True] * prompt_len + [False] * padding_needed
 
-        last_real_pos.append(prompt_len - 1)
+        last_real_pos.append(prompt_len - 1)  # 0-indexed
         padded_prompts.append(padded_prompt)
         prompt_masks.append(prompt_mask)
 
