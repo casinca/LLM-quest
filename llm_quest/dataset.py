@@ -297,6 +297,7 @@ class PreferenceDataset(Dataset):
         file (str): Path to the JSON file containing preference examples with 'instruction',
                     'input', 'chosen', and 'rejected' keys.
         tokenizer (Tokenizer): The tokenizer object used to encode the text.
+        prompts_only (bool, optional): Whether to return only the prompts or not. (useful for RLHF training)
 
     Attributes:
         instruct_ids_list (list): List of dictionaries, each containing tokenized prompt, chosen,
@@ -458,6 +459,62 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
     padded_targets = [
         sample[1:] + [pad_token_id] + [no_loss_id] * (batch_max_len - len(sample)) for sample in truncated_batch
     ]
+    # attention masks: 1 for real tokens, 0 for padding
+    attention_masks = [[1] * len(sample) + [0] * (batch_max_len - len(sample)) for sample in truncated_batch]
+
+    return (
+        torch.tensor(padded_inputs).to(device),
+        torch.tensor(padded_targets).to(device),
+        torch.tensor(attention_masks, dtype=torch.bool).to(device),
+    )
+
+
+# Alternative experimental collate scheme where:
+#
+# Special tokens(EoS here): "attend & don't compute loss" vs "don't attend & don't compute loss" as in
+# collate_function()
+#
+# This doesn't change anything for the loss, it's just for the attention masks.
+#
+# based on:
+# https://discuss.huggingface.co/t/difference-between-setting-label-index-to-100-setting-attention-mask-to-0/4503
+# https://github.com/huggingface/trl/issues/1623
+def collate_function_eos(batch, custom_max_len=None, device="cpu"):
+    """
+    Same as `collate_function()` but with a different attention mask scheme, where EoS token is not masked.
+
+    Args:
+        batch (list): List of lists to be batched together
+        custom_max_len (int, optional): Maximum allowed sequence length. If provided,
+            sequences will be truncated to this length. Defaults to None.
+        device (str, optional): Device to place the tensors on. Defaults to "cpu".
+
+    Returns:
+        tuple: A tuple containing:
+            - torch.Tensor: Padded input sequences
+            - torch.Tensor: Padded target sequences shifted by 1 position
+            - torch.Tensor: Attention mask (1 for real tokens, 0 for padding)
+    """
+    pad_token_id = 50256  # id of the "<|endoftext|>" token
+    no_loss_id = -100  # default Pytorch Cross Entropy ignore_index=-100 for ignoring this token id during loss calc
+
+    # truncate each sequence if custom_max_len is provided
+    if custom_max_len:
+        truncated_batch = [sample[: custom_max_len - 1] for sample in batch]
+    else:
+        truncated_batch = batch
+
+    # add 1 EoS token to the end of each sequence
+    truncated_batch = [sample + [pad_token_id] for sample in truncated_batch]
+
+    batch_max_len = max(len(sample) for sample in truncated_batch)
+
+    # padding a batch's inputs to the max sample's length it contains
+    # (each batch will have their own custom len rather than a fixed universal dataset len)
+    padded_inputs = [sample + [pad_token_id] * (batch_max_len - len(sample)) for sample in truncated_batch]
+    # similarly for targets: shifting by 1, but adding only 1 padding token, rest is filled of "don't compute loss"
+    # tokens
+    padded_targets = [sample[1:] + [no_loss_id] * (batch_max_len - len(sample) + 1) for sample in truncated_batch]
     # attention masks: 1 for real tokens, 0 for padding
     attention_masks = [[1] * len(sample) + [0] * (batch_max_len - len(sample)) for sample in truncated_batch]
 
