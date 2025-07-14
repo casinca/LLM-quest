@@ -38,13 +38,12 @@ persistent_workers = False
 
 
 if __name__ == "__main__":
-
     torch.manual_seed(123)
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- datasets & loaders ---
-    train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer)
-    val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer)
+    train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer, prompts_only=True)
+    val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer, prompts_only=True)
 
     custom_collate = partial(
         grpo_prompt_collator,
