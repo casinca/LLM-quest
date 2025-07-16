@@ -201,17 +201,14 @@ I chose Outcome Supervision (1 reward per trajectory, unlike [Process Supervisio
 concerning the reward calculations, for simplicity BUT computed in a way that is compatible with process supervision
 because:
 
-  - **Using mean pooling for the full reward calculation for each trajectory.**  
-  My Reward model isn't an ORM but a PRM (Per-Token Reward Model) and doing mean pooling gives me the same result as an
-  ORM (per-episode/trajectory reward).
+  My Reward model isn't an ORM but a PRM (Per-Token Reward Model) which gives me choices on how to represent the reward.
+  I implemented different simple styles for testing: scores pooling, hidden states pooling and "last token only" in the `PrefRewardCalculator` class.
 
-    Plus, mean pooling is robust for different sequence lengths and not favoring longer sequences over a pure ORM.  
+  Each has its pros and cons. I initially went with scores pooling, but it is less robust when there is high variance
+  in sequence lengths.
     
-    In the case of a later implementation of Process supervision, my PRM is compatible since I'm already
-    retrieving all mini-rewards at each step for each trajectory. I will just not average them.  
-    
-    The alternative Outcome Supervision method of using "last token only" wouldn't be retro-compatible with process
-    supervision.
+  In the case of a later implementation of Process supervision, the PRM is compatible since I'm already
+  retrieving all mini-rewards at each step for each trajectory, so I can reuse it with process supervision.
 
 
 ### Difficulties encountered
