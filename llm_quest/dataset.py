@@ -380,7 +380,7 @@ class ReasoningDataset(Dataset):
             for line in f:
                 text = json.loads(line)
 
-            # convert to alpaca format instructions + reasoning & answer tags format
+            # convert to alpaca format: instructions + responses with reasoning & answer tags format
             formatted_reasoning = alpaca_deepseek_format(text, include_response=True)
             prompt, full_response, answer = self._get_prompt_response_answer(formatted_reasoning)
 
@@ -399,8 +399,8 @@ class ReasoningDataset(Dataset):
 
     def _get_prompt_response_answer(self, formatted_text):
         """
-        helper function to get the prompt, full_response (prompt + response), and answer from the formatted reasoning
-        text.
+        helper function to get the prompt, full_response: prompt + response (including answer), and answer from the
+        formatted reasoning text.
         """
         prompt, sep, response = formatted_text.partition("### Response:")
         prompt = prompt + sep  # prompt also include "### Response:"
@@ -477,7 +477,7 @@ def collate_function(batch, custom_max_len=None, device="cpu"):
 # This doesn't change anything for the loss, it's just for the attention masks.
 #
 # based on:
-# https://discuss.huggingface.co/t/difference-between-setting-label-index-to-100-setting-attention-mask-to-0/4503
+# https://discuss.huggingface.co/t/difference-between-setting-label-index-to-100-setting-attention-mask-to-0/4503/4
 # https://github.com/huggingface/trl/issues/1623
 def collate_function_eos(batch, custom_max_len=None, device="cpu"):
     """
@@ -525,58 +525,173 @@ def collate_function_eos(batch, custom_max_len=None, device="cpu"):
     )
 
 
-# NOTE: these masks aren't passed to the model as an argument attn_mask=..., because not only padding tokens are masked
-# but also prompt tokens. This is a mask used for the loss calculation. Response tokens do need to attend to the
-# prompt tokens, thus I can't use these for the attn_mask argument because it would also mask the prompt tokens with
-# mask_prompt_tokens=True.
-def custom_collate_fn(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
+def dpo_collate(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
     """
-    Copy of @rasbt's custom collate function edited with removed +2 masked tokens for alignment finetuning
+    Custom collate function for Direct Preference Optimization (DPO) training.
+
+    Args:
+        batch (list[dict[str, list[int]]]): A list of dictionaries, where each dictionary represents a single data
+        sample and contains the following keys:
+                - "prompt" (list[int]): List of token IDs for the prompt.
+                - "chosen" (list[int]): List of token IDs for the chosen response (including prompt).
+                - "rejected" (list[int]): List of token IDs for the rejected response (including prompt).
+        pad_token_id (int, optional): The token ID used for padding sequences to a common length.
+                                    Defaults to 50256 (GPT-2 EOS token).
+        allowed_max_length (int, optional): If specified, sequences will be truncated to this maximum length
+                                            before padding.
+        mask_prompt_tokens (bool, optional): Whether to mask the prompt tokens.
+        device (str or torch.device, optional): The device ("cpu" or "cuda") to which the output tensors
+                                                should be moved. Defaults to "cpu".
+
+    Returns:
+        dict: A dictionary containing four PyTorch tensors:
+            - "chosen" (torch.Tensor): Padded chosen sequences. Shape: (batch_size, max_length_common).
+            - "rejected" (torch.Tensor): Padded rejected sequences. same shape as chosen.
+            - "chosen_mask" (torch.Tensor): Boolean loss mask for chosen sequences. True for real sequence tokens,
+                                            False for padding tokens and optionally prompt tokens. same shape as chosen.
+            - "rejected_mask" (torch.Tensor): Boolean loss mask for rejected sequences. same shape as chosen_mask.
+
     """
-    # Initialize lists to hold batch data
-    batch_data = {"prompt": [], "chosen": [], "rejected": [], "rejected_mask": [], "chosen_mask": []}
 
     # Determine the longest sequence to set a common padding length
-    max_length_common = 0
     if batch:
-        for key in ["chosen", "rejected"]:
-            current_max = max(len(item[key]) + 1 for item in batch)
-            max_length_common = max(max_length_common, current_max)
+        max_chos_len = max(len(item["chosen"]) for item in batch)
+        max_rej_len = max(len(item["rejected"]) for item in batch)
+        max_length_common = max(max_chos_len, max_rej_len) + 1  # +1 for shifting labels
+
+    if allowed_max_length is not None:
+        max_length_common = min(max_length_common, allowed_max_length)
+
+    bsz = len(batch)
+    # preallocating batch tensors
+    batch_chosen = torch.full((bsz, max_length_common), fill_value=pad_token_id, dtype=torch.long, device=device)
+    batch_chosen_mask = torch.ones(bsz, max_length_common, dtype=torch.bool, device=device)
+    batch_rejected = batch_chosen.clone()
+    batch_rejected_mask = batch_chosen_mask.clone()
 
     # Process each item in the batch
-    for item in batch:
-        prompt = torch.tensor(item["prompt"])
-        batch_data["prompt"].append(prompt)
+    for i, item in enumerate(batch):
+        prompt_len = len(item["prompt"])
 
-        for key in ["chosen", "rejected"]:
-            # Adjust padding according to the common maximum length
-            sequence = item[key]
-            padded = sequence + [pad_token_id] * (max_length_common - len(sequence))
-            mask = torch.ones(len(padded)).bool()
-
-            # Set mask for all padding tokens to False
-            mask[len(sequence) :] = False
-
-            # Set mask for all input tokens to False
-            if mask_prompt_tokens:
-                mask[: prompt.shape[0]] = False
-
-            batch_data[key].append(torch.tensor(padded))
-            batch_data[f"{key}_mask"].append(mask)
-
-    # Final processing
-    for key in ["chosen", "rejected", "chosen_mask", "rejected_mask"]:
-        # Stack all sequences into a tensor for the given key
-        tensor_stack = torch.stack(batch_data[key])
-
-        # Optionally truncate to maximum sequence length
+        chos = item["chosen"]
+        rej = item["rejected"]
+        # truncate if needed (before padding, more efficient)
         if allowed_max_length is not None:
-            tensor_stack = tensor_stack[:, :allowed_max_length]
+            chos = chos[:max_length_common]
+            rej = rej[:max_length_common]
 
-        # Move to the specified device
-        batch_data[key] = tensor_stack.to(device)
+        chos_len = len(chos)
+        rej_len = len(rej)
 
-    return batch_data
+        batch_chosen[i, :chos_len] = torch.tensor(chos, dtype=torch.long)
+        batch_rejected[i, :rej_len] = torch.tensor(rej, dtype=torch.long)
+
+        batch_chosen_mask[i, chos_len:] = False
+        batch_rejected_mask[i, rej_len:] = False
+
+        if mask_prompt_tokens:
+            batch_chosen_mask[i, :prompt_len] = False
+            batch_rejected_mask[i, :prompt_len] = False
+
+    return {
+        "chosen": batch_chosen.to(device),
+        "rejected": batch_rejected.to(device),
+        "chosen_mask": batch_chosen_mask.to(device),
+        "rejected_mask": batch_rejected_mask.to(device),
+    }
+
+
+# similar to dpo_collate, with additional attn masks and more efficient
+def reward_pref_collate(batch, pad_token_id=50256, allowed_max_length=None, device="cpu"):
+    """
+    Custom collate function for the Reward Model training with preference data.
+    It prepares chosen and rejected sequences, along with their loss and attention masks.
+
+    Args:
+        batch (list[dict[str, list[int]]]): A list of dictionaries, where each dictionary represents a single data
+                                            sample and contains the following keys:
+                                - "prompt" (list[int]): List of token IDs for the prompt.
+                                - "chosen" (list[int]): List of token IDs for the chosen response (including prompt).
+                                - "rejected" (list[int]): List of token IDs for the rejected response (including prompt).
+        pad_token_id (int, optional): The token ID used for padding sequences to a common length.
+                                    Defaults to 50256 (GPT-2 EOS token).
+        allowed_max_length (int, optional): If specified, sequences will be truncated to this maximum length
+                                            before padding.
+        device (str or torch.device, optional): The device ("cpu" or "cuda") to which the output tensors
+                                                should be moved. Defaults to "cpu".
+
+    Returns:
+        dict: A dictionary containing six PyTorch tensors:
+            - "chosen" (torch.Tensor): Padded chosen sequences. Shape: (batch_size, max_length_common).
+            - "rejected" (torch.Tensor): Padded rejected sequences. Same shape as chosen.
+            - "chosen_mask" (torch.Tensor): Boolean loss mask for chosen sequences. True for real response tokens+EoS,
+                                            False for padding tokens and prompt tokens. same shape as chosen.
+            - "rejected_mask" (torch.Tensor): Boolean loss mask for rejected sequences. same shape as chosen.
+            - "chosen_attn_mask" (torch.Tensor): Boolean attention mask for chosen sequences. True for real tokens,
+                                                False for padding tokens. Same shape as chosen.
+            - "rejected_attn_mask" (torch.Tensor): Boolean attention mask for rejected sequences. Same shape as chosen
+    """
+    # Determine the longest sequence to set a common padding length
+    max_chos_len = max(len(item["chosen"]) for item in batch)
+    max_rej_len = max(len(item["rejected"]) for item in batch)
+    max_length_common = max(max_chos_len, max_rej_len) + 1  # here the +1 is for the EoS token, not for shifting labels
+
+    if allowed_max_length is not None:
+        max_length_common = min(max_length_common, allowed_max_length)
+
+    bsz = len(batch)
+    # Preallocate tensors
+    batch_chosen = torch.full((bsz, max_length_common), fill_value=pad_token_id, dtype=torch.long, device=device)
+    batch_rejected = batch_chosen.clone()
+
+    # Lists to store lengths for vectorized mask creation
+    prompt_lens, chos_lens, rej_lens = [], [], []
+
+    # Process each item in the batch
+    for i, item in enumerate(batch):
+        prompt_len = len(item["prompt"])
+        chos = item["chosen"] + [pad_token_id]  # adding EoS token to all sequences
+        rej = item["rejected"] + [pad_token_id]
+
+        if allowed_max_length is not None:
+            chos = chos[:max_length_common]
+            rej = rej[:max_length_common]
+
+        chos_len = len(chos)
+        rej_len = len(rej)
+
+        batch_chosen[i, :chos_len] = torch.tensor(chos, dtype=torch.long)
+        batch_rejected[i, :rej_len] = torch.tensor(rej, dtype=torch.long)
+
+        prompt_lens.append(prompt_len)
+        chos_lens.append(chos_len)
+        rej_lens.append(rej_len)
+
+    # vectorized mask creation
+    prompt_lens_t = torch.tensor(prompt_lens, device=device)
+    chos_lens_t = torch.tensor(chos_lens, device=device)
+    rej_lens_t = torch.tensor(rej_lens, device=device)
+
+    # tensor of indices [0, 1, ..., max_len-1] to use as mask
+    indices = torch.arange(max_length_common, device=device).expand(bsz, -1)
+
+    # Attention masks are True where indices are less than the sequence length
+    batch_chosen_attn_mask = indices < chos_lens_t.unsqueeze(1)
+    batch_rejected_attn_mask = indices < rej_lens_t.unsqueeze(1)
+
+    # reward masks are True where indices are >= prompt_len AND also part of the real sequence EoS included
+    prompt_mask = indices >= prompt_lens_t.unsqueeze(1)
+    batch_chosen_mask = prompt_mask & batch_chosen_attn_mask
+    batch_rejected_mask = prompt_mask & batch_rejected_attn_mask
+
+    return {
+        "chosen": batch_chosen.to(device),
+        "rejected": batch_rejected.to(device),
+        "chosen_mask": batch_chosen_mask.to(device),
+        "rejected_mask": batch_rejected_mask.to(device),
+        "chosen_attn_mask": batch_chosen_attn_mask.to(device),
+        "rejected_attn_mask": batch_rejected_attn_mask.to(device),
+    }
 
 
 def create_dataloader(

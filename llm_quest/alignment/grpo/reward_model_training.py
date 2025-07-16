@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 import config
 from llm_quest.alignment.grpo.grpo_engine import reward_model_training_eval_loop_simple
-from llm_quest.dataset import PreferenceDataset, custom_collate_fn
+from llm_quest.dataset import PreferenceDataset, dpo_collate
 from llm_quest.gpt.gpt_model import GPTModel
 
 # --- hyperparameters ---
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer)
 
     dpo_custom_collate = partial(
-        custom_collate_fn,
+        dpo_collate,
         allowed_max_length=model_cfg["context_length"],
         mask_prompt_tokens=True,
         device=model_device,
