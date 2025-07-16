@@ -602,7 +602,7 @@ def dpo_collate(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_
 
 
 # similar to dpo_collate, with additional attn masks and more efficient
-def reward_pref_collate(batch, pad_token_id=50256, allowed_max_length=None, device="cpu"):
+def pref_reward_collate(batch, pad_token_id=50256, allowed_max_length=None, device="cpu"):
     """
     Custom collate function for the Reward Model training with preference data.
     It prepares chosen and rejected sequences, along with their loss and attention masks.
@@ -671,7 +671,6 @@ def reward_pref_collate(batch, pad_token_id=50256, allowed_max_length=None, devi
     prompt_lens_t = torch.tensor(prompt_lens, device=device)
     chos_lens_t = torch.tensor(chos_lens, device=device)
     rej_lens_t = torch.tensor(rej_lens, device=device)
-
     # tensor of indices [0, 1, ..., max_len-1] to use as mask
     indices = torch.arange(max_length_common, device=device).expand(bsz, -1)
 

@@ -29,6 +29,71 @@ def bt_loss(chosen_logits, rejected_logits, beta=1.0):
     return loss.mean()
 
 
+# NOTE: There are a lot of ways and research on what's the best way to represent the reward for a sequence.
+# these are just some that I found common and intuitive in the field.
+# - We could also mix and weight these together (like last+h.states) in case last is noisy.
+# - We could take the last k states and weight or not (linearly, exp, ...) by positional order...
+class PrefRewardCalculator:
+    """
+    Different ways to calculate a reward for a sequence, from the reward model:
+
+    - score_mean_pooling: project hidden states to a scalar and then mean pooling the scores/scalars
+    - hidden_state_mean_pooling: mean pooling over the hidden states and then project to a scalar
+    - last_token_score: retrieve the last real token's (EoS in our case) hidden state and project to a scalar
+    """
+
+    @staticmethod
+    def score_mean_pooling(rewards, reward_mask):
+        """
+        Args:
+            rewards (torch.Tensor): scores/scalars from the model's head (b, s, 1)
+            reward_mask (torch.Tensor): boolean mask of shape (b, s)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        return (rewards.squeeze(-1) * reward_mask).sum(dim=1) / reward_mask.sum(dim=1)
+
+    @staticmethod
+    def hidden_states_mean_pooling(hidden_states, reward_mask, model_head):
+        """
+        Args:
+            hidden_states (torch.Tensor): shape (b, s, emb_dim)
+            reward_mask (torch.Tensor): boolean mask of shape (b, s)
+            model_head (nn.Linear): shape (emb_dim, 1)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        # shape: (b, s, emb_dim) * (b, s, 1) → (b, s, emb_dim)
+        hidden_states = hidden_states * reward_mask.unsqueeze(-1)
+
+        # mean pooling over the sequence length (b, s, emb_dim) → (b, emb_dim)
+        mean_hidden_states = hidden_states.sum(dim=1) / reward_mask.sum(dim=1).unsqueeze(-1)
+
+        # shape: (b, emb_dim) →  (b, 1) → (b, )
+        scores = model_head(mean_hidden_states)
+        return scores.squeeze(-1)
+
+    @staticmethod
+    def last_token_score(hidden_states, attention_mask, model_head):
+        """
+        Args:
+            hidden_states (torch.Tensor): shape (b, s, emb_dim)
+            attention_mask (torch.Tensor): boolean mask of shape (b, s)
+            model_head (nn.Linear): shape (emb_dim, 1)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        seq_lengths = attention_mask.sum(dim=-1)  # trick to retrieve the last real token's index per sequence
+        seq_idx = torch.arange(hidden_states.shape[0], device=hidden_states.device)
+
+        # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, 1) → (b, )
+        scores = model_head(hidden_states[seq_idx, seq_lengths - 1, :])  # -1 because 0-indexed
+        return scores.squeeze(-1)
+
+
 # TODO change reshaping rewards instead of masks
 def reward_model_training_eval_loop_simple(
     train_loader,
@@ -39,7 +104,6 @@ def reward_model_training_eval_loop_simple(
     eval_freq,
     eval_num_batches=None,
     beta=1.0,
-    pad_token_id=50256,
 ):
     """
     A simple training and evaluation loop for the reward model.
@@ -55,7 +119,6 @@ def reward_model_training_eval_loop_simple(
         eval_num_batches (int, optional): Number of batches to use for evaluation.
                                             If None, evaluate the whole validation set.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
     """
     step = 0
     interval_train_loss = 0.0
@@ -75,22 +138,19 @@ def reward_model_training_eval_loop_simple(
         for batch in train_loader:  # batch is already on the correct device via the collate func
             step += 1
 
-            pref_attn_mask = batch["chosen"] != pad_token_id
-            rej_attn_mask = batch["rejected"] != pad_token_id
-
-            # shape (b, s, 1) → (b, s)
-            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
-
-            # masking the rewards to the valid tokens
-            pref_mask = batch["chosen_mask"]
-            rej_mask = batch["rejected_mask"]
-            pref_mini_rewards *= pref_mask
-            rej_mini_rewards *= rej_mask
-
-            # --- mean pooling over the sequence length ---
-            pref_rewards = pref_mini_rewards.sum(dim=1) / pref_mask.sum(dim=1)
-            rej_rewards = rej_mini_rewards.sum(dim=1) / rej_mask.sum(dim=1)
+            # shape (b,)
+            pref_rewards = reward_model(
+                batch["chosen"],
+                attn_mask=batch["chosen_attn_mask"],
+                reward_mask=batch["chosen_mask"],
+                last_token_only=True,
+            )
+            rej_rewards = reward_model(
+                batch["rejected"],
+                attn_mask=batch["rejected_attn_mask"],
+                reward_mask=batch["rejected_mask"],
+                last_token_only=True,
+            )
 
             loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
 
@@ -127,7 +187,7 @@ def reward_model_training_eval_loop_simple(
     return tracking
 
 
-def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=1.0, pad_token_id=50256):
+def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=1.0):
     """
     Evaluate the reward model on the validation set.
 
@@ -136,7 +196,6 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
         reward_model (nn.Module): The reward model being evaluated.
         eval_num_batches (int, optional): Number of batches to evaluate. If None, evaluate the whole validation set.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
 
     Returns:
         tuple: A tuple containing:
@@ -154,27 +213,29 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     reward_model.eval()
     with torch.inference_mode():
         for i, batch in enumerate(val_loader):
+
             if i >= num_batches_to_eval:
                 break
 
-            pref_attn_mask = batch["chosen"] != pad_token_id
-            rej_attn_mask = batch["rejected"] != pad_token_id
+            pref_rewards = reward_model(
+                batch["chosen"],
+                attn_mask=batch["chosen_attn_mask"],
+                reward_mask=batch["chosen_mask"],
+                last_token_only=True,
+            )
+            rej_rewards = reward_model(
+                batch["rejected"],
+                attn_mask=batch["rejected_attn_mask"],
+                reward_mask=batch["rejected_mask"],
+                last_token_only=True,
+            )
 
-            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
-
-            pref_mask = batch["chosen_mask"]
-            rej_mask = batch["rejected_mask"]
-
-            pref_reward = (pref_mini_rewards * pref_mask).sum(dim=1) / pref_mask.sum(dim=1)
-            rej_reward = (rej_mini_rewards * rej_mask).sum(dim=1) / rej_mask.sum(dim=1)
-
-            loss = bt_loss(pref_reward, rej_reward, beta=beta)
+            loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
             total_loss += loss.item()
 
             # count the number of correct predictions
-            correct += (pref_reward > rej_reward).sum().item()
-            count += pref_reward.shape[0]
+            correct += (pref_rewards > rej_rewards).sum().item()
+            count += pref_rewards.shape[0]
 
         avg_loss = total_loss / num_batches_to_eval
         avg_acc = correct / count
