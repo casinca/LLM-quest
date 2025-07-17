@@ -29,9 +29,9 @@ class PreferenceRewardModel(nn.Module):
         self.final_ln = LayerNorm(cfg["emb_dim"])
 
         # projecting output to get a scalar reward
-        self.out = nn.Linear(cfg["emb_dim"], 1, bias=False)
+        self.out = nn.Linear(cfg["emb_dim"], 1)
 
-    def forward(self, x, attn_mask=None, reward_mask=None, last_token_only=False, hidden_state_pooling=False):
+    def forward(self, x, attn_mask=None, reward_mask=None, last_token_only=False, hidden_states_pooling=False):
         b, seq_len = x.shape
 
         # shape (b, s) → (b, s, emb_dim)
@@ -46,8 +46,8 @@ class PreferenceRewardModel(nn.Module):
         x = self.final_ln(x)
 
         assert not (
-            last_token_only and hidden_state_pooling
-        ), "last_token_only and hidden_state_pooling cannot be True at the same time"
+            last_token_only and hidden_states_pooling
+        ), "last_token_only and hidden_states_pooling cannot be True at the same time"
 
         # Retrieves the hidden state of the final valid token and not the last token (which could be a padding token)
         # Avoids unnecessary projection for all hidden states.
@@ -56,14 +56,14 @@ class PreferenceRewardModel(nn.Module):
             # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, 1)
             logits = PrefRewardCalculator.last_token_score(x, attn_mask, self.out)
 
-        elif hidden_state_pooling:
-            assert reward_mask is not None, "reward_mask is needed for hidden_state_pooling=True"
+        assert reward_mask is not None, "reward_mask is needed for hidden_states_pooling or scores_mean_pooling"
+        if hidden_states_pooling:
             # shape: (b, s, emb_dim) → (b, emb_dim) → (b, 1)
             logits = PrefRewardCalculator.hidden_states_mean_pooling(x, reward_mask, self.out)
 
         else:
             # shape: (b, s, emb_dim) → (b, s, 1) → (b,)
             logits = self.out(x)
-            logits = PrefRewardCalculator.score_mean_pooling(logits, reward_mask)
+            logits = PrefRewardCalculator.scores_mean_pooling(logits, reward_mask)
 
         return logits

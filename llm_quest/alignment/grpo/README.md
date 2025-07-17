@@ -129,8 +129,8 @@ The drawback is that $\pi_{ref}$ anchor role won't be as strong and bias will in
 
 ## Results
 
-The variance in the quality of the responses is high but as a baseline it was already the case with DPO or even SFT where
-the model simply gives a wrong answer for lack of understanding or hallucinates.
+The variance in the quality of the responses is a bit high but as a baseline it was already the case with DPO or even
+SFT where the model simply gives a wrong answer for lack of understanding or partially follows the instruction.
 
 One remarkable behavior I found, for such a small (355M params) and old architecture based model, was when it
 learned by itself 2 traits:  
@@ -202,10 +202,8 @@ concerning the reward calculations, for simplicity BUT computed in a way that is
 because:
 
   My Reward model isn't an ORM but a PRM (Per-Token Reward Model) which gives me choices on how to represent the reward.
-  I implemented different simple styles for testing: scores pooling, hidden states pooling and "last token only" in the `PrefRewardCalculator` class.
-
-  Each has its pros and cons. I initially went with scores pooling, but it is less robust when there is high variance
-  in sequence lengths.
+  I implemented different simple styles for testing: scores pooling, hidden states pooling and "last token only" in the
+  `PrefRewardCalculator` class. Each has its pros and cons.
     
   In the case of a later implementation of Process supervision, the PRM is compatible since I'm already
   retrieving all mini-rewards at each step for each trajectory, so I can reuse it with process supervision.

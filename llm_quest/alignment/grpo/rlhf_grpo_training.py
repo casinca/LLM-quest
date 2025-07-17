@@ -2,11 +2,11 @@ from functools import partial
 
 import tiktoken
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import config
 from llm_quest.alignment.grpo.grpo_engine import grpo_prompt_collator, grpo_training_loop
+from llm_quest.alignment.grpo.pref_reward_model import PreferenceRewardModel
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
@@ -77,20 +77,23 @@ if __name__ == "__main__":
     # note: the grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
-    reward_model = GPTModel(gpt_config)
-    reward_model.out = nn.Linear(gpt_config["emb_dim"], 1)
+    reward_model = PreferenceRewardModel(gpt_config)
 
+    reward_checkpoint = torch.load(
+        config.rlhf_rm_checkpoint_dir / "best_rm_checkpoint_160_accu_0.982_loss_0.083.pt",
+        map_location="cpu",
+        weights_only=True,
+    )
     pol_checkpoint = torch.load(config.ft_instruct_w_gpt2, map_location="cpu", weights_only=True)
-    reward_checkpoint = torch.load(config.reward_model_pref_tuning, map_location="cpu", weights_only=True)
     policy_model.load_state_dict(pol_checkpoint["model_state_dict"])
-    reward_model.load_state_dict(reward_checkpoint["model_state_dict"])
+    reward_model.load_state_dict(reward_checkpoint)
     del pol_checkpoint, reward_checkpoint  # removing upfront rather than waiting for gc to kick in
 
     reward_model.to(device=model_device, dtype=torch.bfloat16)
     policy_model.to(device=model_device, dtype=torch.bfloat16)
     reference_model.to(device=model_device, dtype=torch.bfloat16)
 
-    optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
     grpo_training_loop(
         train_loader=train_loader,

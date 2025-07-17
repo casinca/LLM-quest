@@ -37,13 +37,14 @@ class PrefRewardCalculator:
     """
     Different ways to calculate a reward for a sequence, from the reward model:
 
-    - score_mean_pooling: project hidden states to a scalar and then mean pooling the scores/scalars
+    - scores_mean_pooling: project hidden states to a scalar and then mean pooling the scores/scalars
     - hidden_state_mean_pooling: mean pooling over the hidden states and then project to a scalar
     - last_token_score: retrieve the last real token's (EoS in our case) hidden state and project to a scalar
     """
 
+    # TODO NOTE optional edge case: and for KL div too: potential division by zero if reward_masks is all False
     @staticmethod
-    def score_mean_pooling(rewards, reward_mask):
+    def scores_mean_pooling(rewards, reward_mask):
         """
         Args:
             rewards (torch.Tensor): scores/scalars from the model's head (b, s, 1)
@@ -143,13 +144,11 @@ def reward_model_training_eval_loop_simple(
                 batch["chosen"],
                 attn_mask=batch["chosen_attn_mask"],
                 reward_mask=batch["chosen_mask"],
-                last_token_only=True,
             )
             rej_rewards = reward_model(
                 batch["rejected"],
                 attn_mask=batch["rejected_attn_mask"],
                 reward_mask=batch["rejected_mask"],
-                last_token_only=True,
             )
 
             loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
@@ -221,13 +220,11 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
                 batch["chosen"],
                 attn_mask=batch["chosen_attn_mask"],
                 reward_mask=batch["chosen_mask"],
-                last_token_only=True,
             )
             rej_rewards = reward_model(
                 batch["rejected"],
                 attn_mask=batch["rejected_attn_mask"],
                 reward_mask=batch["rejected_mask"],
-                last_token_only=True,
             )
 
             loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
@@ -788,6 +785,7 @@ def grpo_training_loop(
                 device=device,
             )
 
+            # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
                 # why intermediate masking with loss_mask for logprobs : TODO
                 loss_mask = collated_batch["reward_masks"][:, 1:]
@@ -802,14 +800,12 @@ def grpo_training_loop(
                     inputs=collated_batch["padded_responses"],
                     attention_mask=loss_mask,
                 )
-                # Reward model - retrieving advantages -
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(  # shape: (B, S)
+
+                rewards = reward_model(  # shape: (B,)
                     collated_batch["padded_responses"],
-                    collated_batch["attn_masks"],
-                ).squeeze(-1)
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)  # shape: (B,)
+                    attn_mask=collated_batch["attn_masks"],
+                    reward_mask=collated_batch["reward_masks"],
+                )
 
             advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
 
@@ -941,19 +937,14 @@ class GRPOEvaluator:
                 attention_mask=loss_mask,
             )
 
-            # --- Get rewards ---
+            # --- Retrieving rewards ---
             if evaluation_type == "rlhf":
-                mini_rewards = reward_model(
+                rewards = reward_model(
                     collated_batch["padded_responses"],
-                    collated_batch["attn_masks"],
-                ).squeeze(-1)
+                    attn_mask=collated_batch["attn_masks"],
+                    reward_mask=collated_batch["reward_masks"],
+                )
 
-                # TODO NOTE optional edge case: and for KL div too + training loop if worth it
-                # Avoid division by zero if reward_masks is all False
-                # reward_mask_sum = collated_batch["reward_masks"].sum(dim=1)
-                # reward_mask_sum = torch.where(reward_mask_sum > 0, reward_mask_sum, torch.ones_like(reward_mask_sum))
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
             elif evaluation_type == "rlvr":
                 # duping answers to match the number of samples
                 correct_answers = [ans for ans in batch["answers"] for _ in range(eval_num_samples)]
