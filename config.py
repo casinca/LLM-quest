@@ -197,15 +197,21 @@ instruct_preference_test_path = root_dir / "data" / "instruct_preference_process
 fineweb_train = root_dir / "data" / "fineweb_sample" / "train_fineweb.jsonl.gz"
 fineweb_val = root_dir / "data" / "fineweb_sample" / "val_fineweb.jsonl.gz"
 
+reasoning_train_path = root_dir / "data" / "processed_data" / "gsm8k_processed" / "gsm8k_train.jsonl"
+reasoning_val_path = root_dir / "data" / "processed_data" / "gsm8k_processed" / "gsm8k_test.jsonl"
+
 # --- models ---
 openai_pretrained_w_gpt2 = root_dir / "checkpoints" / "gpt2"
 openai_pretrained_w_gpt2_m = root_dir / "checkpoints" / "gpt2_medium"
 custom_pretrained_w_gpt2 = root_dir / "checkpoints" / "model_and_optim_save.pth"
+
 ft_classifier_w_gpt2 = root_dir / "checkpoints" / "ft_classifier_model_and_optim_save.pth"
+
 ft_instruct_w_gpt2 = root_dir / "checkpoints" / "ft_instruct_model_and_optim_save.pth"
+
 reward_model_pref_tuning = root_dir / "checkpoints" / "reward_model_pref_tuning.pth"
 grpo_policy_model = root_dir / "checkpoints" / "grpo_policy_model.pth"
-sft_reasoning_gpt2 = root_dir / "checkpoints" / "sft_reasoning_model_save.pth"
-
 rlhf_grpo_checkpoint_dir = root_dir / "checkpoints" / "rlhf_grpo_checkpoints"
 rlhf_rm_checkpoint_dir = root_dir / "checkpoints" / "rlhf_rm_checkpoints"
+
+sft_reasoning_gpt2 = root_dir / "checkpoints" / "sft_reasoning_model_save_amp.pth"

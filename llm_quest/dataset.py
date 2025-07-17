@@ -313,6 +313,9 @@ class PreferenceDataset(Dataset):
             - chosen: Tokenized prompt + chosen response.
             - rejected: Tokenized prompt + rejected response.
 
+        if prompts_only is True:
+            list[int]: A list of token IDs representing a tokenized and formatted prompt sequence,
+
     """
 
     def __init__(self, file, tokenizer, prompts_only=False):
@@ -380,22 +383,22 @@ class ReasoningDataset(Dataset):
             for line in f:
                 text = json.loads(line)
 
-            # convert to alpaca format: instructions + responses with reasoning & answer tags format
-            formatted_reasoning = alpaca_deepseek_format(text, include_response=True)
-            prompt, full_response, answer = self._get_prompt_response_answer(formatted_reasoning)
+                # convert to alpaca format: instructions + responses with reasoning & answer tags format
+                formatted_reasoning = alpaca_deepseek_format(text, include_response=True)
+                prompt, full_response, answer = self._get_prompt_response_answer(formatted_reasoning)
 
-            # tokenize
-            tokenized_prompt = tokenizer.encode(prompt)
-            tokenized_full_response = tokenizer.encode(full_response)
-            tokenized_answer = tokenizer.encode(answer)
+                # tokenize
+                tokenized_prompt = tokenizer.encode(prompt)
+                tokenized_full_response = tokenizer.encode(full_response)
+                # (answer is kept as a string, not tokenized)
 
-            self.instruct_ids_list.append(
-                {
-                    "prompt": tokenized_prompt,
-                    "full_response": tokenized_full_response,
-                    "answer": tokenized_answer,
-                }
-            )
+                self.instruct_ids_list.append(
+                    {
+                        "prompt": tokenized_prompt,
+                        "full_response": tokenized_full_response,
+                        "answer": answer,
+                    }
+                )
 
     def _get_prompt_response_answer(self, formatted_text):
         """

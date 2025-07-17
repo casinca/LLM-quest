@@ -1,8 +1,5 @@
-import os
-
 import torch
 
-import config
 from llm_quest.alignment.grpo.grpo_engine import (
     GRPOEvaluator,
     batched_responses_collator,
@@ -92,6 +89,62 @@ class VerifiableRewardCalculator:
         )  # shape (batch_size,)
 
 
+def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device="cpu"):
+    """
+    Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
+    sample generations. It also passes through the answers kept as strings.
+    This is a slight variation from the original rlhf_grpo_prompt_collator() to return the answers.
+
+    Args:
+        batch (List[Dict[str, any]]): A list of samples from ReasoningDataset, each a dict with "prompt" and "answer".
+        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
+        custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
+                is determined by the longest prompt in the batch.
+        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
+
+    Returns:
+        Dict[str, torch.Tensor or list]: A dictionary containing:
+            padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
+            prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
+            last_real_pos: Tensor of shape (batch_size,) containing the position of the last real token in each prompt.
+            answers: List of answer strings.
+    """
+    prompts = [item["prompt"] for item in batch]
+    answers = [item["answer"] for item in batch]
+
+    max_length = max(len(sample) for sample in prompts)
+
+    if custom_max_length is not None:
+        prompts = [prompt[:custom_max_length] for prompt in prompts]
+        max_length = min(max_length, custom_max_length)
+
+    padded_prompts = []
+    prompt_masks = []
+    last_real_pos = []
+
+    for sample in prompts:
+        prompt_len = len(sample)
+        padding_needed = max_length - prompt_len
+
+        padded_prompt = sample + [pad_token_id] * padding_needed
+        prompt_mask = [True] * prompt_len + [False] * padding_needed
+
+        last_real_pos.append(prompt_len - 1)  # 0-indexed
+        padded_prompts.append(padded_prompt)
+        prompt_masks.append(prompt_mask)
+
+    padded_prompts = torch.tensor(padded_prompts)
+    prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
+    last_real_pos = torch.tensor(last_real_pos, dtype=torch.long)
+
+    return {
+        "padded_prompts": padded_prompts.to(device),
+        "prompt_masks": prompt_masks.to(device),
+        "last_real_pos": last_real_pos.to(device),
+        "answers": answers,
+    }
+
+
 def rlvr_grpo_training_loop(
     train_loader,
     val_loader,
@@ -145,7 +198,7 @@ def rlvr_grpo_training_loop(
 
     reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
     reference_model.eval()
-    chkp_eval = CheckpointEvaluator(kl_div_threshold, min_score_threshold=0.0, beta=beta)
+    chkp_eval = CheckpointEvaluator(kl_div_threshold, rlhf_min_score_threshold=0.0, rlhf_beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):
@@ -162,7 +215,7 @@ def rlvr_grpo_training_loop(
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
-            correct_answers = batch["answers"].repeat_interleave(num_samples, dim=0)
+            correct_answers = [ans for ans in batch["answers"] for _ in range(num_samples)]
 
             responses = generate_batched_loop(
                 input_tensor=dup_prompts,
@@ -260,12 +313,12 @@ def rlvr_grpo_training_loop(
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
 
-                # save new best checkpoint
-                if chkp_eval.is_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
-                    save_path = os.path.join(
-                        config.checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
-                    )
-                    torch.save(policy_model.state_dict(), save_path)
+                ## save new best checkpoint
+                # if chkp_eval.is_rlhf_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                #    save_path = os.path.join(
+                #        config.rlhf_grpo_checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
+                #    )
+                #    torch.save(policy_model.state_dict(), save_path)
 
 
 # quick test

@@ -2,12 +2,12 @@ from functools import partial
 
 import tiktoken
 import torch
+import transformers
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import grpo_training_loop, rlhf_grpo_prompt_collator
-from llm_quest.alignment.grpo.pref_reward_model import PreferenceRewardModel
-from llm_quest.dataset import PreferenceDataset
+from llm_quest.alignment.reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
+from llm_quest.dataset import ReasoningDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
 # --- hyperparameters ---
@@ -17,11 +17,11 @@ model_device = "cuda"
 lr = 5e-5  # alt 3e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 4  # alt 8
-num_samples = 6  # alt 4
-num_epoch = 1  # alt 2
+batch_size = 2  # alt 8
+num_samples = 4  # alt 4
+num_epoch = 1  # alt 2x
 num_grad_updates = 3  # alt 1 or 2
-max_gen = 35
+max_gen = 250
 # GRPO hparams
 eps = 0.2  # alt 0.15
 beta = 0.45  # alt 0.1
@@ -40,13 +40,14 @@ persistent_workers = False
 if __name__ == "__main__":
     torch.manual_seed(123)
     tokenizer = tiktoken.get_encoding("gpt2")
+    batch_tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
 
     # --- datasets & loaders ---
-    train_set = PreferenceDataset(config.instruct_preference_train_path, tokenizer, prompts_only=True)
-    val_set = PreferenceDataset(config.instruct_preference_val_path, tokenizer, prompts_only=True)
+    train_set = ReasoningDataset(config.reasoning_train_path, tokenizer)
+    val_set = ReasoningDataset(config.reasoning_val_path, tokenizer)
 
     custom_collate = partial(
-        rlhf_grpo_prompt_collator,
+        rlvr_grpo_prompt_collator,
         custom_max_length=gpt_config["context_length"],
         device=model_device,
     )
@@ -77,30 +78,22 @@ if __name__ == "__main__":
     # note: the grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
-    reward_model = PreferenceRewardModel(gpt_config)
 
-    reward_checkpoint = torch.load(
-        config.rlhf_rm_checkpoint_dir / "best_rm_checkpoint_160_accu_0.982_loss_0.083.pt",
-        map_location="cpu",
-        weights_only=True,
-    )
-    pol_checkpoint = torch.load(config.ft_instruct_w_gpt2, map_location="cpu", weights_only=True)
+    pol_checkpoint = torch.load(config.sft_reasoning_gpt2, map_location="cpu", weights_only=True)
     policy_model.load_state_dict(pol_checkpoint["model_state_dict"])
-    reward_model.load_state_dict(reward_checkpoint)
-    del pol_checkpoint, reward_checkpoint  # removing upfront rather than waiting for gc to kick in
+    del pol_checkpoint  # removing upfront rather than waiting for gc to kick in
 
-    reward_model.to(device=model_device, dtype=torch.bfloat16)
     policy_model.to(device=model_device, dtype=torch.bfloat16)
     reference_model.to(device=model_device, dtype=torch.bfloat16)
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
-    grpo_training_loop(
+    rlvr_grpo_training_loop(
         train_loader=train_loader,
         val_loader=val_loader,
         policy_model=policy_model,
         reference_model=reference_model,
-        reward_model=reward_model,
+        tokenizer=batch_tokenizer,
         optimizer=optimizer,
         num_epoch=num_epoch,
         num_samples=num_samples,
