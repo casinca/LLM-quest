@@ -178,10 +178,10 @@ class ResponseExtractor:
         """
 
         # important re.DOTALL not to stop at the end of a line, match newlines as well
-        match = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        matches = re.findall(r"<think>(.*?)</think>", response, re.DOTALL)
 
-        if match:
-            return match.group(1).strip()  # strip whitespace and return the reasoning content
+        if matches:
+            return matches[-1].strip()  # strip whitespace and return the reasoning content
         return None
 
     @staticmethod
@@ -197,10 +197,10 @@ class ResponseExtractor:
         """
 
         # important re.DOTALL not to stop at the end of a line, match newlines as well
-        match = re.search(r"<answer>(.*?)</answer>", response, re.DOTALL)
+        matches = re.findall(r"<answer>(.*?)</answer>", response, re.DOTALL)
 
-        if match:
-            return match.group(1).strip()  # strip whitespace and return the answer content
+        if matches:
+            return matches[-1].strip()  # strip whitespace and return the answer content
         return None
 
 
