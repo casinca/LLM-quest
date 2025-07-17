@@ -13,9 +13,9 @@ from llm_quest.gpt.gpt_model import GPTModel
 # --- hyperparameters ---
 gpt_config = config.config_creator("gpt_m")
 model_device = "cuda"
-# optimizer hparams (alt hparams in comments: slower, more stable, learning)
+# optimizer hparams
 lr = 5e-5  # alt 3e-5
-weight_decay = 0.01
+weight_decay = 0.1
 # training hparams
 batch_size = 4  # alt 8
 num_samples = 6  # alt 4
@@ -24,7 +24,7 @@ num_grad_updates = 3  # alt 1 or 2
 max_gen = 35
 # GRPO hparams
 eps = 0.2  # alt 0.15
-beta = 0.2  # alt 0.1
+beta = 0.45  # alt 0.1
 # evaluation hparams
 evaluation = True
 eval_freq = 10  # alt 20

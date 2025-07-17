@@ -95,7 +95,6 @@ class PrefRewardCalculator:
         return scores.squeeze(-1)
 
 
-# TODO change reshaping rewards instead of masks
 def reward_model_training_eval_loop_simple(
     train_loader,
     val_loader,
@@ -132,26 +131,26 @@ def reward_model_training_eval_loop_simple(
         "train_acc": [],
         "val_acc": [],
     }
-
+    chkp_eval = CheckpointEvaluator()
     reward_model.train()
 
     for epoch in range(1, num_epoch + 1):
         for batch in train_loader:  # batch is already on the correct device via the collate func
             step += 1
 
-            # shape (b,)
-            pref_rewards = reward_model(
-                batch["chosen"],
-                attn_mask=batch["chosen_attn_mask"],
-                reward_mask=batch["chosen_mask"],
-            )
-            rej_rewards = reward_model(
-                batch["rejected"],
-                attn_mask=batch["rejected_attn_mask"],
-                reward_mask=batch["rejected_mask"],
-            )
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                pref_rewards = reward_model(  # shape (b,)
+                    batch["chosen"],
+                    attn_mask=batch["chosen_attn_mask"],
+                    reward_mask=batch["chosen_mask"],
+                )
+                rej_rewards = reward_model(
+                    batch["rejected"],
+                    attn_mask=batch["rejected_attn_mask"],
+                    reward_mask=batch["rejected_mask"],
+                )
 
-            loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
+                loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
 
             loss.backward()
             optimizer.step()
@@ -177,6 +176,13 @@ def reward_model_training_eval_loop_simple(
                     f"T. loss: {avg_interval_train_loss:.5f}, V. loss: {val_loss:.5f} |",
                     f"T. acc: {avg_interval_train_acc * 100:.2f}%, V. acc: {val_acc * 100:.2f}%",
                 )
+
+                if chkp_eval.is_rm_accu_best(val_acc, val_loss):
+                    save_path = os.path.join(
+                        config.rlhf_grpo_checkpoint_dir,
+                        f"best_rm_checkpoint_{step}_accu_{chkp_eval.max_accu_pref_rm:.3f}_loss_{val_loss:.3f}.pt",
+                    )
+                    torch.save(reward_model.state_dict(), save_path)
 
                 # reset interval training metrics
                 interval_train_loss = 0.0
@@ -216,18 +222,19 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
             if i >= num_batches_to_eval:
                 break
 
-            pref_rewards = reward_model(
-                batch["chosen"],
-                attn_mask=batch["chosen_attn_mask"],
-                reward_mask=batch["chosen_mask"],
-            )
-            rej_rewards = reward_model(
-                batch["rejected"],
-                attn_mask=batch["rejected_attn_mask"],
-                reward_mask=batch["rejected_mask"],
-            )
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                pref_rewards = reward_model(
+                    batch["chosen"],
+                    attn_mask=batch["chosen_attn_mask"],
+                    reward_mask=batch["chosen_mask"],
+                )
+                rej_rewards = reward_model(
+                    batch["rejected"],
+                    attn_mask=batch["rejected_attn_mask"],
+                    reward_mask=batch["rejected_mask"],
+                )
 
-            loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
+                loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
             total_loss += loss.item()
 
             # count the number of correct predictions
@@ -750,7 +757,7 @@ def grpo_training_loop(
     """
     reward_model.eval()
     reference_model.eval()
-    chkp_eval = CheckpointEvaluator(kl_div_threshold, beta=beta)
+    chkp_eval = CheckpointEvaluator(rlhf_kl_div_threshold=kl_div_threshold, rlhf_beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):
@@ -866,9 +873,10 @@ def grpo_training_loop(
                 )
 
                 # save new best checkpoint
-                if chkp_eval.is_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                if chkp_eval.is_rlhf_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
                     save_path = os.path.join(
-                        config.checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
+                        config.rlhf_grpo_checkpoint_dir,
+                        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
                     )
                     torch.save(policy_model.state_dict(), save_path)
 

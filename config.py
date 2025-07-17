@@ -206,4 +206,6 @@ ft_instruct_w_gpt2 = root_dir / "checkpoints" / "ft_instruct_model_and_optim_sav
 reward_model_pref_tuning = root_dir / "checkpoints" / "reward_model_pref_tuning.pth"
 grpo_policy_model = root_dir / "checkpoints" / "grpo_policy_model.pth"
 sft_reasoning_gpt2 = root_dir / "checkpoints" / "sft_reasoning_model_save.pth"
-checkpoint_dir = root_dir / "checkpoints" / "rlhf_grpo_checkpoints"
+
+rlhf_grpo_checkpoint_dir = root_dir / "checkpoints" / "rlhf_grpo_checkpoints"
+rlhf_rm_checkpoint_dir = root_dir / "checkpoints" / "rlhf_rm_checkpoints"

@@ -11,14 +11,14 @@ from llm_quest.dataset import PreferenceDataset, pref_reward_collate
 
 # --- hyperparameters ---
 batch_size = 8
-lr = 8e-5
+lr = 6e-5
 weight_decay = 0.1
 num_epoch = 2
 beta = 1.0
 data_device = "cpu"
 model_device = "cuda"
 model_cfg = config.config_creator("gpt_m")
-model_cfg["drop_rate"] = 0.1
+model_cfg["drop_rate"] = 0.2
 eval_freq = 10
 eval_num_batches = 8
 num_workers = 0
@@ -67,9 +67,9 @@ if __name__ == "__main__":
     model.load_state_dict(state_dict, strict=False)  # strict=False to ignore the missing layer key
     del checkpoint  # removing upfront rather than waiting for gc to kick in
 
-    model.to(device=model_device, dtype=torch.bfloat16)
+    model.to(device=model_device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
     reward_model_training_eval_loop_simple(
         train_loader,
@@ -80,9 +80,4 @@ if __name__ == "__main__":
         eval_freq=eval_freq,
         eval_num_batches=eval_num_batches,
         beta=beta,
-    )
-
-    torch.save(
-        {"model_state_dict": model.state_dict()},
-        config.reward_model_pref_tuning,
     )
