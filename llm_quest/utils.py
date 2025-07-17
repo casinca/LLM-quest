@@ -200,7 +200,27 @@ class ResponseExtractor:
         matches = re.findall(r"<answer>(.*?)</answer>", response, re.DOTALL)
 
         if matches:
-            return matches[-1].strip()  # strip whitespace and return the answer content
+            return matches[-1]  # strip whitespace and return the answer content
+        return None
+
+    @staticmethod
+    def sanitize_answer(answer):
+        """
+        Sanitizes the answer by removing whitespace, special characters and potential edge cases I found...
+        """
+        if not answer:
+            return None
+
+        sanitized_answer = answer.strip()
+        # handle American (1,000.50) and European (1.000,50) number formats
+        sanitized_answer = re.sub(r",(?=\d{3})", "", sanitized_answer)  # For 1,000
+        sanitized_answer = re.sub(r"\.(?=\d{3})", "", sanitized_answer)  # For 1.000
+        sanitized_answer = sanitized_answer.replace(",", ".")  # after removing separators, normalize decimal to dot
+
+        number_match = re.search(r"[-+]?\s*\d*\.?\d+", sanitized_answer)  # extract the first valid float/int
+        if number_match:
+            return number_match.group(0).replace(" ", "")  # remove internal spaces ex: "- 72"
+
         return None
 
 
