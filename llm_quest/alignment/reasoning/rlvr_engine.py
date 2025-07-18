@@ -18,7 +18,8 @@ class VerifiableRewardCalculator:
     Args:
         tokenizer (Tokenizer): The tokenizer to decode the responses (needs a batch_decode method).
         answer_reward_value (float): The reward value for a correct answer.
-        answer_penalty (float): The penalty for an incorrect answer (should be >= 0).
+        wrong_answer_penalty (float): The penalty for an incorrect answer (should be ≤ 0).
+        unfinished_answer_penalty (float): The penalty for an unfinished answer (should be ≤ 0).
         reasoning_weight (float): A coeff to weight the reasoning reward vs. the answer.
         pad_token_id (int): The token id to use for padding.
 
@@ -28,15 +29,18 @@ class VerifiableRewardCalculator:
         self,
         tokenizer,
         answer_reward_value=10.0,
-        answer_penalty=0.0,
+        wrong_answer_penalty=0.0,
+        unfinished_answer_penalty=-1.0,
         reasoning_weight=0.0,
-        pad_token_id=50256,  # NOTE: placeholder for now, in case we need to penalize for unfinished responses
+        pad_token_id=50256,  # placeholder for now
     ):
-        assert answer_penalty >= 0, "answer_penalty should be >= 0"
+        assert wrong_answer_penalty <= 0, "wrong_answer_penalty should be ≤ 0"
+        assert unfinished_answer_penalty <= 0, "unfinished_answer_penalty should be ≤ 0"
 
         self.tokenizer = tokenizer
         self.answer_reward_value = answer_reward_value
-        self.answer_penalty = answer_penalty
+        self.wrong_answer_penalty = wrong_answer_penalty
+        self.unfinished_answer_penalty = unfinished_answer_penalty
         self.reasoning_weight = reasoning_weight  # placeholder for now in case I want to do something fancy
 
     def _calc_answer(self, response_strings, correct_answers):
@@ -54,12 +58,24 @@ class VerifiableRewardCalculator:
         rewards_list = []
 
         for response_string, correct_answer in zip(response_strings, correct_answers):
-            model_answer = ResponseExtractor.get_answer(response_string)
+            raw_model_answer = ResponseExtractor.get_answer(response_string)
+            sanitized_model_answer = ResponseExtractor.sanitize_answer(raw_model_answer)
+            sanitized_correct_answer = ResponseExtractor.sanitize_answer(correct_answer)
 
-            if model_answer is not None and float(model_answer) == float(correct_answer):
-                rewards_list.append(self.answer_reward_value)
+            if sanitized_model_answer is None:
+                rewards_list.append(self.unfinished_answer_penalty)
             else:
-                rewards_list.append(-self.answer_penalty)
+                try:
+                    if float(sanitized_model_answer) == float(sanitized_correct_answer):
+                        rewards_list.append(self.answer_reward_value)
+                    else:
+                        rewards_list.append(self.wrong_answer_penalty)
+
+                except ValueError:
+                    print(
+                        f"Failed to convert answer to float: model_answer='{sanitized_model_answer}', "
+                        f"correct_answer='{sanitized_correct_answer}'"
+                    )
 
         return rewards_list
 
@@ -77,16 +93,14 @@ class VerifiableRewardCalculator:
 
         Returns:
             torch.Tensor: The total rewards for a batch of responses, shape (batch_size,)
-            (total_rewards = answer_rewards)
+            (total_rewards = answer_rewards atm)
 
         """
-        decoded_strings = self.tokenizer.batch_decode(model_responses, skip_special_tokens=False)
+        decoded_strings = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
 
         answer_rewards = self._calc_answer(decoded_strings, correct_answers)
 
-        return torch.tensor(
-            answer_rewards, dtype=model_responses.dtype, device=model_responses.device
-        )  # shape (batch_size,)
+        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)  # shape (batch_size,)
 
 
 def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device="cpu"):
@@ -234,6 +248,7 @@ def rlvr_grpo_training_loop(
                 device=device,
             )
 
+            # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
                 # why intermediate masking with loss_mask for logprobs : TODO
                 loss_mask = collated_batch["reward_masks"][:, 1:]
@@ -248,8 +263,7 @@ def rlvr_grpo_training_loop(
                     inputs=collated_batch["padded_responses"],
                     attention_mask=loss_mask,
                 )
-                # Reward model - retrieving advantages -
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
+
                 rewards = reward_calculator(  # shape: (B,)
                     model_responses=collated_batch["padded_responses"],
                     correct_answers=correct_answers,
@@ -325,19 +339,33 @@ def rlvr_grpo_training_loop(
 if __name__ == "__main__":
     import transformers
 
-    string_response = (
-        "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
-        "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>72 </answer><|endoftext|>",
-    )
-    correct_answer = "72.0"
+    string_responses = [
+        (
+            "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
+            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>72 </answer><|endoftext|>",
+        ),
+        (
+            "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
+            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>-72 </answer><|endoftext|>",
+        ),
+    ]
+    correct_answers = ["72.0", "-72 "]
 
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
 
     reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
 
-    encoded_response = tokenizer.encode(string_response[1])
-    print(f"Encoded response: {encoded_response}")
-    model_responses_tensor = torch.tensor([encoded_response])
+    # Encode all responses in batch
+    encoded_responses = [tokenizer.encode(response[1]) for response in string_responses]
+    print(f"Encoded responses: {encoded_responses}")
 
-    rewards = reward_calculator(model_responses_tensor, [correct_answer])
+    # Create batch tensor
+    max_len = max(len(response) for response in encoded_responses)
+    padded_responses = [
+        response + [tokenizer.pad_token_id] * (max_len - len(response)) for response in encoded_responses
+    ]
+    model_responses_tensor = torch.tensor(padded_responses)
+
+    # Calculate rewards for entire batch
+    rewards = reward_calculator(model_responses_tensor, correct_answers)
     print(f"Calculated rewards: {rewards}")

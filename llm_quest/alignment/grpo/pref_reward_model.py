@@ -53,15 +53,16 @@ class PreferenceRewardModel(nn.Module):
         # Avoids unnecessary projection for all hidden states.
         if last_token_only:
             assert attn_mask is not None, "attn_mask are needed for last_token_only=True"
-            # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, 1)
+            # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b,)
             logits = PrefRewardCalculator.last_token_score(x, attn_mask, self.out)
 
-        assert reward_mask is not None, "reward_mask is needed for hidden_states_pooling or scores_mean_pooling"
-        if hidden_states_pooling:
-            # shape: (b, s, emb_dim) → (b, emb_dim) → (b, 1)
+        elif hidden_states_pooling:
+            assert reward_mask is not None, "reward_mask is needed for hidden_states_pooling"
+            # shape: (b, s, emb_dim) → (b, emb_dim) → (b, )
             logits = PrefRewardCalculator.hidden_states_mean_pooling(x, reward_mask, self.out)
 
-        else:
+        else:  # default to the original approach: scores_mean_pooling
+            assert reward_mask is not None, "reward_mask is needed for scores_mean_pooling"
             # shape: (b, s, emb_dim) → (b, s, 1) → (b,)
             logits = self.out(x)
             logits = PrefRewardCalculator.scores_mean_pooling(logits, reward_mask)

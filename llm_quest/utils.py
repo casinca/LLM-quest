@@ -206,7 +206,7 @@ class ResponseExtractor:
     @staticmethod
     def sanitize_answer(answer):
         """
-        Sanitizes the answer by removing whitespace, special characters and potential edge cases I found...
+        Sanitizes the answer by removing whitespace, special characters and potential edge cases...
         """
         if not answer:
             return None
