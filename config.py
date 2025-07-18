@@ -214,4 +214,6 @@ grpo_policy_model = root_dir / "checkpoints" / "grpo_policy_model.pth"
 rlhf_grpo_checkpoint_dir = root_dir / "checkpoints" / "rlhf_grpo_checkpoints"
 rlhf_rm_checkpoint_dir = root_dir / "checkpoints" / "rlhf_rm_checkpoints"
 
+rlvr_grpo_checkpoint_dir = root_dir / "checkpoints" / "rlvr_grpo_checkpoints"
+
 sft_reasoning_gpt2 = root_dir / "checkpoints" / "sft_reasoning_model_save_amp.pth"

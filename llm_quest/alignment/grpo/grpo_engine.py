@@ -757,7 +757,7 @@ def grpo_training_loop(
     """
     reward_model.eval()
     reference_model.eval()
-    chkp_eval = CheckpointEvaluator(rlhf_kl_div_threshold=kl_div_threshold, rlhf_beta=beta)
+    chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):

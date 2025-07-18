@@ -1,5 +1,8 @@
+import os
+
 import torch
 
+import config
 from llm_quest.alignment.grpo.grpo_engine import (
     GRPOEvaluator,
     batched_responses_collator,
@@ -212,7 +215,7 @@ def rlvr_grpo_training_loop(
 
     reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
     reference_model.eval()
-    chkp_eval = CheckpointEvaluator(kl_div_threshold, rlhf_min_score_threshold=0.0, rlhf_beta=beta)
+    chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, min_reward_threshold=0.35, beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):
@@ -327,12 +330,13 @@ def rlvr_grpo_training_loop(
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
 
-                ## save new best checkpoint
-                # if chkp_eval.is_rlhf_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
-                #    save_path = os.path.join(
-                #        config.rlhf_grpo_checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
-                #    )
-                #    torch.save(policy_model.state_dict(), save_path)
+                # save new best checkpoint
+                if chkp_eval.is_rlvr_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                    save_path = os.path.join(
+                        config.rlvr_grpo_checkpoint_dir,
+                        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
+                    )
+                    torch.save(policy_model.state_dict(), save_path)
 
 
 # quick test

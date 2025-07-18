@@ -234,25 +234,25 @@ class CheckpointEvaluator:
 
     def __init__(
         self,
-        rlhf_kl_div_threshold=0.5,
-        rlhf_min_score_threshold=6.0,
-        rlhf_beta=1.0,
+        kl_div_threshold=0.5,
+        min_reward_threshold=6.0,
+        beta=1.0,
         rm_min_accuracy_threshold=0.9,
         rm_min_val_loss_threshold=0.1,
     ):
         """
         Args:
-            rlhf_kl_div_threshold (float): minimum kl div threshold to save a checkpoint during RLHF GRPO training
-            rlhf_min_score_threshold (float): minimum reward score threshold to save a checkpoint during RLHF GRPO
+            kl_div_threshold (float): minimum kl div threshold to save a checkpoint during RLHF GRPO training
+            min_reward_threshold (float): minimum reward score threshold to save a checkpoint during RLHF GRPO
             training
-            rlhf_beta (float): coeff for the KL div penalty in RLHF GRPO training
+            beta (float): coeff for the KL div penalty in RLHF GRPO training
             rm_min_accuracy_threshold (float): minimum accuracy threshold to save a checkpoint during RLHF RM training
             rm_min_val_loss_threshold (float): minimum validation loss threshold to save a checkpoint during RLHF RM
             training
         """
-        self.rlhf_kl_div_threshold = rlhf_kl_div_threshold
-        self.rlhf_min_score_threshold = rlhf_min_score_threshold
-        self.rlhf_beta = rlhf_beta
+        self.kl_div_threshold = kl_div_threshold
+        self.min_reward_threshold = min_reward_threshold
+        self.beta = beta
         self.max_score_grpo = float("-inf")
         self.max_accu_pref_rm = float("-inf")
         self.rm_min_accuracy_threshold = rm_min_accuracy_threshold
@@ -262,10 +262,10 @@ class CheckpointEvaluator:
         """
         Method of eval: Simple KL div penalized reward.
         """
-        if kl_div > self.rlhf_kl_div_threshold or reward < self.rlhf_min_score_threshold:
+        if kl_div > self.kl_div_threshold or reward < self.min_reward_threshold:
             return False
 
-        score = reward - (self.rlhf_beta * kl_div)
+        score = reward - (self.beta * kl_div)
         if score > self.max_score_grpo:
             print(f"New max score found {score:.3f} - saving checkpoint")
             self.max_score_grpo = score
@@ -281,6 +281,19 @@ class CheckpointEvaluator:
             print(f"New max accuracy found {accuracy:.3f} - saving checkpoint")
             self.max_accu_pref_rm = accuracy
             return True
+        return False
+
+    # same as rlhf grpo logic but separate in case we need to change the logic
+    def is_rlvr_grpo_best(self, reward, kl_div):
+        if kl_div > self.kl_div_threshold or reward < self.min_reward_threshold:
+            return False
+
+        score = reward - (self.beta * kl_div)
+        if score > self.max_score_grpo:
+            print(f"New max score found {score:.3f} - saving checkpoint")
+            self.max_score_grpo = score
+            return True
+
         return False
 
 
