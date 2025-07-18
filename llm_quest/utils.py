@@ -166,11 +166,11 @@ class ResponseExtractor:
     """
 
     # precompiling regex patterns for efficiency
+    # re.DOTALL = not to stop at the end of a line, matches newlines as well
     REASONING_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL)
     ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
     NUMBER_PATTERN = re.compile(r"[-+]?\s*\d*\.?\d+")
     THOUSAND_SEP_PATTERN = re.compile(r"[,.](?=\d{3})")
-    print("wow this is working")
 
     @classmethod
     def get_reasoning(cls, response):
@@ -183,8 +183,6 @@ class ResponseExtractor:
         Returns:
             str: The reasoning content, or None if not found
         """
-
-        # important re.DOTALL not to stop at the end of a line, match newlines as well
         matches = re.findall(cls.REASONING_PATTERN, response)
 
         if matches:
@@ -202,8 +200,6 @@ class ResponseExtractor:
         Returns:
             str: The answer content, or None if not found
         """
-
-        # important re.DOTALL not to stop at the end of a line, match newlines as well
         matches = re.findall(cls.ANSWER_PATTERN, response)
 
         if matches:
@@ -236,6 +232,7 @@ class CheckpointEvaluator:
     works with:
     - RLHF GRPO training
     - RLHF Reward Model (RM) training
+    - RLVR GRPO training
     """
 
     def __init__(
