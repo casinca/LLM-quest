@@ -162,11 +162,18 @@ def alpaca_deepseek_format(entry, include_response=True):
 
 class ResponseExtractor:
     """
-    Static functions using regex to find content in the response.
+    Class methods using regex to find content in the response.
     """
 
-    @staticmethod
-    def get_reasoning(response):
+    # precompiling regex patterns for efficiency
+    REASONING_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    ANSWER_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+    NUMBER_PATTERN = re.compile(r"[-+]?\s*\d*\.?\d+")
+    THOUSAND_SEP_PATTERN = re.compile(r"[,.](?=\d{3})")
+    print("wow this is working")
+
+    @classmethod
+    def get_reasoning(cls, response):
         """
         Extracts the reasoning content from <think> tags in the response.
 
@@ -178,14 +185,14 @@ class ResponseExtractor:
         """
 
         # important re.DOTALL not to stop at the end of a line, match newlines as well
-        matches = re.findall(r"<think>(.*?)</think>", response, re.DOTALL)
+        matches = re.findall(cls.REASONING_PATTERN, response)
 
         if matches:
             return matches[-1].strip()  # strip whitespace and return the reasoning content
         return None
 
-    @staticmethod
-    def get_answer(response):
+    @classmethod
+    def get_answer(cls, response):
         """
         Extracts the final answer content from <answer> tags in the response.
 
@@ -197,14 +204,14 @@ class ResponseExtractor:
         """
 
         # important re.DOTALL not to stop at the end of a line, match newlines as well
-        matches = re.findall(r"<answer>(.*?)</answer>", response, re.DOTALL)
+        matches = re.findall(cls.ANSWER_PATTERN, response)
 
         if matches:
-            return matches[-1]  # strip whitespace and return the answer content
+            return matches[-1]  # return the latest flagged answer content
         return None
 
-    @staticmethod
-    def sanitize_answer(answer):
+    @classmethod
+    def sanitize_answer(cls, answer):
         """
         Sanitizes the answer by removing whitespace, special characters and potential edge cases...
         """
@@ -213,11 +220,10 @@ class ResponseExtractor:
 
         sanitized_answer = answer.strip()
         # handle American (1,000.50) and European (1.000,50) number formats
-        sanitized_answer = re.sub(r",(?=\d{3})", "", sanitized_answer)  # For 1,000
-        sanitized_answer = re.sub(r"\.(?=\d{3})", "", sanitized_answer)  # For 1.000
+        sanitized_answer = re.sub(cls.THOUSAND_SEP_PATTERN, "", sanitized_answer)
         sanitized_answer = sanitized_answer.replace(",", ".")  # after removing separators, normalize decimal to dot
 
-        number_match = re.search(r"[-+]?\s*\d*\.?\d+", sanitized_answer)  # extract the first valid float/int
+        number_match = re.search(cls.NUMBER_PATTERN, sanitized_answer)  # extract the first valid float/int
         if number_match:
             return number_match.group(0).replace(" ", "")  # remove internal spaces ex: "- 72"
 

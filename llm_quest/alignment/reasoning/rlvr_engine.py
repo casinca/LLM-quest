@@ -212,9 +212,8 @@ def rlvr_grpo_training_loop(
         None: The function modifies the `policy_model` in place.
 
     """
-
-    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
     reference_model.eval()
+    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
     chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, min_reward_threshold=0.35, beta=beta)
 
     step = 0
