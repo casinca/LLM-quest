@@ -1,4 +1,4 @@
-# RLHF with GRPO from scratch on preference tuning
+# RLHF with GRPO from scratch: Preference tuning
 
 Only external dependency is `tiktoken` for tokenization.  
 Not using `transformers`, we're collating (batching, padding, masking...) ourselves & only starting with models
@@ -129,8 +129,8 @@ The drawback is that $\pi_{ref}$ anchor role won't be as strong and bias will in
 
 ## Results
 
-The variance in the quality of the responses is high but as a baseline it was already the case with DPO or even SFT where
-the model simply gives a wrong answer for lack of understanding or hallucinates.
+The variance in the quality of the responses is a bit high but as a baseline it was already the case with DPO or even
+SFT where the model simply gives a wrong answer for lack of understanding or partially follows the instruction.
 
 One remarkable behavior I found, for such a small (355M params) and old architecture based model, was when it
 learned by itself 2 traits:  
@@ -201,17 +201,12 @@ I chose Outcome Supervision (1 reward per trajectory, unlike [Process Supervisio
 concerning the reward calculations, for simplicity BUT computed in a way that is compatible with process supervision
 because:
 
-  - **Using mean pooling for the full reward calculation for each trajectory.**  
-  My Reward model isn't an ORM but a PRM (Per-Token Reward Model) and doing mean pooling gives me the same result as an
-  ORM (per-episode/trajectory reward).
-
-    Plus, mean pooling is robust for different sequence lengths and not favoring longer sequences over a pure ORM.  
+  My Reward model isn't an ORM but a PRM (Per-Token Reward Model) which gives me choices on how to represent the reward.
+  I implemented different simple styles for testing: scores pooling, hidden states pooling and "last token only" in the
+  `PrefRewardCalculator` class. Each has its pros and cons.
     
-    In the case of a later implementation of Process supervision, my PRM is compatible since I'm already
-    retrieving all mini-rewards at each step for each trajectory. I will just not average them.  
-    
-    The alternative Outcome Supervision method of using "last token only" wouldn't be retro-compatible with process
-    supervision.
+  In the case of a later implementation of Process supervision, the PRM is compatible since I'm already
+  retrieving all mini-rewards at each step for each trajectory, so I can reuse it with process supervision.
 
 
 ### Difficulties encountered

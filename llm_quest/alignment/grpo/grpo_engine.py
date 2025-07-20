@@ -29,7 +29,72 @@ def bt_loss(chosen_logits, rejected_logits, beta=1.0):
     return loss.mean()
 
 
-# TODO change reshaping rewards instead of masks
+# NOTE: There are a lot of ways and research on what's the best way to represent the reward for a sequence.
+# these are just some that I found common and intuitive in the field.
+# - We could also mix and weight these together (like last+h.states) in case last is noisy.
+# - We could take the last k states and weight or not (linearly, exp, ...) by positional order...
+class PrefRewardCalculator:
+    """
+    Different ways to calculate a reward for a sequence, from the reward model:
+
+    - scores_mean_pooling: project hidden states to a scalar and then mean pooling the scores/scalars
+    - hidden_state_mean_pooling: mean pooling over the hidden states and then project to a scalar
+    - last_token_score: retrieve the last real token's (EoS in our case) hidden state and project to a scalar
+    """
+
+    # TODO NOTE optional edge case: and for KL div too: potential division by zero if reward_masks is all False
+    @staticmethod
+    def scores_mean_pooling(rewards, reward_mask):
+        """
+        Args:
+            rewards (torch.Tensor): scores/scalars from the model's head (b, s, 1)
+            reward_mask (torch.Tensor): boolean mask of shape (b, s)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        return (rewards.squeeze(-1) * reward_mask).sum(dim=1) / reward_mask.sum(dim=1)
+
+    @staticmethod
+    def hidden_states_mean_pooling(hidden_states, reward_mask, model_head):
+        """
+        Args:
+            hidden_states (torch.Tensor): shape (b, s, emb_dim)
+            reward_mask (torch.Tensor): boolean mask of shape (b, s)
+            model_head (nn.Linear): shape (emb_dim, 1)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        # shape: (b, s, emb_dim) * (b, s, 1) → (b, s, emb_dim)
+        hidden_states = hidden_states * reward_mask.unsqueeze(-1)
+
+        # mean pooling over the sequence length (b, s, emb_dim) → (b, emb_dim)
+        mean_hidden_states = hidden_states.sum(dim=1) / reward_mask.sum(dim=1).unsqueeze(-1)
+
+        # shape: (b, emb_dim) →  (b, 1) → (b, )
+        scores = model_head(mean_hidden_states)
+        return scores.squeeze(-1)
+
+    @staticmethod
+    def last_token_score(hidden_states, attention_mask, model_head):
+        """
+        Args:
+            hidden_states (torch.Tensor): shape (b, s, emb_dim)
+            attention_mask (torch.Tensor): boolean mask of shape (b, s)
+            model_head (nn.Linear): shape (emb_dim, 1)
+
+        Returns:
+            scores (torch.Tensor): shape (b,)
+        """
+        seq_lengths = attention_mask.sum(dim=-1)  # trick to retrieve the last real token's index per sequence
+        seq_idx = torch.arange(hidden_states.shape[0], device=hidden_states.device)
+
+        # shape: (b, s, emb_dim) → slicing (b, emb_dim) → (b, 1) → (b, )
+        scores = model_head(hidden_states[seq_idx, seq_lengths - 1, :])  # -1 because 0-indexed
+        return scores.squeeze(-1)
+
+
 def reward_model_training_eval_loop_simple(
     train_loader,
     val_loader,
@@ -39,7 +104,6 @@ def reward_model_training_eval_loop_simple(
     eval_freq,
     eval_num_batches=None,
     beta=1.0,
-    pad_token_id=50256,
 ):
     """
     A simple training and evaluation loop for the reward model.
@@ -55,7 +119,6 @@ def reward_model_training_eval_loop_simple(
         eval_num_batches (int, optional): Number of batches to use for evaluation.
                                             If None, evaluate the whole validation set.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
     """
     step = 0
     interval_train_loss = 0.0
@@ -68,32 +131,26 @@ def reward_model_training_eval_loop_simple(
         "train_acc": [],
         "val_acc": [],
     }
-
+    chkp_eval = CheckpointEvaluator()
     reward_model.train()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:  # batch is already on the correct device via the collate func
             step += 1
 
-            pref_attn_mask = batch["chosen"] != pad_token_id
-            rej_attn_mask = batch["rejected"] != pad_token_id
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                pref_rewards = reward_model(  # shape (b,)
+                    batch["chosen"],
+                    attn_mask=batch["chosen_attn_mask"],
+                    reward_mask=batch["chosen_mask"],
+                )
+                rej_rewards = reward_model(
+                    batch["rejected"],
+                    attn_mask=batch["rejected_attn_mask"],
+                    reward_mask=batch["rejected_mask"],
+                )
 
-            # shape (b, s, 1) → (b, s)
-            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
-
-            # masking the rewards to the valid tokens
-            pref_mask = batch["chosen_mask"]
-            rej_mask = batch["rejected_mask"]
-            pref_mini_rewards *= pref_mask
-            rej_mini_rewards *= rej_mask
-
-            # --- mean pooling over the sequence length ---
-            pref_rewards = pref_mini_rewards.sum(dim=1) / pref_mask.sum(dim=1)
-            rej_rewards = rej_mini_rewards.sum(dim=1) / rej_mask.sum(dim=1)
-
-            loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
+                loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
 
             loss.backward()
             optimizer.step()
@@ -117,8 +174,15 @@ def reward_model_training_eval_loop_simple(
                 print(
                     f"Epoch: {epoch}, Step: {step} |",
                     f"T. loss: {avg_interval_train_loss:.5f}, V. loss: {val_loss:.5f} |",
-                    f"T. acc: {avg_interval_train_acc*100:.2f}%, V. acc: {val_acc*100:.2f}%",
+                    f"T. acc: {avg_interval_train_acc * 100:.2f}%, V. acc: {val_acc * 100:.2f}%",
                 )
+
+                if chkp_eval.is_rm_accu_best(val_acc, val_loss):
+                    save_path = os.path.join(
+                        config.rlhf_grpo_checkpoint_dir,
+                        f"best_rm_checkpoint_{step}_accu_{chkp_eval.max_accu_pref_rm:.3f}_loss_{val_loss:.3f}.pt",
+                    )
+                    torch.save(reward_model.state_dict(), save_path)
 
                 # reset interval training metrics
                 interval_train_loss = 0.0
@@ -128,7 +192,7 @@ def reward_model_training_eval_loop_simple(
     return tracking
 
 
-def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=1.0, pad_token_id=50256):
+def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=1.0):
     """
     Evaluate the reward model on the validation set.
 
@@ -137,7 +201,6 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
         reward_model (nn.Module): The reward model being evaluated.
         eval_num_batches (int, optional): Number of batches to evaluate. If None, evaluate the whole validation set.
         beta (float, optional): Scaling factor for the Bradley-Terry loss. Defaults to 1.0.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
 
     Returns:
         tuple: A tuple containing:
@@ -155,27 +218,28 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     reward_model.eval()
     with torch.inference_mode():
         for i, batch in enumerate(val_loader):
+
             if i >= num_batches_to_eval:
                 break
 
-            pref_attn_mask = batch["chosen"] != pad_token_id
-            rej_attn_mask = batch["rejected"] != pad_token_id
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                pref_rewards = reward_model(
+                    batch["chosen"],
+                    attn_mask=batch["chosen_attn_mask"],
+                    reward_mask=batch["chosen_mask"],
+                )
+                rej_rewards = reward_model(
+                    batch["rejected"],
+                    attn_mask=batch["rejected_attn_mask"],
+                    reward_mask=batch["rejected_mask"],
+                )
 
-            pref_mini_rewards = reward_model(batch["chosen"], attn_mask=pref_attn_mask).squeeze(-1)
-            rej_mini_rewards = reward_model(batch["rejected"], attn_mask=rej_attn_mask).squeeze(-1)
-
-            pref_mask = batch["chosen_mask"]
-            rej_mask = batch["rejected_mask"]
-
-            pref_reward = (pref_mini_rewards * pref_mask).sum(dim=1) / pref_mask.sum(dim=1)
-            rej_reward = (rej_mini_rewards * rej_mask).sum(dim=1) / rej_mask.sum(dim=1)
-
-            loss = bt_loss(pref_reward, rej_reward, beta=beta)
+                loss = bt_loss(pref_rewards, rej_rewards, beta=beta)
             total_loss += loss.item()
 
             # count the number of correct predictions
-            correct += (pref_reward > rej_reward).sum().item()
-            count += pref_reward.shape[0]
+            correct += (pref_rewards > rej_rewards).sum().item()
+            count += pref_rewards.shape[0]
 
         avg_loss = total_loss / num_batches_to_eval
         avg_acc = correct / count
@@ -184,16 +248,14 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     return avg_loss, avg_acc
 
 
-def grpo_prompt_collator(prompts, pad_token_id=50256, left_padding=False, custom_max_length=None, device="cpu"):
+def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
     sample generations.
 
     Args:
-        prompts (List[Dict[str, List[int]]]): A list of dictionaries, the dictionary must contain a key "prompt"
-                whose value is a list of token IDs (int).
+        prompts (List[List[int]]): A list of lists of token IDs.
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        left_padding (bool, optional): Whether to pad on the left side of the prompt. Defaults to False.
         custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
                 is determined by the longest prompt in the batch.
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
@@ -204,26 +266,24 @@ def grpo_prompt_collator(prompts, pad_token_id=50256, left_padding=False, custom
             last_real_pos: Tensor of shape (batch_size,) containing the position of the last real token in each prompt.
     """
 
-    max_length = max(len(item["prompt"]) for item in prompts)
+    max_length = max(len(sample) for sample in prompts)
+
     if custom_max_length is not None:
+        prompts = [prompt[:custom_max_length] for prompt in prompts]
         max_length = min(max_length, custom_max_length)
 
     padded_prompts = []
     prompt_masks = []
     last_real_pos = []
 
-    for item in prompts:
-        prompt_len = len(item["prompt"])
+    for sample in prompts:
+        prompt_len = len(sample)
         padding_needed = max_length - prompt_len
 
-        if left_padding:
-            padded_prompt = [pad_token_id] * padding_needed + item["prompt"]
-            prompt_mask = [False] * padding_needed + [True] * prompt_len
-        else:
-            padded_prompt = item["prompt"] + [pad_token_id] * padding_needed
-            prompt_mask = [True] * prompt_len + [False] * padding_needed
+        padded_prompt = sample + [pad_token_id] * padding_needed
+        prompt_mask = [True] * prompt_len + [False] * padding_needed
 
-        last_real_pos.append(prompt_len - 1)
+        last_real_pos.append(prompt_len - 1)  # 0-indexed
         padded_prompts.append(padded_prompt)
         prompt_masks.append(prompt_mask)
 
@@ -281,6 +341,8 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     }
 
 
+# NOTE: responses generated from `generate_batched_loop()` already have an EoS token at the end (unless
+# truncated/max_gen) therefore nothing is added here, responses are already ready to be sliced for logprobs.
 def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
     """
     Prepare batched sampled responses for the reward model.
@@ -445,7 +507,6 @@ def grpo_training_loop_single_prompt(
     reward_model.eval()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:
             reference_model.load_state_dict(policy_model.state_dict())
             reference_model.eval()
@@ -569,7 +630,6 @@ def grpo_training_loop_variant_experimental(
     reward_model.eval()
 
     for epoch in range(1, num_epoch + 1):
-
         for batch in train_loader:
             policy_model.eval()  # for every new batch, π_θ, π_θ_old and π_ref are the same
             # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
@@ -699,7 +759,7 @@ def grpo_training_loop(
     """
     reward_model.eval()
     reference_model.eval()
-    chkp_eval = CheckpointEvaluator(kl_div_threshold, beta=beta)
+    chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, beta=beta)
 
     step = 0
     for epoch in range(1, num_epoch + 1):
@@ -716,6 +776,7 @@ def grpo_training_loop(
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
+
             responses = generate_batched_loop(
                 input_tensor=dup_prompts,
                 model=policy_model,
@@ -733,6 +794,7 @@ def grpo_training_loop(
                 device=device,
             )
 
+            # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
                 # why intermediate masking with loss_mask for logprobs : TODO
                 loss_mask = collated_batch["reward_masks"][:, 1:]
@@ -747,14 +809,12 @@ def grpo_training_loop(
                     inputs=collated_batch["padded_responses"],
                     attention_mask=loss_mask,
                 )
-                # Reward model - retrieving advantages -
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(  # shape: (B, S)
+
+                rewards = reward_model(  # shape: (B,)
                     collated_batch["padded_responses"],
-                    collated_batch["attn_masks"],
-                ).squeeze(-1)
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)  # shape: (B,)
+                    attn_mask=collated_batch["attn_masks"],
+                    reward_mask=collated_batch["reward_masks"],
+                )
 
             advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
 
@@ -793,12 +853,13 @@ def grpo_training_loop(
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
             # --- Evaluation ---
-            if evaluation and (step % eval_freq == 0):
+            if evaluation and eval_freq is not None and (step % eval_freq == 0):
                 eval_metrics = GRPOEvaluator.evaluate(
                     train_loader=train_loader,
                     val_loader=val_loader,
                     policy_model=policy_model,
                     reference_model=reference_model,
+                    evaluation_type="rlhf",
                     reward_model=reward_model,
                     policy_config=policy_config,
                     device=device,
@@ -814,16 +875,17 @@ def grpo_training_loop(
                 )
 
                 # save new best checkpoint
-                if chkp_eval.is_rlhf_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                if chkp_eval.is_rlhf_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
                     save_path = os.path.join(
-                        config.checkpoint_dir, f"best_checkpoint_{step}_score_{chkp_eval.max_score:.3f}.pt"
+                        config.rlhf_grpo_checkpoint_dir,
+                        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
                     )
                     torch.save(policy_model.state_dict(), save_path)
 
 
 class GRPOEvaluator:
     """
-    Evaluator class for GRPO.
+    Evaluator class for GRPO that works for both RLHF and RLVR.
     Computes the average reward and KL divergence of the policy model on both training and validation datasets.
     """
 
@@ -832,14 +894,15 @@ class GRPOEvaluator:
         loader,
         policy_model,
         reference_model,
-        reward_model,
         policy_config,
         device,
         max_gen,
         eval_num_samples,
         eval_num_batches,
+        evaluation_type="rlhf",
+        reward_model=None,
+        reward_calculator=None,
     ):
-
         total_reward = 0.0
         total_kl_div = 0.0
 
@@ -884,18 +947,22 @@ class GRPOEvaluator:
                 attention_mask=loss_mask,
             )
 
-            # --- Get rewards ---
-            mini_rewards = reward_model(
-                collated_batch["padded_responses"],
-                collated_batch["attn_masks"],
-            ).squeeze(-1)
-            mini_rewards *= collated_batch["reward_masks"]
+            # --- Retrieving rewards ---
+            if evaluation_type == "rlhf":
+                rewards = reward_model(
+                    collated_batch["padded_responses"],
+                    attn_mask=collated_batch["attn_masks"],
+                    reward_mask=collated_batch["reward_masks"],
+                )
 
-            # TODO NOTE optional edge case: and for KL div too + training loop if worth it
-            # Avoid division by zero if reward_masks is all False
-            # reward_mask_sum = collated_batch["reward_masks"].sum(dim=1)
-            # reward_mask_sum = torch.where(reward_mask_sum > 0, reward_mask_sum, torch.ones_like(reward_mask_sum))
-            rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+            elif evaluation_type == "rlvr":
+                # duping answers to match the number of samples
+                correct_answers = [ans for ans in batch["answers"] for _ in range(eval_num_samples)]
+                rewards = reward_calculator(
+                    model_responses=collated_batch["padded_responses"],
+                    correct_answers=correct_answers,
+                )
+
             mean_batch_rewards = rewards.mean()
 
             # --- KL Divergence ---
@@ -918,10 +985,12 @@ class GRPOEvaluator:
         val_loader,
         policy_model,
         reference_model,
-        reward_model,
         policy_config,
         device,
         max_gen,
+        evaluation_type="rlhf",
+        reward_model=None,
+        reward_calculator=None,
         eval_num_samples=1,
         eval_num_batches=None,
     ):
@@ -932,44 +1001,57 @@ class GRPOEvaluator:
             val_loader (DataLoader): DataLoader for the validation prompts.
             policy_model (nn.Module): The policy model to evaluate.
             reference_model (nn.Module): The reference model for KL divergence calculation.
-            reward_model (nn.Module): The reward model to score generated responses.
+            evaluation_type (str): The type of evaluation to perform ("rlhf" or "rlvr").
+            reward_model (nn.Module, optional): The reward model to score generated responses (for RLHF).
+            reward_calculator (Callable, optional): The reward calculator to score generated responses (for RLVR).
             policy_config (dict): Configuration dictionary for the policy model (used for context length).
             device (str): The device to run evaluation on.
             max_gen (int): Maximum number of tokens to generate for each response.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
             eval_num_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
-            eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
-            beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
-                        trade-off between maximizing reward and staying close to the reference policy.
         Returns:
             dict[str, float]: A dictionary containing evaluation metrics: average reward and KL divergence.
         """
+        # checks for the evaluation type
+        if evaluation_type == "rlhf":
+            if reward_model is None:
+                raise ValueError("reward_model is required for RLHF evaluation")
+            reward_model.eval()
+        elif evaluation_type == "rlvr":
+            if reward_calculator is None:
+                raise ValueError("reward_calculator is required for RLVR evaluation")
+        else:
+            raise ValueError(f"Invalid evaluation type: {evaluation_type}")
+
         policy_model.eval()
         reference_model.eval()
-        reward_model.eval()
 
         with torch.inference_mode():
             train_metrics = GRPOEvaluator._compute_grpo_metrics(
                 train_loader,
                 policy_model,
                 reference_model,
-                reward_model,
                 policy_config,
                 device,
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
+                evaluation_type=evaluation_type,
+                reward_model=reward_model,
+                reward_calculator=reward_calculator,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
                 policy_model,
                 reference_model,
-                reward_model,
                 policy_config,
                 device,
                 max_gen,
                 eval_num_samples,
                 eval_num_batches,
+                evaluation_type=evaluation_type,
+                reward_model=reward_model,
+                reward_calculator=reward_calculator,
             )
 
         policy_model.train()
@@ -980,92 +1062,3 @@ class GRPOEvaluator:
             "val_reward": val_metrics["reward"],
             "val_kl_div": val_metrics["kl_div"],
         }
-
-
-# some test
-if __name__ == "__main__":
-    #    import tiktoken
-    #    import torch.nn as nn
-    #    import config
-    #    from gpt_download import download_and_load_gpt2
-    #    from llm_quest.dataset import PreferenceDataset
-    #    from llm_quest.gpt.gpt_model import GPTModel
-    #    from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
-
-    #    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
-    #
-    #    tokenizer = tiktoken.get_encoding("gpt2")
-    #    model_settings = config.config_creator("gpt_s")
-    #    torch.manual_seed(123)
-    #
-    #    device = "cuda"
-    #    model = GPTModel(model_settings)
-    #    model.eval()
-    #
-    #    load_weights_into_gpt(model, params)
-    #
-    #    model.to(device)  # we move the model to GPU *after* loading weights
-    #
-    #    num_samples = 5
-    #    responses = []
-
-    #    for i in range(num_samples):
-    #        torch.manual_seed(123 + i)
-    #        response = generate_loop(
-    #            input=text_to_ids("This is where it", tokenizer=tokenizer),
-    #            model=model,
-    #            max_gen=20,
-    #            context_length=model_settings["context_length"],
-    #            top_k=25,
-    #            temp=1.4,
-    #        )
-    #        responses.append(response.squeeze(0).tolist())
-
-    responses = torch.tensor(
-        [
-            [20, 21, 22, 50, 50256, 50256],
-            [20, 21, 22, 34, 61, 62],
-            [20, 21, 22, 50, 24, 62],
-            [40, 41, 50256, 70, 71, 50256],
-            [40, 41, 50256, 80, 81, 83],
-            [40, 41, 50256, 90, 91, 92],
-        ]
-    )
-
-    collated_batch = batched_responses_collator(
-        responses,
-        len_prompt=3,
-        device="cuda",
-    )
-
-    # collated_batch = response_collator(
-    #    responses,
-    #    len_prompt=3,
-    #    pad_token_id=50256,
-    #    device="cuda",
-    # )
-
-#    print(collated_batch["padded_responses"])
-#    print(collated_batch["reward_masks"])
-#    print(collated_batch["attn_masks"])
-#
-#    device = "cuda"
-#    torch.manual_seed(123)
-#    reward_model_cfg = config.GPT_SMALL_CONFIG
-#
-#    reward_model = GPTModel(reward_model_cfg)
-#    # changing the head to a single output linear layer: we want a scalar reward
-#    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
-#
-#    # freeze model - make all layers non-trainable
-#    reward_model.eval()
-#
-#    reward_model.to(device)
-#
-#    pref_mini_rewards = reward_model(collated_batch["padded_responses"], collated_batch["attn_masks"]).squeeze(-1)
-#    pref_mini_rewards *= collated_batch["reward_masks"]
-#    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-#
-#    print(pref_rewards)
-#
-#    print(z_scores(pref_rewards))

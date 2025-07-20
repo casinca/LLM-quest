@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     policy_model = GPTModel(model_cfg)
     policy_checkpoint = torch.load(
-        config.checkpoint_dir / "best_checkpoint_220_score_8.863.pt",
+        config.rlhf_grpo_checkpoint_dir / "best_checkpoint_190_score_8.268.pt",
         map_location=model_device,
         weights_only=True,
     )

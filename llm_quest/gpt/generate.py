@@ -127,9 +127,9 @@ def generate_batched_loop(
                                             correctly extract logits for right-padded inputs. Defaults to None.
 
     Returns:
-        torch.Tensor: A tensor of shape (batch_size, initial_sequence_length + generated_length) containing the
-                        original prompts concatenated with the generated token IDs. Sequences that finished early will
-                        be padded with `eos_id` up to `max_gen` length.
+        torch.Tensor: A tensor of shape (batch_size, prompt_length + generated_length) containing the original prompts
+                        concatenated with the generated token IDs. Sequences that finished early will be padded with
+                        `eos_id` up to `max_gen` length.
     """
     input_tensor = input_tensor.to(device)
     if attention_mask is not None:
