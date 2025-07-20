@@ -1,6 +1,5 @@
 from functools import partial
 
-import tiktoken
 import torch
 import transformers
 from torch.utils.data import DataLoader
@@ -14,23 +13,23 @@ from llm_quest.gpt.gpt_model import GPTModel
 gpt_config = config.config_creator("gpt_m")
 model_device = "cuda"
 # optimizer hparams
-lr = 5e-5  # alt 3e-5
+lr = 5e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 2  # alt 8
-num_samples = 4  # alt 4
-num_epoch = 1  # alt 2x
-num_grad_updates = 3  # alt 1 or 2
+batch_size = 4
+num_samples = 4
+num_epoch = 1
+num_grad_updates = 3
 max_gen = 250
 # GRPO hparams
-eps = 0.2  # alt 0.15
-beta = 0.45  # alt 0.1
+eps = 0.2
+beta = 0.45
 # evaluation hparams
 evaluation = True
-eval_freq = 10  # alt 20
-eval_batches = 1  # alt 2
-eval_num_samples = 5  # alt 4
-kl_div_threshold = 0.75  # alt 0.5
+eval_freq = 50
+eval_batches = 1
+eval_num_samples = 4
+kl_div_threshold = 0.3
 # loader hparams
 num_workers = 0
 pin_memory = False
@@ -39,8 +38,8 @@ persistent_workers = False
 
 if __name__ == "__main__":
     torch.manual_seed(123)
-    tokenizer = tiktoken.get_encoding("gpt2")
-    batch_tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")  # using HF tokenizer mainly for batch_decode
 
     # --- datasets & loaders ---
     train_set = ReasoningDataset(config.reasoning_train_path, tokenizer)
@@ -93,7 +92,7 @@ if __name__ == "__main__":
         val_loader=val_loader,
         policy_model=policy_model,
         reference_model=reference_model,
-        tokenizer=batch_tokenizer,
+        tokenizer=tokenizer,
         optimizer=optimizer,
         num_epoch=num_epoch,
         num_samples=num_samples,

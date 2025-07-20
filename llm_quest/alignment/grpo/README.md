@@ -1,4 +1,4 @@
-# RLHF with GRPO from scratch on preference tuning
+# RLHF with GRPO from scratch: Preference tuning
 
 Only external dependency is `tiktoken` for tokenization.  
 Not using `transformers`, we're collating (batching, padding, masking...) ourselves & only starting with models

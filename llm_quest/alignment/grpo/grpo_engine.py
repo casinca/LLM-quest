@@ -341,6 +341,8 @@ def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
     }
 
 
+# NOTE: responses generated from `generate_batched_loop()` already have an EoS token at the end (unless
+# truncated/max_gen) therefore nothing is added here, responses are already ready to be sliced for logprobs.
 def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
     """
     Prepare batched sampled responses for the reward model.
@@ -851,7 +853,7 @@ def grpo_training_loop(
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
             # --- Evaluation ---
-            if evaluation and (step % eval_freq == 0):
+            if evaluation and eval_freq is not None and (step % eval_freq == 0):
                 eval_metrics = GRPOEvaluator.evaluate(
                     train_loader=train_loader,
                     val_loader=val_loader,
@@ -1060,92 +1062,3 @@ class GRPOEvaluator:
             "val_reward": val_metrics["reward"],
             "val_kl_div": val_metrics["kl_div"],
         }
-
-
-# some test
-if __name__ == "__main__":
-    #    import tiktoken
-    #    import torch.nn as nn
-    #    import config
-    #    from gpt_download import download_and_load_gpt2
-    #    from llm_quest.dataset import PreferenceDataset
-    #    from llm_quest.gpt.gpt_model import GPTModel
-    #    from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
-
-    #    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
-    #
-    #    tokenizer = tiktoken.get_encoding("gpt2")
-    #    model_settings = config.config_creator("gpt_s")
-    #    torch.manual_seed(123)
-    #
-    #    device = "cuda"
-    #    model = GPTModel(model_settings)
-    #    model.eval()
-    #
-    #    load_weights_into_gpt(model, params)
-    #
-    #    model.to(device)  # we move the model to GPU *after* loading weights
-    #
-    #    num_samples = 5
-    #    responses = []
-
-    #    for i in range(num_samples):
-    #        torch.manual_seed(123 + i)
-    #        response = generate_loop(
-    #            input=text_to_ids("This is where it", tokenizer=tokenizer),
-    #            model=model,
-    #            max_gen=20,
-    #            context_length=model_settings["context_length"],
-    #            top_k=25,
-    #            temp=1.4,
-    #        )
-    #        responses.append(response.squeeze(0).tolist())
-
-    responses = torch.tensor(
-        [
-            [20, 21, 22, 50, 50256, 50256],
-            [20, 21, 22, 34, 61, 62],
-            [20, 21, 22, 50, 24, 62],
-            [40, 41, 50256, 70, 71, 50256],
-            [40, 41, 50256, 80, 81, 83],
-            [40, 41, 50256, 90, 91, 92],
-        ]
-    )
-
-    collated_batch = batched_responses_collator(
-        responses,
-        len_prompt=3,
-        device="cuda",
-    )
-
-    # collated_batch = response_collator(
-    #    responses,
-    #    len_prompt=3,
-    #    pad_token_id=50256,
-    #    device="cuda",
-    # )
-
-#    print(collated_batch["padded_responses"])
-#    print(collated_batch["reward_masks"])
-#    print(collated_batch["attn_masks"])
-#
-#    device = "cuda"
-#    torch.manual_seed(123)
-#    reward_model_cfg = config.GPT_SMALL_CONFIG
-#
-#    reward_model = GPTModel(reward_model_cfg)
-#    # changing the head to a single output linear layer: we want a scalar reward
-#    reward_model.out = nn.Linear(reward_model_cfg["emb_dim"], 1)
-#
-#    # freeze model - make all layers non-trainable
-#    reward_model.eval()
-#
-#    reward_model.to(device)
-#
-#    pref_mini_rewards = reward_model(collated_batch["padded_responses"], collated_batch["attn_masks"]).squeeze(-1)
-#    pref_mini_rewards *= collated_batch["reward_masks"]
-#    pref_rewards = pref_mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-#
-#    print(pref_rewards)
-#
-#    print(z_scores(pref_rewards))

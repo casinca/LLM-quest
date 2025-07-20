@@ -61,6 +61,7 @@ class VerifiableRewardCalculator:
         rewards_list = []
 
         for response_string, correct_answer in zip(response_strings, correct_answers):
+
             raw_model_answer = ResponseExtractor.get_answer(response_string)
             sanitized_model_answer = ResponseExtractor.sanitize_answer(raw_model_answer)
             sanitized_correct_answer = ResponseExtractor.sanitize_answer(correct_answer)
@@ -84,18 +85,18 @@ class VerifiableRewardCalculator:
 
     def _calc_reasoning(self):
         pass
-        # NOTE: For now, following DeepSeek and AI2 TULU's impl, returning the answer only
+        # For now, following DeepSeek and AI2 TULU's impl, returning the answer only
 
     def __call__(self, model_responses, correct_answers):
         """
         Main orchestrator for the rewards' calculation.
 
         Args:
-            model_responses (torch.Tensor): The model's responses.
+            model_responses (torch.Tensor): The model's responses, shape (B, S)
             correct_answers (list): The correct answers.
 
         Returns:
-            torch.Tensor: The total rewards for a batch of responses, shape (batch_size,)
+            torch.Tensor: The total rewards for a batch of responses, shape (B,)
             (total_rewards = answer_rewards atm)
 
         """
@@ -103,7 +104,7 @@ class VerifiableRewardCalculator:
 
         answer_rewards = self._calc_answer(decoded_strings, correct_answers)
 
-        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)  # shape (batch_size,)
+        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
 
 
 def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device="cpu"):
@@ -308,7 +309,7 @@ def rlvr_grpo_training_loop(
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
             # --- Evaluation ---
-            if evaluation and (step % eval_freq == 0):
+            if evaluation and eval_freq is not None and (step % eval_freq == 0):
                 eval_metrics = GRPOEvaluator.evaluate(
                     train_loader=train_loader,
                     val_loader=val_loader,
