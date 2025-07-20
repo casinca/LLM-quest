@@ -66,8 +66,7 @@ def generate_loop(
         if top_k:
             logits = top_k_sampling(logits, top_k)
         if temp > 0:
-            probas = torch.softmax(logits / temp, dim=-1)
-            tok_id_next = torch.multinomial(probas, num_samples=1)  # next tok id is taken from the prob distrib
+            tok_id_next = sample_with_temperature(logits, temp)  # next tok id is taken from the prob distrib
         else:
             tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
@@ -167,8 +166,7 @@ def generate_batched_loop(
             logits = top_k_sampling(logits, top_k)
 
         if temp > 0:
-            probs = torch.softmax(logits / temp, dim=-1)
-            next_toks = torch.multinomial(probs, num_samples=1)  # (N_active, 1)
+            next_toks = sample_with_temperature(logits, temp)  # (N_active, 1)
         else:
             next_toks = logits.argmax(dim=-1, keepdim=True)  # (N_active, 1)
 
@@ -207,6 +205,25 @@ def top_k_sampling(logits, k):
     filt_logits.scatter_(-1, top_idx, top_k)
 
     return filt_logits
+
+
+def sample_with_temperature(logits, temp):
+    """
+    Performs temperature scaling on the input logits and samples from the resulting distribution
+
+    Args:
+        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
+        temp (float): Temperature for softmax sampling:
+                        - if >1, increases entropy (randomness)
+                        - if <1, decreases entropy (more deterministic)
+                        - if 1, untempered distribution
+
+    Returns:
+        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
+    """
+    probs = torch.softmax(logits / temp, dim=-1)
+    tok_id_next = torch.multinomial(probs, num_samples=1)
+    return tok_id_next
 
 
 # test code
