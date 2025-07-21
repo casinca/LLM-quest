@@ -5,8 +5,8 @@ import torch
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import rlhf_grpo_prompt_collator, rlhf_grpo_training_loop
-from llm_quest.alignment.grpo.pref_reward_model import PreferenceRewardModel
+from llm_quest.alignment.rlhf_grpo.grpo_engine import rlhf_grpo_prompt_collator, rlhf_grpo_training_loop
+from llm_quest.alignment.rlhf_grpo.pref_reward_model import PreferenceRewardModel
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     )
 
     # --- models initialization & loading ---
-    # note: the grpo training loop will take care of putting models on correct training/eval mode
+    # note: the rlhf_grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
     reward_model = PreferenceRewardModel(gpt_config)

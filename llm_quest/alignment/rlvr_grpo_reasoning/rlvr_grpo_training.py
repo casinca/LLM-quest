@@ -74,7 +74,7 @@ if __name__ == "__main__":
     )
 
     # --- models initialization & loading ---
-    # note: the grpo training loop will take care of putting models on correct training/eval mode
+    # note: the rlhf_grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
 

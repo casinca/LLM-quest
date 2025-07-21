@@ -5,8 +5,8 @@ import torch
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import reward_model_training_eval_loop_simple
-from llm_quest.alignment.grpo.pref_reward_model import PreferenceRewardModel
+from llm_quest.alignment.rlhf_grpo.grpo_engine import reward_model_training_eval_loop_simple
+from llm_quest.alignment.rlhf_grpo.pref_reward_model import PreferenceRewardModel
 from llm_quest.dataset import PreferenceDataset, pref_reward_collate
 
 # --- hyperparameters ---

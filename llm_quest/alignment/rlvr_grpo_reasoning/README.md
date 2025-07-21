@@ -8,7 +8,7 @@ This RLVR implementation is not based on a specific paper, but a mix of techniqu
 - DeepSeek R1: https://arxiv.org/abs/2501.12948
 - RLHF book by [@natolambert](https://github.com/natolambert)  *(also core author of TULU 3)*:
   https://rlhfbook.com/c/14-reasoning.html
-- Structure/code re-used from https://github.com/casinca/LLM-quest/tree/master/llm_quest/alignment/grpo
+- Structure/code re-used from https://github.com/casinca/LLM-quest/tree/master/llm_quest/alignment/rlhf_grpo
 - Dataset: https://huggingface.co/datasets/openai/gsm8k
 
 *Unlike RLHF with GRPO from scratch, where only `tiktoken` was a dependency, here I'm using HuggingFace's tokenizer, for

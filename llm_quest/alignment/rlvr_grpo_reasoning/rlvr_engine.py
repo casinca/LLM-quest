@@ -3,7 +3,7 @@ import os
 import torch
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import (
+from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     GRPOEvaluator,
     batched_responses_collator,
     kl_div_per_token,

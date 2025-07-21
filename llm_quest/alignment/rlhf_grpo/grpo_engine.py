@@ -443,7 +443,7 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     """
     Compute the KL divergence per token between the policy and reference log probabilities.
     Estimated with (Schulman, 2020) unbiased estimator, see:
-    https://github.com/casinca/LLM-quest/tree/master/llm_quest/alignment/grpo#grpo
+    https://github.com/casinca/LLM-quest/tree/master/llm_quest/alignment/rlhf_grpo#grpo
 
     Args:
         policy_logprobs (torch.Tensor): Tensor of shape (B*, S*) containing the policy log probabilities.

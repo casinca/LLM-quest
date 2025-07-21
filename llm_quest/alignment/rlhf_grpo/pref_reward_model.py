@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from llm_quest.alignment.grpo.grpo_engine import PrefRewardCalculator
+from llm_quest.alignment.rlhf_grpo.grpo_engine import PrefRewardCalculator
 from llm_quest.gpt.gpt_transformer_block import LayerNorm, TransformerBlock
 
 
