@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.grpo.grpo_engine import grpo_training_loop, rlhf_grpo_prompt_collator
+from llm_quest.alignment.grpo.grpo_engine import rlhf_grpo_prompt_collator, rlhf_grpo_training_loop
 from llm_quest.alignment.grpo.pref_reward_model import PreferenceRewardModel
 from llm_quest.dataset import PreferenceDataset
 from llm_quest.gpt.gpt_model import GPTModel
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
-    grpo_training_loop(
+    rlhf_grpo_training_loop(
         train_loader=train_loader,
         val_loader=val_loader,
         policy_model=policy_model,

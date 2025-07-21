@@ -5,7 +5,7 @@ import transformers
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
+from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
 from llm_quest.dataset import ReasoningDataset
 from llm_quest.gpt.gpt_model import GPTModel
 

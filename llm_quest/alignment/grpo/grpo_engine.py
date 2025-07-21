@@ -707,7 +707,7 @@ def grpo_training_loop_variant_experimental(
                 optimizer.step()
 
 
-def grpo_training_loop(
+def rlhf_grpo_training_loop(
     train_loader,
     val_loader,
     policy_model,
