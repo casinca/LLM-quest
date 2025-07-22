@@ -6,9 +6,10 @@ authors = [
     {name = "casinca", email = "47400729+casinca@users.noreply.github.com"},
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+      
+requires-python = ">=3.10, <3.13"
 dependencies = [
-    "torch==2.4.1",
+    "torch==2.6.0",
     "tiktoken>=0.7.0",
     "tqdm>=4.66",
     "tensorflow>=2.18.0",
@@ -17,6 +18,7 @@ dependencies = [
     "matplotlib>=3.10.0",
     "datasets>=3.3.2",
     "transformers>=4.53.2",
+    "torchvision==0.21.0",
 ]
 
 [tool.setuptools]
@@ -25,12 +27,15 @@ py-modules = ["config", "gpt_download"]
 
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
