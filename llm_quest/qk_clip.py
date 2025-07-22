@@ -1,10 +1,5 @@
-# This is a standalone re-implementation of the qk clip technique from Moonshot.ai used in their MuonClip optimizer:
-# https://moonshotai.github.io/Kimi-K2/
-
-# As of writing, the original implementation is not available, this re-implementation is purely based on the description
-# made from Moonshot AI.
-# Alpha hparam default value is chosen based on what seems to make sense.
-# Threshold default value sounds subjective, kept as positional arg, Gemma2 used 50.0 for their logits softcapping method
+# This is a standalone implementation of the qk clip technique from Moonshot.ai used in their MuonClip optimizer:
+# https://moonshotai.github.io/Kimi-K2/ and https://github.com/MoonshotAI/Kimi-K2/blob/main/tech_report.pdf
 #
 # QK clipping can be universally applied with any optimizer, and not specifically tied to Muon, hence a standalone
 # class.
@@ -16,10 +11,13 @@
 import torch
 
 
-class QKClip:
+# NOTE: This implementation was made before the tech report was released, and as it's mentioned in p.3, is a naive way
+# of implementing QK-clip because I'm clipping all heads of a layer if any of them were flagged for downscaling.
+# The better way is, to add more granularity and clipping only the Q and K heads that were flagged.
+class QKClipNaive:
     """
-    Apply QK (Query-Key) clip technique from Moonshot AI, based on MuonClip Optimizer:
-    https://moonshotai.github.io/Kimi-K2/
+    Apply QK (Query-Key) naively (clip all heads of a layer) clip technique from Moonshot AI, based on MuonClip
+    Optimizer: https://moonshotai.github.io/Kimi-K2/
 
     This method scales the query and key weights of the attention layers based on the
     maximum attention logits observed in each layer.
@@ -73,3 +71,8 @@ class QKClip:
                 query_weights, key_weights = self.cached_qk_layers[i]
                 query_weights *= q_scale
                 key_weights *= k_scale
+
+
+# TODO
+class QKClipMHA:
+    pass
