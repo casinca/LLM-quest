@@ -5,28 +5,27 @@
 # class.
 # The goal just like logit softcapping, QK norm, is to prevent attention entropy collapse/gradient explosion and
 # thus training instability.
-# It's also possible to implement it directly inside a PyTorch optimizer as a new method, but it's less modular imo
+#
 # QK clipping is applied after the optimizer step.
+# Max Attention logits have to be retrieved from the attention class in any case.
 
 import torch
 
 
-# NOTE: This implementation was made before the tech report was released, and as it's mentioned in p.3, is a naive way
-# of implementing QK-clip because I'm clipping all heads of a layer if any of them were flagged for downscaling.
-# The better way is, to add more granularity and clipping only the Q and K heads that were flagged.
+# NOTE: The first implementation was made before the tech report was released, and as it's mentioned in p.3, is a naive
+# way of implementing QK-clip because I'm clipping all heads of a layer if any of them were flagged for downscaling.
+# The better granular approach is to clip only the Q and K heads that were flagged as in the 2nd implementation.
 class QKClipNaive:
     """
-    Apply QK (Query-Key) naively (clip all heads of a layer) clip technique from Moonshot AI, based on MuonClip
+    Apply QK-clip (Query-Key) technique from Moonshot AI naively (clips all heads of a layer), based on MuonClip
     Optimizer: https://moonshotai.github.io/Kimi-K2/
 
-    This method scales the query and key weights of the attention layers based on the
-    maximum attention logits observed in each layer.
     It's designed to prevent attention logits from becoming excessively large, which can lead to numerical
     instability/training issues.
 
     Args:
-        clip_threshold (float): The threshold(t) in the formula for clipping the attention logits.
-        alpha (float): The alpha(α) exponent in the formula for the scaling eta(η) factor.
+        clip_threshold (float): The threshold(τ) in the formula for clipping the attention logits.
+        alpha (float): The alpha(α) exponent in the formula for scaling eta(η) factor.
                         Default to 0.5 = makes scaling equally balanced for both Q and K.
                         > 0.5 = increased/reduced scaling on K/Q and inversely if < 0.5.
     """
@@ -73,6 +72,80 @@ class QKClipNaive:
                 key_weights *= k_scale
 
 
-# TODO
+# NOTE: Approach: clipping in batches, vectorized (even heads that don't need it by x1) is still faster than only
+# looping over heads flagged for scaling.
+#
+# NOTE 2: Possible edge case: Not mentioned in the paper formula, but unless I made a mistake, taking the max attention
+# logit when it's a small negative value (ex: min(1, 1/-0.01))^0.5 will result in a large scaling >1 (complete opposite
+# of what we want) and will lead to NaN being propagated at some point.
+# A simple fix (since we are mainly interested in the magnitude) was to use abs |max_attn_logit| instead.
 class QKClipMHA:
-    pass
+    """
+    Standalone class to apply the per head QK-clip (Query-Key) technique from Moonshot AI, based on MuonClip
+    Optimizer: https://github.com/MoonshotAI/Kimi-K2/blob/main/tech_report.pdf
+
+    QK-clip is designed to prevent attention logits from becoming excessively large, which can lead to numerical
+    instability/training issues.
+
+    Args:
+        clip_threshold (float): The threshold(τ) in the formula for clipping the attention logits.
+        alpha (float): The alpha(α) exponent in the formula for scaling gamma(γ) factor.
+                        Default to 0.5 = makes scaling equally balanced for both Q and K.
+                        > 0.5 = increased/reduced scaling on K/Q and inversely if < 0.5.
+    """
+
+    def __init__(self, clip_threshold, alpha=0.5):
+        self.clip_threshold = clip_threshold
+        self.alpha = alpha
+        self.cached_qk_layers = None  # caching references to avoid recomputation
+        self.num_heads = None
+        self.head_dim = None
+
+    @torch.no_grad()
+    def __call__(self, model, max_attn_logits_per_layer):
+        """
+        Applies QK-clip to the model's Query and Key weights per head to all layers.
+
+        This method scales the query and key weights of the attention layers based on the maximum magnitude of attention
+        logits observed in each head per layer.
+
+        Args:
+            model (torch.nn.Module): The LLM model to retrieve Q & K weights from.
+            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (n_heads,) tensors: the maximum
+            attention logits of each head in that i-th layer.
+
+        Modifies the model's weights in-place.
+        """
+        # cache (hardcoded with my model architecture)
+        if self.cached_qk_layers is None:
+            self.cached_qk_layers = [
+                (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
+                for i in range(len(model.trf_blocks))
+            ]
+            self.num_heads = model.trf_blocks[0].att.num_heads
+            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
+            self.head_dim = hidden_dim // self.num_heads
+
+        for i, max_attn_logits_per_head in enumerate(max_attn_logits_per_layer):
+            gamma_factors_per_head = torch.clamp(self.clip_threshold / torch.abs(max_attn_logits_per_head), max=1.0)
+
+            if (gamma_factors_per_head >= 1.0).all():
+                continue
+
+            query_weights, key_weights = self.cached_qk_layers[i]
+            # reshaping Q and K weights to (n_heads, head_dim, hidden_dim) for vectorized mult
+            query_reshaped = query_weights.view(self.num_heads, self.head_dim, -1)
+            key_reshaped = key_weights.view(self.num_heads, self.head_dim, -1)
+            # applying alpha exponent to gamma factors and reshaping to (n_heads, 1, 1) for vectorized mult
+            query_scales = (gamma_factors_per_head**self.alpha).view(self.num_heads, 1, 1)
+            key_scales = (gamma_factors_per_head ** (1 - self.alpha)).view(self.num_heads, 1, 1)
+
+            query_reshaped *= query_scales
+            key_reshaped *= key_scales
+
+
+# In the per head case, we don't retrieve the max attn logit in the MHA class as:
+# self.max_attn_logit = torch.max(scaled_att_scores.detach()) with scaled scores shape (b, n_heads, seq_len, seq_len)
+# but:
+# self.max_attn_logit = torch.amax(scaled_att_scores.detach(), dim=(0,2,3))
+# ie: finding the max attn logit for each head in a given layer
