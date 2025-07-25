@@ -39,7 +39,7 @@ RLVR with GRPO in bf16
 # CURR STATE 
 
 Pipeline is working, but terribly slow compared to RLHF because of the increased batch size, necessary for the reasoning
-part to evolve/exploration + slow VR evaluation
+part to evolve/exploration
 - Need to profile and see if it's just about that or if there's a leak/mistake somewhere
 
 

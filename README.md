@@ -10,8 +10,11 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 ## Latest
 
+- WIP: Reinforcement Pretraining (RPT) from scratch
+- Moonshot.ai's standalone QK-Clip technique from MuonClip
+- RLVR Reasoning with GRPO from scratch (slow atm (no KVcache) + unfinished readme)
 - Vision Transformer (ViT) from scratch
-- RLHF GRPO from scratch
+- RLHF with GRPO from scratch
 - Gemma 3 architecture from scratch
 - DeepSeek V3, R1 architecture from scratch
 - Mixture of Experts (MoE) from scratch
@@ -67,7 +70,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
     
  - Mixture of Experts (MoE) from scratch:
     - Sparse MoE with classic auxiliary loss + z router loss
-    - DeepSeek MoE variant: fine-grained + shared expert isolation + auxiliary loss free load balancing
+    - DeepSeek MoE variant: fine-grained + shared expert isolation + auxiliary loss-free load balancing
 
 &nbsp;
 
@@ -79,11 +82,13 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
  - Alignment:
     - DPO* (with cDPO for noisy labels), step by step
-    - RLHF GRPO from scratch
+    - RLHF with GRPO from scratch
+    - RLVR Reasoning with GRPO from scratch (working but slow)
 
 &nbsp;
     
 - Common:
+   - QK-Clip (Query-Key clipping) from Moonshot.ai's MuonClip, alternative to logit softcapping and QK norm.
    - DyT (Dynamic Tanh, normalization free ([*Zhu et al, 2025*](https://arxiv.org/abs/2503.10622)) alternative to 
    RMSNorm, LayerNorm)
    - RoPE + YaRN (NTK aware + by-part/wavelength scaling)
