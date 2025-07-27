@@ -374,7 +374,6 @@ class ReasoningDataset(Dataset):
             - prompt: Tokenized prompt (instruction+question).
             - full_response: Tokenized prompt + full generated response (including reasoning and answer tags).
             - answer: Tokenized final answer extracted from the full response.
-
     """
 
     def __init__(self, file, tokenizer):
@@ -419,13 +418,100 @@ class ReasoningDataset(Dataset):
         return self.instruct_ids_list[index]
 
 
+# Similar to GPTDataset NTP pretraining, but here we are not shifting the labels by 1. The labels are a defined
+# chunk/continuation of the text length.
+class RPTDataset(Dataset):
+    """
+
+    PyTorch Dataset for preparing Reinforcement Pre-Training (RPT) data.
+
+    The class prepares data by creating (context, labels) pairs for every valid position in a text corpus.
+    It also accepts a list of valid indices to filter the dataset for the purpose of entropy filtering. 
+    (see 3.3 Pre-Training Setup in the paper)
+
+    The default instruction is a mix of their templates found in appendix D.
+    NOTE: Judging by their results, the prompt is a very sensitive hyperparameter.
+
+    Args:
+        text (str): The full text corpus ("The Verdict" for testing).
+        tokenizer: The tokenizer used to encode the text.
+        max_context_length (int): The maximum number of tokens to include in the context.
+        labels_length (int): The number of tokens for the labels.
+                                This defines the max number of tokens that the model would be expected to predict.
+        instruction (str, optional): A custom instruction prompt to prepend to the context.
+                                        If None, use default.
+        valid_indices (list, optional): A pre-computed (entropy filtered) list of token indices from the corpus to
+                                        sample from. If None, all valid indices in the corpus are used, starting
+                                        from index 1.
+    """
+
+    def __init__(self, text, tokenizer, max_context_length, labels_length=25, instruction=None, valid_indices=None):
+        super().__init__()
+        self.tokenizer = tokenizer
+        
+        if instruction is None:
+            instruction = (
+                "### Instruction:\n"
+                "Complete the given text under '### Context' by predicting the next token. "
+                "Please reason step by step and list multiple candidates first. "
+                "Select the most probable one as your final prediction by wrapping it in <answer> </answer> tags. "
+                "(note: the token may begin with a space, e.g., '<answer> para</answer>' or '<answer> =</answer>'.\n\n"
+                "### Context\n"
+            )
+        self.instruction_ids = tokenizer.encode(instruction)
+        self.corpus_ids = tokenizer.encode(text)
+
+        self.max_context_length = max_context_length
+        self.labels_length = labels_length
+        
+        # we need to take into account the ground truth length, have enough margin for the labels slice
+        self.max_index = len(self.corpus_ids) - self.labels_length
+        if valid_indices is not None:  # case1: pre-filtered list of indices (entropy filtered)
+            self.sample_indices = [idx for idx in valid_indices if idx < self.max_index]
+        else: # case2: no filtering, use all possible indices (classic)
+            self.sample_indices = list(range(1, self.max_index)) 
+
+    def __len__(self):
+        return len(self.sample_indices)
+
+    def __getitem__(self, index):
+        """
+        Retrieves a single data sample (input and labels) from the dataset.
+
+        We construct:
+            - the input_tensor as instruction+context
+            - the labels_string as the ground truth labels.
+
+        Args:
+            index (int): The index of the sample to retrieve from self.sample_indices.
+
+        Returns:
+            tuple: A tuple containing:
+                - input_tensor (torch.Tensor): The tokenized input sequence (instruction + context).
+                - labels_string (str): The decoded string representation of the target labels for the reward calc.
+        """
+        # retrieving the actual position in the corpus from our sample list
+        i = self.sample_indices[index]
+                
+        start_context_idx = max(0, i - self.max_context_length)
+        context_ids = self.corpus_ids[start_context_idx:i]
+        
+        input_ids = self.instruction_ids + context_ids # inject the instruction at the beginning of the context
+        input_tensor = torch.tensor(input_ids)
+        
+        labels_ids = self.corpus_ids[i:i + self.labels_length]
+        labels_string = self.tokenizer.decode(labels_ids) # decode back labels to a string for the reward calc
+        
+        return input_tensor, labels_string
+
+
 # We don't necessarily need to have attention masks because the no_loss tokens will mask padded tokens
 # during loss calc anyways.
 # Yes it's a bit of overhead but for good practice: preventing the model from paying attention from/to padded tokens.
 # We could have used attn_mask as a mask for the loss too and CE arg reduce="None", but PyTorch CE function with
 # built-in detection of -100 as no_loss token is standard practice and more efficient.
 #
-# O(3N) list comprehension was faster when benchmarking than dispatching in a single for loop in O(N)
+# O(3*n*m) list comprehension was faster when benchmarking than dispatching in a single for loop in O(n*m)
 def collate_function(batch, custom_max_len=None, device="cpu"):
     """
     Custom collate function for batching sequences of variable lengths used with InstructionDataset class.
