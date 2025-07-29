@@ -378,7 +378,7 @@ class ReasoningDataset(Dataset):
 
     def __init__(self, file, tokenizer):
         self.instruct_ids_list = []
-        with open(file, "r") as f:
+        with open(file, "r", encoding="utf-8") as f:
             for line in f:
                 text = json.loads(line)
 
@@ -418,26 +418,162 @@ class ReasoningDataset(Dataset):
         return self.instruct_ids_list[index]
 
 
-# Similar to GPTDataset NTP pretraining, but here we are not shifting the labels by 1. The labels are a defined
-# chunk/continuation of the text length.
-class RPTDataset(Dataset):
+# Similar to preparing dataset for SFT, but here we are not shifting the labels by 1. The labels are a defined
+# chunk/continuation of the text. This is needed for proper reward calculation, to give the model enough ground
+# truth/labels to be evaluated against.
+# So in the case the model generates more than a single token, the reward calc will reward accordingly for MTP too.
+#
+# Ex: labels: "The answer is 10", if label was only "The" and the model predicted "The answer is 10" it would have been
+# unjustly penalized because the prediction length wouldn't match.
+class RPTStructuredDataset(Dataset):
+    """
+    PyTorch Dataset for preparing Reinforcement Pre-Training (RPT) data.
+
+    The class prepares data by creating (context, labels) pairs for every valid position in all samples of the dataset.
+    It also accepts a list of valid indices to filter the dataset of unwanted tokens (entropy filtering).
+    (see 3.3 Pre-Training Setup and 4.1 Language Modeling in the paper)
+
+    The default instruction is a mix of their templates found in appendix D.
+    Judging by their results, the instruction is a very sensitive hyperparameter.
+
+    Args:
+        file (str): Path to the JSONL file containing the dataset (e.g., GSM8K). Here the keys of the dict are hardcoded
+        to match GSM8K dataset.
+        tokenizer: The tokenizer used to encode the text.
+        max_context_length (int): The maximum number of tokens to include in the context/model's context length
+        labels_length (int): The number of tokens for the labels.
+                                This defines the max number of tokens that the model can be expected to predict.
+                                if = 1, same as NTP
+        instruction (str, optional): A custom instruction prompt to prepend to the context.
+                                        If None, use default.
+        valid_indices (list[tuple[int, int]], optional): A pre-computed (entropy filtered) list of (sample_idx, token_idx)
+                                        tuples from the dataset to sample from. If None, all valid token positions
+                                        (excluding index 0 and accounting for labels_length) in a sample are used.
     """
 
+    def __init__(self, file, tokenizer, max_context_length, labels_length=25, instruction=None, valid_indices=None):
+        super().__init__()
+        self.tokenizer = tokenizer
+
+        if instruction is None:
+            instruction = (
+                "### Instruction:\n"
+                "Complete the given text under '### Context' by predicting the next token. "
+                "Please reason step by step and list multiple candidates first. "
+                "Select the most probable one as your final prediction by wrapping it in <answer> </answer> tags. "
+                "(note: the token may begin with a space, e.g., '<answer> para</answer>' or '<answer> =</answer>'.\n\n"
+                "### Context\n"
+            )
+        self.instruction_ids = tokenizer.encode(instruction)
+
+        self.max_context_length = max_context_length
+        self.labels_length = labels_length
+
+        # --- Tokenizing the samples ---
+        self.samples = []  # list holding tokenized samples [ [t_s0_0, t_s0_1, ...], [t_s1_0, t_s1_1, ...] ... ]
+        with open(file, "r", encoding="utf-8") as f:
+            for line in f:
+                data = json.loads(line)
+                # reformatting the answer part of the solution to fit DeepSeek format (TODO not sure, experimental)
+                solution_part, _, answer_part = data["answer"].rpartition("\n#### ")
+                formatted_full_solution = f"{solution_part} So the answer is <answer>{answer_part}</answer>"
+                full_sample = data["question"] + "\n\n" + formatted_full_solution
+                self.samples.append(self.tokenizer.encode(full_sample))
+
+        # --- List of valid tokens for: entropy filtering (or not) and labels length ---
+        if valid_indices is not None:
+            self.allowed_indices = [
+                (sample_idx, token_idx)
+                for sample_idx, token_idx in valid_indices
+                if self._is_valid_position(sample_idx, token_idx)
+            ]
+        else:
+            self.allowed_indices = []
+            for sample_idx in range(len(self.samples)):
+                for token_idx in range(len(self.samples[sample_idx])):
+                    if self._is_valid_position(sample_idx, token_idx):
+                        self.allowed_indices.append((sample_idx, token_idx))
+
+    def _is_valid_position(self, sample_idx, token_idx):
+        """Helper method to check if a (sample, token) position is a valid prediction start"""
+
+        # we don't predict the very first token (it has no context)
+        if token_idx == 0:
+            return False
+        # check we have enough margin for the labels' length/slice.
+        if token_idx > len(self.samples[sample_idx]) - self.labels_length:
+            return False
+
+        return True
+
+    def __len__(self):
+        """
+        Returns the number of training examples in the dataset, which is:
+        num_samples * num_tokens_per_sample (excluding the 0th index, labels length and possibly entropy filtered
+        tokens)
+
+        self.allowed_indices is a flat list of (sample_idx, token_idx) pairs [ (s0, t0), (s0, t1), ...,  (s1, t0), ... ]
+        """
+        return len(self.allowed_indices)
+
+    def __getitem__(self, index):
+        """
+        Retrieves a single training example (input and labels).
+
+        We construct:
+            - the input_tensor as instruction + context
+            - the labels_string as the ground truth labels.
+
+        Args:
+            index (int): The index retrieves the (sample_idx, token_idx) pair, at its position, in the allowed indices
+            list
+
+        Returns:
+            tuple: A tuple containing:
+                - input_tensor (torch.Tensor): The tokenized input sequence (instruction + context).
+                - labels_string (str): The decoded string representation of the target labels for the reward calc.
+        """
+
+        # retrieving the (sample, token) indexes in the allowed indices list
+        sample_idx, token_idx = self.allowed_indices[index]
+
+        # --- Slicing for context and labels ---
+        # context: from the start of the sample to the token index (excluded)
+        # labels: from the token index up to labels length/margin
+        start_context_idx = max(0, token_idx - self.max_context_length)
+        context_ids = self.samples[sample_idx][start_context_idx:token_idx]
+
+        input_ids = self.instruction_ids + context_ids  # inject the instruction at the beginning of the context
+        input_tensor = torch.tensor(input_ids)
+
+        labels_ids = self.samples[sample_idx][token_idx : token_idx + self.labels_length]
+        labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
+
+        return input_tensor, labels_string
+
+
+# Similar to GPTDataset NTP pretraining, but here we are not shifting the labels by 1. The labels are a defined
+# chunk/continuation of the text length.
+# NOTE: This version was initially made up for unstructured datasets (eg corpus of text) without defined samples.
+# This deviates from the RPT paper but can be useful for experimenting on "truer" pretraining type of tasks?
+class RPTContinuousDataset(Dataset):
+    """
     PyTorch Dataset for preparing Reinforcement Pre-Training (RPT) data.
 
     The class prepares data by creating (context, labels) pairs for every valid position in a text corpus.
-    It also accepts a list of valid indices to filter the dataset for the purpose of entropy filtering. 
-    (see 3.3 Pre-Training Setup in the paper)
+    It also accepts a list of valid indices to filter the dataset of unwanted tokens (entropy filtering).
+    (see 3.3 Pre-Training Setup and 4.1 Language Modeling in the paper)
 
     The default instruction is a mix of their templates found in appendix D.
-    NOTE: Judging by their results, the prompt is a very sensitive hyperparameter.
+    Judging by their results, the instruction is a very sensitive hyperparameter.
 
     Args:
         text (str): The full text corpus ("The Verdict" for testing).
         tokenizer: The tokenizer used to encode the text.
-        max_context_length (int): The maximum number of tokens to include in the context.
+        max_context_length (int): The maximum number of tokens to include in the context/model's context length
         labels_length (int): The number of tokens for the labels.
-                                This defines the max number of tokens that the model would be expected to predict.
+                                This defines the max number of tokens that the model can be expected to predict.
+                                if = 1, same as NTP
         instruction (str, optional): A custom instruction prompt to prepend to the context.
                                         If None, use default.
         valid_indices (list, optional): A pre-computed (entropy filtered) list of token indices from the corpus to
@@ -448,7 +584,7 @@ class RPTDataset(Dataset):
     def __init__(self, text, tokenizer, max_context_length, labels_length=25, instruction=None, valid_indices=None):
         super().__init__()
         self.tokenizer = tokenizer
-        
+
         if instruction is None:
             instruction = (
                 "### Instruction:\n"
@@ -463,13 +599,13 @@ class RPTDataset(Dataset):
 
         self.max_context_length = max_context_length
         self.labels_length = labels_length
-        
+
         # we need to take into account the ground truth length, have enough margin for the labels slice
         self.max_index = len(self.corpus_ids) - self.labels_length
         if valid_indices is not None:  # case1: pre-filtered list of indices (entropy filtered)
             self.sample_indices = [idx for idx in valid_indices if idx < self.max_index]
-        else: # case2: no filtering, use all possible indices (classic)
-            self.sample_indices = list(range(1, self.max_index)) 
+        else:  # case2: no filtering, use all possible indices (classic)
+            self.sample_indices = list(range(1, self.max_index))
 
     def __len__(self):
         return len(self.sample_indices)
@@ -492,16 +628,16 @@ class RPTDataset(Dataset):
         """
         # retrieving the actual position in the corpus from our sample list
         i = self.sample_indices[index]
-                
+
         start_context_idx = max(0, i - self.max_context_length)
         context_ids = self.corpus_ids[start_context_idx:i]
-        
-        input_ids = self.instruction_ids + context_ids # inject the instruction at the beginning of the context
+
+        input_ids = self.instruction_ids + context_ids  # inject the instruction at the beginning of the context
         input_tensor = torch.tensor(input_ids)
-        
-        labels_ids = self.corpus_ids[i:i + self.labels_length]
-        labels_string = self.tokenizer.decode(labels_ids) # decode back labels to a string for the reward calc
-        
+
+        labels_ids = self.corpus_ids[i : i + self.labels_length]
+        labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
+
         return input_tensor, labels_string
 
 
