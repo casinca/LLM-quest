@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 # timing decorator
@@ -109,9 +110,8 @@ def alpaca_deepseek_format(entry, include_response=True):
     - includes alpaca style instruction
     - includes reasoning and final answer tags for the answer
 
-
     Args:
-        entry (dict): A dictionary containing 'question' and 'answer' keys
+        entry (dict): A dictionary containing "question" and "answer" keys from the GSM8K dataset
                         representing a math problem example with reasoning and final answer.
         include_response (bool): If set to False, will remove the formatted response (reasoning+answer) from the output.
 
@@ -136,8 +136,8 @@ def alpaca_deepseek_format(entry, include_response=True):
     input_txt = (
         "\n\n### Input:"
         f"\n{entry['question']}"
-        
         if entry["question"]
+        
         else ""
     )
 
@@ -146,18 +146,19 @@ def alpaca_deepseek_format(entry, include_response=True):
         return instruction + input_txt
 
     else:
-        reasoning_part, separator, answer_part = entry["answer"].partition("\n#### ")
+        reasoning_part, _, answer_part = entry["answer"].partition("\n#### ")  # yes 4x "#" from GSM8K
         response_formatted = f"<think>{reasoning_part}</think> <answer>{answer_part}</answer>"
-        
-        response = (
-            "\n\n### Response:"
-            f"\n{response_formatted}"
 
+        # we keep "### Response" for now it will be used as separator in ReasoningDataset and added to the prompt
+        response = (
+            "\n\n### Response:"  
+            f"\n{response_formatted}"
             if entry["answer"]
+
             else ""
         )
-
-        return instruction +input_txt + response
+        # fmt: on
+        return instruction + input_txt + response
 
 
 class ResponseExtractor:
@@ -224,6 +225,83 @@ class ResponseExtractor:
             return number_match.group(0).replace(" ", "")  # remove internal spaces ex: "- 72"
 
         return None
+
+
+class EntropyFilteredTokens:
+    """
+    Class to filter a token based on its prediction:
+    We take the entropy of the distribution of the top-k predicted tokens.
+    see 3.3 Pre-Training Setup and 4.1 Language Modeling in the RPT paper
+
+    Args:
+        top_k (int): number of top-k tokens to consider for the entropy calculation.
+        low (float): entropy threshold for easy tokens.
+        mid (float): entropy threshold for medium tokens.
+        high (float): entropy threshold for hard tokens.
+        pad_token (int): pad token id.
+
+    NOTE: The dataset shouldn't be shuffled, otherwise the global sample indices will be incorrect.
+    There's no need to shuffle to filter tokens as a preprocessing step anyway.
+    """
+
+    def __init__(self, top_k=16, low=0.5, mid=1, high=1.5, pad_token=50256):
+        self.top_k = top_k
+        self.hard_indices = []
+        self.medium_indices = []
+        self.easy_indices = []
+        self.pad_token = pad_token
+
+        self.threshold = {
+            "hard": high,
+            "medium": mid,
+            "easy": low,
+        }
+
+    @torch.no_grad()
+    def process_batch(self, logits, input_ids, global_sample_indices):
+        """
+        Args:
+            logits (torch.Tensor): shape: (batch_size, seq_len, vocab_size)
+            input_ids (torch.Tensor): shape: (batch_size, seq_len)
+            global_sample_indices (list): list of global sample indices (batch_size,).
+                                        Either retrieved from the dataset class or inferred during the training loop:
+                                        total samples split in nested lists of len batch_size.
+        """
+        global_sample_indices = torch.tensor(global_sample_indices, device=logits.device)
+        # token i's entropy is for the distribution of token i+1. last real token is meaningful for EoS prediction.
+        not_pad_mask = input_ids != self.pad_token
+
+        top_k_logits, _ = torch.topk(logits, self.top_k, dim=-1)
+        topk_probas = F.softmax(top_k_logits, dim=-1)
+        entropy = -torch.sum(topk_probas * torch.log(topk_probas), dim=-1)  # Shannon entropy of each topk distribution
+
+        for difficulty, threshold in self.threshold.items():
+            mask = (entropy > threshold) & not_pad_mask  # shape: (batch_size, seq_len)
+            batch_idx, token_idx = torch.where(mask)
+
+            if len(batch_idx) > 0:
+                # use local batch_idx to look up the global sample indices
+                global_sample_idx = global_sample_indices[batch_idx]
+                pair = torch.stack([global_sample_idx, token_idx], dim=1)  # shape: (num_tokens, 2)
+
+                if difficulty == "hard":
+                    self.hard_indices.extend(pair.tolist())
+                elif difficulty == "medium":
+                    self.medium_indices.extend(pair.tolist())
+                elif difficulty == "easy":
+                    self.easy_indices.extend(pair.tolist())
+
+    def get_difficulty_indices(self):
+        """
+        Returns:
+            dict: A dictionary containing the hard, medium, and easy indices lists where each element is a tuple
+            (sample_idx, token_idx)
+        """
+        return {
+            "hard": self.hard_indices,
+            "medium": self.medium_indices,
+            "easy": self.easy_indices,
+        }
 
 
 class CheckpointEvaluator:
