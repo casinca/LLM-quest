@@ -448,7 +448,7 @@ class RPTStructuredDataset(Dataset):
                                         If None, use default.
         valid_indices (list[tuple[int, int]], optional): A pre-computed (entropy filtered) list of (sample_idx, token_idx)
                                         tuples from the dataset to sample from. If None, all valid token positions
-                                        (excluding index 0 and accounting for labels_length) in a sample are used.
+                                        (accounting for labels_length) in a sample are used.
     """
 
     def __init__(self, file, tokenizer, max_context_length, labels_length=25, instruction=None, valid_indices=None):
@@ -480,36 +480,24 @@ class RPTStructuredDataset(Dataset):
                 full_sample = data["question"] + "\n\n" + formatted_full_solution
                 self.samples.append(self.tokenizer.encode(full_sample))
 
-        # --- List of valid tokens for: entropy filtering (or not) and labels length ---
+        # --- List of valid tokens for: entropy filtering (or not) and labels length check ---
         if valid_indices is not None:
             self.allowed_indices = [
                 (sample_idx, token_idx)
                 for sample_idx, token_idx in valid_indices
-                if self._is_valid_position(sample_idx, token_idx)
+                if token_idx < len(self.samples[sample_idx]) - self.labels_length
             ]
         else:
             self.allowed_indices = []
-            for sample_idx in range(len(self.samples)):
-                for token_idx in range(len(self.samples[sample_idx])):
-                    if self._is_valid_position(sample_idx, token_idx):
-                        self.allowed_indices.append((sample_idx, token_idx))
-
-    def _is_valid_position(self, sample_idx, token_idx):
-        """Helper method to check if a (sample, token) position is a valid prediction start"""
-
-        # we don't predict the very first token (it has no context)
-        if token_idx == 0:
-            return False
-        # check we have enough margin for the labels' length/slice.
-        if token_idx > len(self.samples[sample_idx]) - self.labels_length:
-            return False
-
-        return True
+            for sample_idx, sample_tokens in enumerate(self.samples):
+                last_valid_idx = len(sample_tokens) - self.labels_length
+                for token_idx in range(last_valid_idx):
+                    self.allowed_indices.append((sample_idx, token_idx))
 
     def __len__(self):
         """
-        Returns the number of training examples in the dataset, which is:
-        num_samples * num_tokens_per_sample (excluding the 0th index, labels length and possibly entropy filtered
+        Returns the number of valid training examples in the dataset, which is:
+        num_samples * num_tokens_per_sample (excluding labels length and possibly entropy filtered
         tokens)
 
         self.allowed_indices is a flat list of (sample_idx, token_idx) pairs [ (s0, t0), (s0, t1), ...,  (s1, t0), ... ]
@@ -540,7 +528,8 @@ class RPTStructuredDataset(Dataset):
         # --- Slicing for context and labels ---
         # context: from the start of the sample to the token index (excluded)
         # labels: from the token index up to labels length/margin
-        start_context_idx = max(0, token_idx - self.max_context_length)
+        token_idx += 1  # +1 to include in the context the token itself when slicing
+        start_context_idx = max(0, token_idx - self.max_context_length)  # context can't be greater than model's ctx len
         context_ids = self.samples[sample_idx][start_context_idx:token_idx]
 
         input_ids = self.instruction_ids + context_ids  # inject the instruction at the beginning of the context
@@ -556,6 +545,7 @@ class RPTStructuredDataset(Dataset):
 # chunk/continuation of the text length.
 # NOTE: This version was initially made up for unstructured datasets (eg corpus of text) without defined samples.
 # This deviates from the RPT paper but can be useful for experimenting on "truer" pretraining type of tasks?
+# see why it's problematic and deviates from the paper: TODO
 class RPTContinuousDataset(Dataset):
     """
     PyTorch Dataset for preparing Reinforcement Pre-Training (RPT) data.
