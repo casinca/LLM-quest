@@ -229,8 +229,8 @@ class ResponseExtractor:
 
 class EntropyFilteredTokens:
     """
-    Class to filter a token based on its prediction:
-    We take the entropy of the distribution of the top-k predicted tokens.
+    Filters token positions into 3 (non-mutually-exclusive) categories based on the prediction of the next token.
+    The filtering method is based on the entropy of the top-k predicted tokens' distribution.
     see 3.3 Pre-Training Setup and 4.1 Language Modeling in the RPT paper
 
     Args:

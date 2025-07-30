@@ -538,7 +538,11 @@ class RPTStructuredDataset(Dataset):
         labels_ids = self.samples[sample_idx][token_idx : token_idx + self.labels_length]
         labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
 
-        return input_tensor, labels_string
+        # (return dict instead of a tuple, to be consistent with the other datasets and collate functions signature)
+        return {
+            "prompt": input_tensor,
+            "labels": labels_string,
+        }
 
 
 # Similar to GPTDataset NTP pretraining, but here we are not shifting the labels by 1. The labels are a defined
