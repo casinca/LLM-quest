@@ -108,7 +108,7 @@ class PrefixMatchingReward:
                 continue
 
             valid_boundary = self._get_valid_boundary(label)
-            # convert to bits before checking both conditions
+            # convert to bytes before checking both conditions
             answer_bytes = model_answer.encode("utf-8")
             label_bytes = label.encode("utf-8")
 
