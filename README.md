@@ -11,7 +11,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 ## Latest
 
 - WIP: Reinforcement Pretraining (RPT) from scratch
-- Moonshot.ai's standalone QK-Clip technique from MuonClip
+- Moonshot.ai's standalone QK-Clip technique (from MuonClip) and own Magnitude-QK-Clip variant
 - RLVR Reasoning with GRPO from scratch (slow atm (no KVcache) + unfinished readme)
 - Vision Transformer (ViT) from scratch
 - RLHF with GRPO from scratch
