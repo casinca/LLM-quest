@@ -20,9 +20,9 @@ class VerifiableRewardCalculator:
 
     Args:
         tokenizer (Tokenizer): The tokenizer to decode the responses (needs a batch_decode method).
-        answer_reward_value (float): The reward value for a correct answer.
-        wrong_answer_penalty (float): The penalty for an incorrect answer (should be ≤ 0).
-        unfinished_answer_penalty (float): The penalty for an unfinished answer (should be ≤ 0).
+        good_answer_reward (float): The reward value for a correct answer.
+        wrong_answer_reward (float): The penalty for an incorrect answer (should be ≤ 0).
+        unfinished_answer_reward (float): The penalty for an unfinished answer (should be ≤ 0).
         reasoning_weight (float): A coeff to weight the reasoning reward vs. the answer.
         pad_token_id (int): The token id to use for padding.
 
@@ -31,31 +31,31 @@ class VerifiableRewardCalculator:
     def __init__(
         self,
         tokenizer,
-        answer_reward_value=10.0,
-        wrong_answer_penalty=0.0,
-        unfinished_answer_penalty=-1.0,
+        good_answer_reward=10.0,
+        wrong_answer_reward=0.0,
+        unfinished_answer_reward=-1.0,
         reasoning_weight=0.0,
         pad_token_id=50256,  # placeholder for now
     ):
-        assert wrong_answer_penalty <= 0, "wrong_answer_penalty should be ≤ 0"
-        assert unfinished_answer_penalty <= 0, "unfinished_answer_penalty should be ≤ 0"
+        assert wrong_answer_reward <= 0, "wrong_answer_reward should be ≤ 0"
+        assert unfinished_answer_reward <= 0, "unfinished_answer_reward should be ≤ 0"
 
         self.tokenizer = tokenizer
-        self.answer_reward_value = answer_reward_value
-        self.wrong_answer_penalty = wrong_answer_penalty
-        self.unfinished_answer_penalty = unfinished_answer_penalty
+        self.good_answer_reward = good_answer_reward
+        self.wrong_answer_reward = wrong_answer_reward
+        self.unfinished_answer_reward = unfinished_answer_reward
         self.reasoning_weight = reasoning_weight  # placeholder for now in case I want to do something fancy
 
-    def _calc_answer(self, response_strings, correct_answers):
+    def _calc_answer_reward(self, response_strings, correct_answers):
         """
-        Calculate the rewards of the model's answers for a batch.
+        Calculate the rewards based on the model's answers, for a batch.
 
         Args:
-            response_strings (list): The model's answers.
-            correct_answers (list): The correct answers.
+            response_strings (list[str]): The decoded model's responses.
+            correct_answers (list[str]): The correct/ground truth answers.
 
         Returns:
-            list: The rewards of the model's answer for a batch.
+            list[float]: The rewards for a batch.
 
         """
         rewards_list = []
@@ -67,23 +67,23 @@ class VerifiableRewardCalculator:
             sanitized_correct_answer = ResponseExtractor.sanitize_answer(correct_answer)
 
             if sanitized_model_answer is None:
-                rewards_list.append(self.unfinished_answer_penalty)
-            else:
-                try:
-                    if float(sanitized_model_answer) == float(sanitized_correct_answer):
-                        rewards_list.append(self.answer_reward_value)
-                    else:
-                        rewards_list.append(self.wrong_answer_penalty)
+                rewards_list.append(self.unfinished_answer_reward)
+                continue
 
-                except ValueError:
-                    print(
-                        f"Failed to convert answer to float: model_answer='{sanitized_model_answer}', "
-                        f"correct_answer='{sanitized_correct_answer}'"
-                    )
+            try:
+                if float(sanitized_model_answer) == float(sanitized_correct_answer):
+                    rewards_list.append(self.good_answer_reward)
+                else:
+                    rewards_list.append(self.wrong_answer_reward)
+            except ValueError:
+                print(
+                    f"Failed to convert answer to float: model_answer='{sanitized_model_answer}', "
+                    f"correct_answer='{sanitized_correct_answer}'"
+                )
 
         return rewards_list
 
-    def _calc_reasoning(self):
+    def _calc_reasoning_reward(self):
         pass
         # For now, following DeepSeek and AI2 TULU's impl, returning the answer only
 
@@ -93,16 +93,16 @@ class VerifiableRewardCalculator:
 
         Args:
             model_responses (torch.Tensor): The model's responses, shape (B, S)
-            correct_answers (list): The correct answers.
+            correct_answers (list[str]): The correct/ground truth answers.
 
         Returns:
             torch.Tensor: The total rewards for a batch of responses, shape (B,)
             (total_rewards = answer_rewards atm)
 
         """
-        decoded_strings = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
+        decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
 
-        answer_rewards = self._calc_answer(decoded_strings, correct_answers)
+        answer_rewards = self._calc_answer_reward(decoded_responses, correct_answers)
 
         return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
 

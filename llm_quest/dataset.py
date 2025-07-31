@@ -370,7 +370,7 @@ class ReasoningDataset(Dataset):
         __getitem__(index): Returns the tokenized prompt, full response, and extracted answer at the given index.
 
     Returns:
-        dict[str, list[int]]: A dictionary containing:
+        dict[str, list[int] or str]: A dictionary containing:
             - prompt: Tokenized prompt (instruction+question).
             - full_response: Tokenized prompt + full generated response (including reasoning and answer tags).
             - answer: Tokenized final answer extracted from the full response.
