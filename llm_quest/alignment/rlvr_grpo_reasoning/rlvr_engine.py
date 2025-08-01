@@ -185,7 +185,8 @@ def rlvr_grpo_training_loop(
     kl_div_threshold=0.5,
 ):
     """
-    GRPO training loop.
+    Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
+    rlhf_grpo_training_loop().
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.

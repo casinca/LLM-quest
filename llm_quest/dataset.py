@@ -533,7 +533,6 @@ class RPTStructuredDataset(Dataset):
         context_ids = self.samples[sample_idx][start_context_idx:token_idx]
 
         input_ids = self.instruction_ids + context_ids  # inject the instruction at the beginning of the context
-        # input_tensor = torch.tensor(input_ids)
 
         labels_ids = self.samples[sample_idx][token_idx : token_idx + self.labels_length]
         labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
