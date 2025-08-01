@@ -191,17 +191,19 @@ class ResponseExtractor:
         return None
 
     @classmethod
-    def get_answer(cls, response):
+    def get_answer(cls, response, tail=50):
         """
         Extracts the final answer content from <answer> tags in the response.
 
         Args:
             response (str): The response text containing <answer> tags
+            tail (int): range of chars, from the end, to consider for the answer extraction
 
         Returns:
             str: The answer content, or None if not found
         """
-        matches = re.findall(cls.ANSWER_PATTERN, response)
+        tail = response[-tail:]
+        matches = re.findall(cls.ANSWER_PATTERN, tail)
 
         if matches:
             return matches[-1]  # return the latest flagged answer content
