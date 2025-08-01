@@ -5,9 +5,10 @@ import transformers
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
-from llm_quest.dataset import ReasoningDataset
+from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator
+from llm_quest.dataset import RPTStructuredDataset
 from llm_quest.gpt.gpt_model import GPTModel
+from llm_quest.reinforcement_pretraining.rpt_engine import rpt_grpo_training_loop
 
 # --- hyperparameters ---
 gpt_config = config.config_creator("gpt_m")
@@ -16,17 +17,18 @@ model_device = "cuda"
 lr = 5e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 4
-num_samples = 4
+batch_size = 2
+num_samples = 3
 num_epoch = 1
-num_grad_updates = 3
+num_grad_updates = 2
 max_gen = 250
+labels_length = 10
 # GRPO hparams
 eps = 0.2
 beta = 0.45
 # evaluation hparams
 evaluation = True
-eval_freq = 50
+eval_freq = 10
 eval_batches = 1
 eval_num_samples = 4
 kl_div_threshold = 0.3
@@ -42,13 +44,31 @@ if __name__ == "__main__":
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")  # using HF tokenizer mainly for batch_decode
 
     # --- datasets & loaders ---
-    train_set = ReasoningDataset(config.reasoning_train_path, tokenizer)
-    val_set = ReasoningDataset(config.reasoning_val_path, tokenizer)
+    # reusing GSM8K dataset instead of Omni-Math
+    # for targeted efficient training: filter the dataset beforehand to include only predictions of certain difficulty
+    # via the EntropyFilteredTokens class
+    train_set = RPTStructuredDataset(
+        config.reasoning_train_path,
+        tokenizer=tokenizer,
+        max_context_length=gpt_config["context_length"],
+        labels_length=labels_length,
+    )
+    val_set = RPTStructuredDataset(
+        config.reasoning_val_path,
+        tokenizer=tokenizer,
+        max_context_length=gpt_config["context_length"],
+        labels_length=labels_length,
+    )
 
+    # TODO remove 1M samples without entropy filtering
+    from torch.utils.data import Subset
+
+    train_set = Subset(train_set, range(100))
+    val_set = Subset(val_set, range(50))
+
+    # same as RLVR
     custom_collate = partial(
-        rlvr_grpo_prompt_collator,
-        custom_max_length=gpt_config["context_length"],
-        device=model_device,
+        rlvr_grpo_prompt_collator, custom_max_length=gpt_config["context_length"], device=model_device
     )
 
     train_loader = DataLoader(
@@ -74,7 +94,7 @@ if __name__ == "__main__":
     )
 
     # --- models initialization & loading ---
-    # note: the rlvr_grpo training loop will take care of putting models on correct training/eval mode
+    # note: the rpt_grpo training loop will take care of putting models on correct training/eval mode
     policy_model = GPTModel(gpt_config)
     reference_model = GPTModel(gpt_config)
 
@@ -87,7 +107,7 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
-    rlvr_grpo_training_loop(
+    rpt_grpo_training_loop(
         train_loader=train_loader,
         val_loader=val_loader,
         policy_model=policy_model,
