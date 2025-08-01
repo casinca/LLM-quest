@@ -128,7 +128,7 @@ def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None,
             answers: List of answer strings.
     """
     prompts = [item["prompt"] for item in batch]
-    answers = [item["answer"] for item in batch]
+    answers = [item["answer"] if "answer" in item else item["labels"] for item in batch]
 
     max_length = max(len(sample) for sample in prompts)
 
