@@ -44,6 +44,10 @@ $s_i(\theta) = \exp\left(\log s_i(\theta)\right) = \exp\left(\frac{1}{|y_i|}
 \sum_{t=1}^{|y_i|}\log\left(\frac{\pi_{\theta}(y_{i,t}|x,y_{i,<t})}{\pi_{\theta_{old}}(y_{i,t}|x,y_{i,<t})}\right)\right)
 =\left(\frac{\pi_{\theta}(y_i|x)}{\pi_{\theta_{old}}(y_i|x)}\right)^{\frac{1}{|y_i|}}$ (since $e^{b \log a}= a^b$)
 
+Overall, GSPO is mainly an improvement targeted at MoE models training as mentioned in the paper and by @chujiezheng
+[here](https://github.com/volcengine/verl/pull/2775#issuecomment-3134375131), with performance similar to GRPO for
+dense models.
+
 &nbsp;
 
 ## Why Qwen judged important to match the granularity of the policy ratio with the advantages?
@@ -58,12 +62,25 @@ Seen from their GSPO gradient *equation 10*:
 
 <img src="_gspo_paper_eq_10.png" alt="GSPO gradient update equation 10 from the paper" width="70%">
 
+## The Token-level variant that is the more flexible one
+
+In the case we want to keep the advantages $A_{i,t}$ at the token level (like for process supervision) but still getting
+the benefits of GSPO with the sequence-level policy ratio, they made a smart flexible variant (by controlling the
+gradient flow in *equation 14* with pytorch's `.detach()`) that allows both advantages' granularity:  
+If the advantages are at the sequence level, then it acts the same as the original GSPO, otherwise advantages will scale
+per token while still receiving per sequence weights from the policy ratio.
+
 &nbsp;
 
 ## Changes from the GRPO code
 
+- Based on additional information from @chujiezheng a Qwen researcher, in
+  https://github.com/volcengine/verl/pull/2775#issuecomment-3131807306, they also mention trying not using a KL div
+  constraint by setting the beta to 0.
+
 - The switch to GSPO induces retweaking a less aggressive (PPO) clipping $\epsilon$ hparam, where they mention using
-$\epsilon$ in the ~$10^{-4}$ range compared to the typical ~0.2 default we often see. In hindsight, it makes sense
+$\epsilon$ in the ~$10^{-4}$ range, specifically different values for the min/max ($3 \cdot 10^{-4}$/$4 \cdot 10^{-4}$)
+mentioned in the link above compared to the typical ~0.2 default we often see. In hindsight, it makes sense
 since it's not token based anymore with less variance and a different order of magnitude.
 
 - we create a new function `log_probs_per_seq` that reuses `log_probs_per_token` from `grpo_engine.py` to compute the
@@ -82,6 +99,6 @@ since it's not token based anymore with less variance and a different order of m
     # no need to unsqueeze the advantages anymore, both shapes are (B,)
     surr_obj_per_sequence = policy_ratio_per_sequence * advantages
     clipped_surr_obj_per_sequence = torch.clip(
-        policy_ratio_per_sequence, min=1.0 - eps_clip, max=1.0 + eps_clip
+        policy_ratio_per_sequence, min=1.0 - eps_clip_min, max=1.0 + eps_clip_max
     ) * advantages
     ```
