@@ -9,8 +9,9 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 
 ## Latest
-- WIP: Qwen GSPO (Group Sequence Policy Optimization) from "scratch" (transition from the GRPO impl)
+
 - WIP: Reinforcement Pretraining (RPT) from scratch
+- Qwen GSPO (Group Sequence Policy Optimization)
 - Moonshot.ai's standalone QK-Clip technique (from MuonClip) and own Magnitude-QK-Clip variant
 - RLVR Reasoning with GRPO from scratch (slow atm (no KVcache) + unfinished readme)
 - Vision Transformer (ViT) from scratch
@@ -84,6 +85,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
     - DPO* (with cDPO for noisy labels), step by step
     - RLHF with GRPO from scratch
     - RLVR Reasoning with GRPO from scratch (working but slow)
+    - Qwen GSPO (transition from the GRPO implementation)
 
 &nbsp;
     
