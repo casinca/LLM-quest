@@ -17,20 +17,20 @@ model_device = "cuda"
 lr = 5e-5  # alt 3e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 4  # alt 8
-num_samples = 6  # alt 4
-num_epoch = 1  # alt 2
-num_grad_updates = 3  # alt 1 or 2
+batch_size = 8  # alt 8
+num_samples = 4  # alt 4
+num_epoch = 2  # alt 2
+num_grad_updates = 4  # alt 1 or 2
 max_gen = 35
 # GRPO hparams
-eps = 0.2  # alt 0.15
-beta = 0.45  # alt 0.1
+clip_eps = 0.2  # alt 0.15
+beta = 0.5  # alt 0.1
 # evaluation hparams
 evaluation = True
 eval_freq = 10  # alt 20
 eval_batches = 1  # alt 2
 eval_num_samples = 5  # alt 4
-kl_div_threshold = 0.75  # alt 0.5
+kl_div_threshold = 0.4  # alt 0.5
 # loader hparams
 num_workers = 0
 pin_memory = False
@@ -108,7 +108,7 @@ if __name__ == "__main__":
         policy_config=gpt_config,
         device=model_device,
         max_gen=max_gen,
-        eps=eps,
+        clip_eps=clip_eps,
         beta=beta,
         evaluation=evaluation,
         eval_freq=eval_freq,

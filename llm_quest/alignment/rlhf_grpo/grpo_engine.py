@@ -461,6 +461,48 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
+def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_div, num_samples):
+    """
+    Compute GRPO loss for a batch:
+    - compute both surrogate objective and clipped surrogate objective per token
+    - then unmasked GRPO loss per token
+    - then masked GRPO loss per response
+    - then GRPO loss per group/num_samples
+    - then final mean for the batch
+
+    Args:
+        policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
+        advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per response.
+        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask.
+        min_clip (float): Minimum clip parameter ϵ for the clipped surrogate objective.
+        max_clip (float): Maximum clip parameter ϵ for the clipped surrogate objective.
+        beta (float): Beta for the KL divergence penalty term.
+        kl_div (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
+        num_samples (int): Number of samples per group (simply used for reshaping per groups).
+
+    Returns:
+        torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
+    """
+
+    # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
+    # ie, each trajectory gets a single advantage.
+    advantages_broadcast = advantages.unsqueeze(-1)
+    surr_obj_per_token = policy_ratio * advantages_broadcast
+    clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
+
+    grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+
+    # grpo loss per response
+    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+    grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0...
+    # grpo loss per group/num_samples
+    grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+    # grpo loss per batch size
+    grpo_loss_batch = grpo_loss_group.mean()
+
+    return grpo_loss_batch
+
+
 # TODO: update in line with the updated grpo_training_loop() func
 def grpo_training_loop_single_prompt(
     train_loader,
@@ -720,7 +762,7 @@ def rlhf_grpo_training_loop(
     policy_config,
     device,
     max_gen=35,
-    eps=0.2,
+    clip_eps=0.2,
     beta=1.0,
     evaluation=True,
     eval_freq=None,
@@ -744,7 +786,7 @@ def rlhf_grpo_training_loop(
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         max_gen (int): Maximum number of tokens to generate for each response.
-        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        clip_eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
         evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
@@ -832,23 +874,23 @@ def rlhf_grpo_training_loop(
                 policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
 
-                # --- GRPO loss ---
-                # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
-                # ie, each trajectory gets a single advantage.
-                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)  # shapes (B,S-1) * (B,1)
-                clipped_surr_obj_per_token = torch.clip(
-                    policy_ratio_per_token, min=1 - eps, max=1 + eps
-                ) * advantages.unsqueeze(-1)
-
-                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-                grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
+                # loss, backprop, update
+                grpo_loss_batch = grpo_loss(
+                    policy_ratio=policy_ratio_per_token,
+                    advantages=advantages,
+                    loss_mask=loss_mask,
+                    min_clip=clip_eps,
+                    max_clip=clip_eps,
+                    beta=beta,
+                    kl_div=kl_div,
+                    num_samples=num_samples,
+                )
 
                 optimizer.zero_grad()
-                grpo_loss.backward()
+                grpo_loss_batch.backward()
                 optimizer.step()
 
-                cum_grpo_loss += grpo_loss.item()
+                cum_grpo_loss += grpo_loss_batch.item()
 
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
