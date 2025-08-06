@@ -24,7 +24,7 @@ num_grad_updates = 2
 max_gen = 250
 labels_length = 10
 # GRPO hparams
-eps = 0.2
+clip_eps = 0.2
 beta = 0.45
 # evaluation hparams
 evaluation = True
@@ -120,7 +120,7 @@ if __name__ == "__main__":
         policy_config=gpt_config,
         device=model_device,
         max_gen=max_gen,
-        eps=eps,
+        clip_eps=clip_eps,
         beta=beta,
         evaluation=evaluation,
         eval_freq=eval_freq,
