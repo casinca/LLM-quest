@@ -146,8 +146,8 @@ class QKClipMHA:
 
 
 # This variant is faster than QKClipMHA when there's clipping, but slower when there's no clipping.
-# When only max attn logits are passed, this variant has the same effect as QK-ClipMHA.
-# see: llm_quest/experimental/magnitude_qk_clip/Readme.md
+# When only max positive attn logits are passed, this variant has the same effect as QK-ClipMHA.
+# see motivation: llm_quest/experimental/magnitude_qk_clip/Readme.md
 class MagnitudeQKClipMHA:
     """
     Standalone class to apply per head Magnitude-QK-Clip (Query-Key) variant inspired from the original
