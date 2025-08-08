@@ -15,28 +15,31 @@ from llm_quest.gpt.generate import generate_batched_loop
 from llm_quest.utils import CheckpointEvaluator, ResponseExtractor
 
 
-class VerifiableRewardCalculator:
+class PrefixMatchingReward:
     """
-    Reward calculator for a batch of responses, based on simple heuristics.
+    Reward calculator following the prefix matching strategy from the RPT paper:
+    see 3.2 Pre-Training with Reinforcement Learning and Appendix A. Design Choices of Reward
 
-    Args:
-        tokenizer (Tokenizer): The tokenizer to decode the responses (needs a batch_decode method).
-        good_answer_reward (float): The reward value for a correct answer.
-        wrong_answer_reward (float): The penalty for an incorrect answer (should be ≤ 0).
-        unfinished_answer_reward (float): The penalty for an unfinished answer (should be ≤ 0).
-        reasoning_weight (float): A coeff to weight the reasoning reward vs. the answer.
-        pad_token_id (int): The token id to use for padding.
+    2 conditions must be met to get a positive reward:
+        - the answer must be a prefix of the labels
+        - the answer must be a valid boundary of the labels
+
+        The valid boundary is the set of all possible byte lengths of the labels.
+
+    args:
+        tokenizer: the tokenizer to use to tokenize the labels
+        good_answer_reward: the reward for a good answer
+        wrong_answer_reward: the penalty for a wrong answer
+        unfinished_answer_reward: the penalty for an unfinished answer
 
     """
 
     def __init__(
         self,
         tokenizer,
-        good_answer_reward=10.0,
+        good_answer_reward=1.0,
         wrong_answer_reward=0.0,
-        unfinished_answer_reward=-1.0,
-        reasoning_weight=0.0,
-        pad_token_id=50256,  # placeholder for now
+        unfinished_answer_reward=-10.0,
     ):
         assert wrong_answer_reward <= 0, "wrong_answer_reward should be ≤ 0"
         assert unfinished_answer_reward <= 0, "unfinished_answer_reward should be ≤ 0"
@@ -45,15 +48,53 @@ class VerifiableRewardCalculator:
         self.good_answer_reward = good_answer_reward
         self.wrong_answer_reward = wrong_answer_reward
         self.unfinished_answer_reward = unfinished_answer_reward
-        self.reasoning_weight = reasoning_weight  # placeholder for now in case I want to do something fancy
 
-    def _calc_answer_reward(self, response_strings, correct_answers):
+    @staticmethod
+    def _is_prefix(answer_bytes, label_bytes):
+        """
+        Args:
+            answer_bytes (bytes): The answer in bytes.
+            label_bytes (bytes): The label in bytes.
+        """
+        return label_bytes.startswith(answer_bytes)
+
+    @staticmethod
+    def _is_valid_boundary(answer_bytes, valid_boundary):
+        """
+        Args:
+            answer_bytes (bytes): The answer in bytes.
+            valid_boundary (set[int]): The valid boundary of the labels.
+        """
+        return len(answer_bytes) in valid_boundary
+
+    def _get_valid_boundary(self, label):
+        """
+        calc & return the valid boundary of the current label string.
+
+        Args:
+            label (str): The ground truth label.
+
+        Returns:
+            set[int]: The valid boundary of the label.
+        """
+        valid_boundary = set()
+        token_ids = self.tokenizer.encode(label)
+
+        for i in range(1, len(token_ids) + 1):
+            token_id = token_ids[:i]
+            token_string = self.tokenizer.decode(token_id)
+            token_bytes = token_string.encode("utf-8")
+            valid_boundary.add(len(token_bytes))
+
+        return valid_boundary
+
+    def _calc_reward(self, model_responses, labels):
         """
         Calculate the rewards based on the model's answers, for a batch.
 
         Args:
-            response_strings (list[str]): The decoded model's responses.
-            correct_answers (list[str]): The correct/ground truth answers.
+            model_responses (list[str]): The decoded model's responses.
+            labels (list[str]): The ground truth labels.
 
         Returns:
             list[float]: The rewards for a batch.
@@ -61,110 +102,47 @@ class VerifiableRewardCalculator:
         """
         rewards_list = []
 
-        for response_string, correct_answer in zip(response_strings, correct_answers):
+        for response_string, label in zip(model_responses, labels):
+            model_answer = ResponseExtractor.get_answer(response_string)
 
-            raw_model_answer = ResponseExtractor.get_answer(response_string)
-            sanitized_model_answer = ResponseExtractor.sanitize_answer(raw_model_answer)
-            sanitized_correct_answer = ResponseExtractor.sanitize_answer(correct_answer)
-
-            if sanitized_model_answer is None:
+            if model_answer is None:
                 rewards_list.append(self.unfinished_answer_reward)
                 continue
 
-            try:
-                if float(sanitized_model_answer) == float(sanitized_correct_answer):
-                    rewards_list.append(self.good_answer_reward)
-                else:
-                    rewards_list.append(self.wrong_answer_reward)
-            except ValueError:
-                print(
-                    f"Failed to convert answer to float: model_answer='{sanitized_model_answer}', "
-                    f"correct_answer='{sanitized_correct_answer}'"
-                )
+            valid_boundary = self._get_valid_boundary(label)
+            # convert to bytes before checking both conditions
+            answer_bytes = model_answer.encode("utf-8")
+            label_bytes = label.encode("utf-8")
+
+            # check both conditions
+            if (
+                PrefixMatchingReward._is_prefix(answer_bytes, label_bytes)
+                and PrefixMatchingReward._is_valid_boundary(answer_bytes, valid_boundary)
+            ):  # fmt: skip
+                rewards_list.append(self.good_answer_reward)
+            else:
+                rewards_list.append(self.wrong_answer_reward)
 
         return rewards_list
 
-    def _calc_reasoning_reward(self):
-        pass
-        # For now, following DeepSeek and AI2 TULU's impl, returning the answer only
-
-    def __call__(self, model_responses, correct_answers):
+    def __call__(self, model_responses, labels):
         """
         Main orchestrator for the rewards' calculation.
 
         Args:
             model_responses (torch.Tensor): The model's responses, shape (B, S)
-            correct_answers (list[str]): The correct/ground truth answers.
+            labels (list[str]): The ground truth labels.
 
         Returns:
             torch.Tensor: The total rewards for a batch of responses, shape (B,)
-            (total_rewards = answer_rewards atm)
-
         """
         decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
+        rewards_list = self._calc_reward(decoded_responses, labels)
 
-        answer_rewards = self._calc_answer_reward(decoded_responses, correct_answers)
-
-        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
-
-
-def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device="cpu"):
-    """
-    Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
-    sample generations. It also passes through the answers kept as strings.
-    This is a slight variation from the original rlhf_grpo_prompt_collator() to return the answers.
-
-    Args:
-        batch (List[Dict[str, any]]): A list of samples from ReasoningDataset, each a dict with "prompt" and "answer".
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
-                is determined by the longest prompt in the batch.
-        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
-
-    Returns:
-        Dict[str, torch.Tensor or list]: A dictionary containing:
-            padded_prompts: Tensor of shape (batch_size, max_len) with padded prompt token IDs.
-            prompt_masks: Boolean tensor of the same shape to keep track of padded tokens.
-            last_real_pos: Tensor of shape (batch_size,) containing the position of the last real token in each prompt.
-            answers: List of answer strings.
-    """
-    prompts = [item["prompt"] for item in batch]
-    answers = [item["answer"] if "answer" in item else item["labels"] for item in batch]
-
-    max_length = max(len(sample) for sample in prompts)
-
-    if custom_max_length is not None:
-        prompts = [prompt[:custom_max_length] for prompt in prompts]
-        max_length = min(max_length, custom_max_length)
-
-    padded_prompts = []
-    prompt_masks = []
-    last_real_pos = []
-
-    for sample in prompts:
-        prompt_len = len(sample)
-        padding_needed = max_length - prompt_len
-
-        padded_prompt = sample + [pad_token_id] * padding_needed
-        prompt_mask = [True] * prompt_len + [False] * padding_needed
-
-        last_real_pos.append(prompt_len - 1)  # 0-indexed
-        padded_prompts.append(padded_prompt)
-        prompt_masks.append(prompt_mask)
-
-    padded_prompts = torch.tensor(padded_prompts)
-    prompt_masks = torch.tensor(prompt_masks, dtype=torch.bool)
-    last_real_pos = torch.tensor(last_real_pos, dtype=torch.long)
-
-    return {
-        "padded_prompts": padded_prompts.to(device),
-        "prompt_masks": prompt_masks.to(device),
-        "last_real_pos": last_real_pos.to(device),
-        "answers": answers,
-    }
+        return torch.tensor(rewards_list, dtype=torch.bfloat16, device=model_responses.device)
 
 
-def rlvr_grpo_training_loop(
+def rpt_grpo_training_loop(
     train_loader,
     val_loader,
     policy_model,
@@ -186,8 +164,7 @@ def rlvr_grpo_training_loop(
     kl_div_threshold=0.5,
 ):
     """
-    Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
-    rlhf_grpo_training_loop().
+    Reinforcement Pretraining (RPT) training loop with GRPO, derived from rlvr_grpo_training_loop().
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
@@ -216,7 +193,7 @@ def rlvr_grpo_training_loop(
 
     """
     reference_model.eval()
-    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
+    reward_calculator = PrefixMatchingReward(tokenizer=tokenizer)
     chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, min_reward_threshold=0.35, beta=beta)
 
     step = 0
@@ -271,7 +248,7 @@ def rlvr_grpo_training_loop(
 
                 rewards = reward_calculator(  # shape: (B,)
                     model_responses=collated_batch["padded_responses"],
-                    correct_answers=correct_answers,
+                    labels=correct_answers,
                 )
 
             advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
@@ -332,46 +309,10 @@ def rlvr_grpo_training_loop(
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
 
-                # save new best checkpoint
-                if chkp_eval.is_rlvr_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
-                    save_path = os.path.join(
-                        config.rlvr_grpo_checkpoint_dir,
-                        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
-                    )
-                    torch.save(policy_model.state_dict(), save_path)
-
-
-# quick test
-if __name__ == "__main__":
-    import transformers
-
-    string_responses = [
-        (
-            "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
-            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>72 </answer><|endoftext|>",
-        ),
-        (
-            "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
-            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>-72 </answer><|endoftext|>",
-        ),
-    ]
-    correct_answers = ["72.0", "-72 "]
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
-
-    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
-
-    # Encode all responses in batch
-    encoded_responses = [tokenizer.encode(response[1]) for response in string_responses]
-    print(f"Encoded responses: {encoded_responses}")
-
-    # Create batch tensor
-    max_len = max(len(response) for response in encoded_responses)
-    padded_responses = [
-        response + [tokenizer.pad_token_id] * (max_len - len(response)) for response in encoded_responses
-    ]
-    model_responses_tensor = torch.tensor(padded_responses)
-
-    # Calculate rewards for entire batch
-    rewards = reward_calculator(model_responses_tensor, correct_answers)
-    print(f"Calculated rewards: {rewards}")
+                ## save new best checkpoint
+                # if chkp_eval.is_rlvr_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                #    save_path = os.path.join(
+                #        config.rlvr_grpo_checkpoint_dir,
+                #        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
+                #    )
+                #    torch.save(policy_model.state_dict(), save_path)

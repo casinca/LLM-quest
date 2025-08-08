@@ -42,7 +42,7 @@ def generate_loop(
         max_gen (int): The maximum number of new tokens to generate for each sequence.
         context_length (int): The maximum sequence length (context window) the model can handle.
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
-        temp (float, optional): Temperature for softmax sampling:
+        temp (float, optional): Temperature sampling:
                                 - if >1, increases entropy (randomness)
                                 - if <1, decreases entropy (more deterministic)
                                 - if 1, untempered distribution
@@ -114,6 +114,7 @@ def generate_batched_loop(
         context_length (int): The maximum sequence length (context window) the model can handle.
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
+                                if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
@@ -195,8 +196,8 @@ def top_k_sampling(logits, k):
         k (int): Number of top tokens to keep
 
     Returns:
-        torch.Tensor: Filtered logits tensor with only the top k values preserved and
-                    all others set to negative infinity
+        torch.Tensor: Filtered logits tensor with only the top k values preserved and all others set to negative
+                    infinity
     """
     top_k, top_idx = torch.topk(logits, k)
     # initiate a tensor of the size of logits with all values set to -inf
