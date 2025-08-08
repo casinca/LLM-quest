@@ -96,6 +96,16 @@ class QKClipMHA:
         self.num_heads = None
         self.head_dim = None
 
+    def _init_cache(self, model):
+        if self.cached_qk_layers is None:
+            self.cached_qk_layers = [
+                (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
+                for i in range(len(model.trf_blocks))
+            ]
+            self.num_heads = model.trf_blocks[0].att.num_heads
+            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
+            self.head_dim = hidden_dim // self.num_heads
+
     @torch.no_grad()
     def __call__(self, model, max_attn_logits_per_layer):
         """
@@ -109,15 +119,7 @@ class QKClipMHA:
 
         Modifies the model's weights in-place.
         """
-        # cache (hardcoded with my model architecture)
-        if self.cached_qk_layers is None:
-            self.cached_qk_layers = [
-                (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
-                for i in range(len(model.trf_blocks))
-            ]
-            self.num_heads = model.trf_blocks[0].att.num_heads
-            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
-            self.head_dim = hidden_dim // self.num_heads
+        self._init_cache(model)
 
         for i, max_attn_logits_per_head in enumerate(max_attn_logits_per_layer):
             needs_clipping = max_attn_logits_per_head > self.clip_threshold
@@ -143,21 +145,16 @@ class QKClipMHA:
             key_reshaped *= key_scales
 
 
-# NOTE: Approach: clipping in batches, vectorized (even heads that don't need it by x1) is still faster than only
-# looping over heads flagged for scaling.
-#
-# TODO write reason/potential benefits/cons of this? since softmax of large negative logits won't cause NaN
-# My variant is symmetrically downscaling per head QK weights based on the largest magnitude of the attention logits.
-# Ie: whether they are positive OR negative.
-# The original implementation only downscales large positive logits because instability comes from the growth of
-# positive values (in QK and softmax). Negative logits tend to 0 exponentially (and don't risk explosion), so gradients
-# will naturally stop asking to increase QK weights in that direction since it won't change from 0 anyway.
+# This variant is faster than QKClipMHA when there's clipping, but slower when there's no clipping.
+# When only max attn logits are passed, this variant has the same effect as QK-ClipMHA.
+# see: llm_quest/experimental/magnitude_qk_clip/Readme.md
 class MagnitudeQKClipMHA:
     """
     Standalone class to apply per head Magnitude-QK-Clip (Query-Key) variant inspired from the original
     QK-Clip of Moonshot AI's MuonClip Optimizer: https://github.com/MoonshotAI/Kimi-K2/blob/main/tech_report.pdf
 
-    TODO diff with QK-clip
+    This variant downscales, per head, QK weights based on if the largest magnitude of the attention logits exceed the
+    given threshold. (can accept both positive and negative logits)
 
     Args:
         clip_threshold (float): The threshold(τ) in the formula for clipping the attention logits.
@@ -173,6 +170,16 @@ class MagnitudeQKClipMHA:
         self.num_heads = None
         self.head_dim = None
 
+    def _init_cache(self, model):
+        if self.cached_qk_layers is None:
+            self.cached_qk_layers = [
+                (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
+                for i in range(len(model.trf_blocks))
+            ]
+            self.num_heads = model.trf_blocks[0].att.num_heads
+            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
+            self.head_dim = hidden_dim // self.num_heads
+
     @torch.no_grad()
     def __call__(self, model, max_attn_logits_per_layer):
         """
@@ -186,15 +193,7 @@ class MagnitudeQKClipMHA:
 
         Modifies the model's weights in-place.
         """
-        # cache (hardcoded with my model architecture)
-        if self.cached_qk_layers is None:
-            self.cached_qk_layers = [
-                (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
-                for i in range(len(model.trf_blocks))
-            ]
-            self.num_heads = model.trf_blocks[0].att.num_heads
-            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
-            self.head_dim = hidden_dim // self.num_heads
+        self._init_cache(model)
 
         for i, max_attn_logits_per_head in enumerate(max_attn_logits_per_layer):
             gamma_factors_per_head = torch.clamp(self.clip_threshold / torch.abs(max_attn_logits_per_head), max=1.0)
