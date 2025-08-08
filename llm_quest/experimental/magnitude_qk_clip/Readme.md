@@ -24,7 +24,7 @@ attention logits.
 ## The Magnitude variant
 
 The goal of the variant is to keep the original and most important benefits of QK-Clip, by clipping based on the largest
-positive attention logits, but also taking into account smallest negative attention logits.  
+positive attention logits, but also taking into account the smallest negative attention logits.  
 Hence, a symmetric clipping solely based on the largest magnitude of the attention logits in each head.  
 
 So now we are finding the largest magnitude of the attention logits in each head:
