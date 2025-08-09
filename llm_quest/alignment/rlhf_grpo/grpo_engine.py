@@ -461,7 +461,17 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
-def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_div, num_samples):
+def grpo_loss(
+    variant,
+    policy_ratio,
+    advantages,
+    loss_mask,
+    min_clip,
+    max_clip,
+    beta,
+    kl_div,
+    num_samples,
+):
     """
     Compute GRPO loss for a batch:
     - compute both surrogate objective and clipped surrogate objective per token
@@ -471,6 +481,7 @@ def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_
     - then final mean for the batch
 
     Args:
+        variant (str): Variant of the GRPO loss to compute.
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
         advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per response.
         loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask.
@@ -492,18 +503,30 @@ def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_
 
     grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
 
-    # grpo loss per response
-    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-    grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0...
+    if variant == "grpo":
+        # grpo loss per response
+        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+        grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0
 
-    # TODO (this part can be simplified to a single .mean() since groups are equal size)
-    # if the vGRPO variant doesn't work, revert this
-    # grpo loss per group/num_samples
-    grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-    # grpo loss for the batch
-    grpo_loss_batch = grpo_loss_group.mean()
+        # TODO (this part can be simplified to a single .mean() since groups are equal size)
+        # if the vGRPO variant doesn't work, revert this
+        # grpo loss per group/num_samples
+        grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+        # grpo loss for the batch
+        grpo_loss_batch = grpo_loss_group.mean()
 
-    return grpo_loss_batch
+        return grpo_loss_batch
+
+    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 - Token-Level Policy Gradient Loss
+    elif variant == "dapo":
+        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+        sum_grpo_loss_group = grpo_loss_per_token.sum()
+        grpo_loss_batch = sum_grpo_loss_group / (loss_mask.sum() + 1e-8)
+
+        return grpo_loss_batch
+
+    else:
+        raise ValueError(f"Unknown loss type: {variant}")
 
 
 # TODO: update in line with the updated grpo_training_loop() func
