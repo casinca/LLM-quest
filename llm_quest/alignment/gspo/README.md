@@ -76,8 +76,9 @@ per-token while still receiving per-sequence weights from the policy ratio.
 
 - The switch to GSPO induces retweaking a less aggressive (PPO) clipping $\epsilon$ hparam, where they mention using
 $\epsilon$ in the ~$10^{-4}$ range, specifically different values for the min/max ($3 \cdot 10^{-4}$/$4 \cdot 10^{-4}$)
-mentioned in the link above compared to the typical ~0.2 default we often see. In hindsight, it makes sense,
-as it's no longer token-based with less variance and a different order of magnitude.
+mentioned in the link above compared to the typical ~0.2 default we often see.
+In hindsight, it makes sense, as it's no longer token-based with less variance and a different order of magnitude.  
+This decoupled PPO clipping originated from the [DAPO paper](https://arxiv.org/abs/2503.14476).
 
 - We create a new function `log_probs_per_seq` that reuses `log_probs_per_token` from `grpo_engine.py` to compute the
   logprobs per-token and uses the `loss_mask/reward_mask` to correctly calc the mean only for the logprobs of the

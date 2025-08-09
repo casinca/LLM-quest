@@ -495,9 +495,12 @@ def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_
     # grpo loss per response
     grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
     grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0...
+
+    # TODO (this part can be simplified to a single .mean() since groups are equal size)
+    # if the vGRPO variant doesn't work, revert this
     # grpo loss per group/num_samples
     grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-    # grpo loss per batch size
+    # grpo loss for the batch
     grpo_loss_batch = grpo_loss_group.mean()
 
     return grpo_loss_batch
