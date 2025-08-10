@@ -337,7 +337,7 @@ def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_i
     }
 
 
-def z_scores(rewards, num_samples):
+def z_scores(rewards, num_samples, dr_grpo=None):
     """
     Compute the z-scores of the masked rewards.
     This is the way DeepSeek calculate the advantages in Outcome Supervision.
@@ -345,6 +345,7 @@ def z_scores(rewards, num_samples):
     Args:
         rewards (torch.Tensor): Tensor of shape (B*,) containing the masked rewards.
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
+        dr_grpo (str, optional): if "dr_grpo", compute the advantages per the Dr. GRPO loss method.
 
         *considering B as batch_size * num_samples.
 
@@ -356,9 +357,12 @@ def z_scores(rewards, num_samples):
     # (We don't want stats from different groups/prompts to affect one another.)
     rewards = rewards.view(-1, num_samples)  # batch size inferred (ie rewards.shape[0] // num_samples)
     group_mean = rewards.mean(dim=1, keepdim=True)
-    group_std = rewards.std(dim=1, keepdim=True)
 
-    z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
+    if dr_grpo == "dr_grpo":
+        z_scores = rewards - group_mean
+    else:
+        group_std = rewards.std(dim=1, keepdim=True)
+        z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
 
     return z_scores.view(-1)  # flattening back to (B,)
 
@@ -419,7 +423,6 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
 
 
 def grpo_loss(
-    variant,
     policy_ratio,
     advantages,
     loss_mask,
@@ -428,17 +431,14 @@ def grpo_loss(
     beta,
     kl_div,
     num_samples,
+    max_gen=1,
+    variant="grpo",
 ):
     """
-    Compute GRPO loss for a batch:
-    - compute both surrogate objective and clipped surrogate objective per token
-    - then unmasked GRPO loss per token
-    - then masked GRPO loss per response
-    - then GRPO loss per group/num_samples
-    - then final mean for the batch
+    Compute original GRPO loss, DAPO or Dr. GRPO variant for a batch.
+    credit to TRL doc by @qgallouedec for enumerating the variants and the papers, which made it easier to implement.
 
     Args:
-        variant (str): Variant of the GRPO loss to compute.
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
         advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per response.
         loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask.
@@ -447,6 +447,9 @@ def grpo_loss(
         beta (float): Beta for the KL divergence penalty term.
         kl_div (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
+        max_gen (int, optional): used for Length Bias in the Dr. GRPO loss (in p.7 of the Dr. GRPO paper)
+                                Defaults to 1. (no effect)
+        variant (str): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo"
 
     Returns:
         torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
@@ -459,10 +462,10 @@ def grpo_loss(
     clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
 
     grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
 
     if variant == "grpo":
         # grpo loss per response
-        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
         grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0
 
         # TODO (this part can be simplified to a single .mean() since groups are equal size)
@@ -475,10 +478,15 @@ def grpo_loss(
         return grpo_loss_batch
 
     # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 - Token-Level Policy Gradient Loss
+    # (longer sequences to have more influence on the loss)
     elif variant == "dapo":
-        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-        sum_grpo_loss_group = grpo_loss_per_token.sum()
-        grpo_loss_batch = sum_grpo_loss_group / (loss_mask.sum() + 1e-8)
+        grpo_loss_batch = grpo_loss_per_token.sum() / (loss_mask.sum() + 1e-8)
+
+        return grpo_loss_batch
+
+    # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+    elif variant == "dr_grpo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
 
         return grpo_loss_batch
 
@@ -628,6 +636,7 @@ def rlhf_grpo_training_loop(
     eval_batches=None,
     eval_num_samples=1,
     kl_div_threshold=0.5,
+    loss_variant="grpo",
 ):
     """
     GRPO training loop.
@@ -653,6 +662,7 @@ def rlhf_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo".
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -717,7 +727,9 @@ def rlhf_grpo_training_loop(
                     reward_mask=collated_batch["reward_masks"],
                 )
 
-            advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
+            advantages = z_scores(
+                rewards, num_samples, dr_grpo=loss_variant
+            )  # grouping and computing zscores (outside the inference scope)
 
             # --- Gradient updates loop ---
             policy_model.train()
@@ -743,6 +755,7 @@ def rlhf_grpo_training_loop(
                     beta=beta,
                     kl_div=kl_div,
                     num_samples=num_samples,
+                    variant=loss_variant,
                 )
 
                 optimizer.zero_grad()

@@ -23,6 +23,7 @@ num_epoch = 2  # alt 2
 num_grad_updates = 4  # alt 1 or 2
 max_gen = 35
 # GRPO hparams
+loss_variant = "grpo"
 clip_eps = 0.2  # alt 0.15
 beta = 0.5  # alt 0.1
 # evaluation hparams
@@ -115,4 +116,5 @@ if __name__ == "__main__":
         eval_batches=eval_batches,
         eval_num_samples=eval_num_samples,
         kl_div_threshold=kl_div_threshold,
+        loss_variant=loss_variant,
     )

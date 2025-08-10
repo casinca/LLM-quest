@@ -184,6 +184,7 @@ def rlvr_grpo_training_loop(
     eval_batches=None,
     eval_num_samples=1,
     kl_div_threshold=0.5,
+    loss_variant="grpo",
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -210,6 +211,7 @@ def rlvr_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo".
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -274,7 +276,9 @@ def rlvr_grpo_training_loop(
                     correct_answers=correct_answers,
                 )
 
-            advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
+            advantages = z_scores(
+                rewards, num_samples, dr_grpo=loss_variant
+            )  # grouping and computing zscores (outside the inference scope)
 
             # --- Gradient updates loop ---
             policy_model.train()
@@ -300,6 +304,7 @@ def rlvr_grpo_training_loop(
                     beta=beta,
                     kl_div=kl_div,
                     num_samples=num_samples,
+                    variant=loss_variant,
                 )
 
                 optimizer.zero_grad()

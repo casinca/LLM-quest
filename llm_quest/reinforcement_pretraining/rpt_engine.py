@@ -142,6 +142,7 @@ class PrefixMatchingReward:
         return torch.tensor(rewards_list, dtype=torch.bfloat16, device=model_responses.device)
 
 
+# TODO: refactor with rlvr?
 def rpt_grpo_training_loop(
     train_loader,
     val_loader,
