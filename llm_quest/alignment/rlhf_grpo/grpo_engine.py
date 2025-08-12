@@ -436,7 +436,7 @@ def grpo_loss(
 ):
     """
     Compute original GRPO loss, DAPO or Dr. GRPO variant for a batch.
-    credit to TRL doc by @qgallouedec for enumerating the variants and the papers, which made it easier to implement.
+    credit to @qgallouedec's TRL doc for enumerating the variants and the papers, which made it faster to implement.
 
     Args:
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
@@ -477,8 +477,8 @@ def grpo_loss(
 
         return grpo_loss_batch
 
-    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 - Token-Level Policy Gradient Loss
-    # (longer sequences to have more influence on the loss)
+    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+    # Global token-level averaging (longer sequences have more influence on the loss) vs sample-level: 1/n_G * sum(G_i)
     elif variant == "dapo":
         grpo_loss_batch = grpo_loss_per_token.sum() / (loss_mask.sum() + 1e-8)
 

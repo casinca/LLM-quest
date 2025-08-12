@@ -206,7 +206,7 @@ A slight exception for Dr. GRPO which do not compute advantages as z-scores anym
 global token level loss to let longer sequences have more influence on the overall gradient update vs shorter
 sequences.
 
-![alt text](_img/_dapo_eq.png)
+<img src="_img/_dapo_eq.png" alt="taken from paper" width="55%">
 
 So for a minibatch of $B$ samples, the trap would be to do a `.mean()` of each $b$ samples but we need to continue the
 same logic by summing all the samples and divide by all the tokens across the batch:
@@ -226,7 +226,7 @@ will be small.
 For the length bias, they remove the normalization by response length, which caused the model to favor
 longer incorrect responses and shorter correct ones.
 
-<img src="_img/_dr_grpo_eq.png" alt="taken from paper" width="75%">
+<img src="_img/_dr_grpo_eq.png" alt="taken from paper" width="50%">
 
 &nbsp;
 
