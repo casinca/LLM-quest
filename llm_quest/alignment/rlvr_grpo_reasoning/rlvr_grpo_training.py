@@ -16,13 +16,15 @@ model_device = "cuda"
 lr = 5e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 4
-num_samples = 4
+batch_size = 2
+num_samples = 2
 num_epoch = 1
 num_grad_updates = 3
 max_gen = 250
 # GRPO hparams
-clip_eps = 0.2
+loss_variant = "grpo"
+min_clip_eps = 0.2
+max_clip_eps = 0.2
 beta = 0.45
 # evaluation hparams
 evaluation = True
@@ -100,11 +102,13 @@ if __name__ == "__main__":
         policy_config=gpt_config,
         device=model_device,
         max_gen=max_gen,
-        clip_eps=clip_eps,
+        min_clip_eps=min_clip_eps,
+        max_clip_eps=max_clip_eps,
         beta=beta,
         evaluation=evaluation,
         eval_freq=eval_freq,
         eval_batches=eval_batches,
         eval_num_samples=eval_num_samples,
         kl_div_threshold=kl_div_threshold,
+        loss_variant=loss_variant,
     )

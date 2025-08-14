@@ -65,7 +65,7 @@ testing the logic/exp than aiming for SOTA perfs...) based on [`llm_quest/gpt`](
 
 ### Visualization of the pipeline:
 
-<img src="_mermaid_visual.png" alt="mermaid diagram" width="50%">
+<img src="_img/_mermaid_visual.png" alt="mermaid diagram" width="50%">
 
 &nbsp;
 
@@ -190,6 +190,43 @@ know the answer. It was like it had undergone reasoning-focused training like RL
 
 A drawback of this run though, the model would tend to become overly hesitant (low self-confidence) way too often.
 
+&nbsp;
+
+## GRPO Variants
+
+Inspired by the [TRL documentation](https://huggingface.co/docs/trl/index), a few variants of GRPO were later
+implemented in the `grpo_loss` function.  
+All the below variants aren't changing the core GRPO algorithm, it is mostly a concern on how we are aggregating the
+loss per token for a sample.  
+A slight exception for Dr. GRPO which do not compute advantages as z-scores anymore.
+
+### DAPO
+
+[DAPO](https://arxiv.org/abs/2503.14476) introduces decoupled epsilons for the (PPO) Clip surrogate objective and a
+global token level loss to let longer sequences have more influence on the overall gradient update vs shorter
+sequences.
+
+<img src="_img/_dapo_eq.png" alt="taken from paper" width="55%">
+
+So for a minibatch of $B$ samples, the trap would be to do a `.mean()` of each $b$ samples but we need to continue the
+same logic by summing all the samples and divide by all the tokens across the batch:
+
+$$J_{DAPO}(\theta) = \frac{1}{\sum_{b=1}^{B} \sum_{i=1}^{G_b} |o_{b,i}|} \sum_{b=1}^{B} \sum_{i=1}^{G_b}
+\sum_{t=1}^{|o_{b,i}|}  \min\left(r_{b,i,t}(\theta)\hat{A}_ {b,i,t}, \text{clip}(r_{b,i,t}(\theta), 1 -
+\epsilon_{\text{low}}, 1 + \epsilon_{\text{high}})\hat{A}_{b,i,t}\right)$$
+
+
+### Dr. GRPO
+
+[Dr. GRPO](https://arxiv.org/abs/2503.20783) is removing the std deviation normalization and compute advantages as mean
+centered rewards only. The goal is to remove a difficulty bias introduced by low std dev questions (very easy, ex all
+~1s, or very hard questions all ~0s) which will end up having a high advantage update because the std dev denominator
+will be small.  
+
+For the length bias, they remove the normalization by response length, which caused the model to favor
+longer incorrect responses and shorter correct ones.
+
+<img src="_img/_dr_grpo_eq.png" alt="taken from paper" width="50%">
 
 &nbsp;
 

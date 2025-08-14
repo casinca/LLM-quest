@@ -4,8 +4,9 @@ import torch
 import torch.nn.functional as F
 
 import config
+from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
 from llm_quest.gpt.generate import generate_batched_loop, generate_loop
-from llm_quest.utils import CheckpointEvaluator, ids_to_text
+from llm_quest.utils import CheckpointEvaluator
 
 
 def bt_loss(chosen_logits, rejected_logits, beta=1.0):
@@ -298,49 +299,6 @@ def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=Non
     }
 
 
-def response_collator(responses, len_prompt, pad_token_id=50256, device="cuda"):
-    """
-    Intended for use with grpo_training_loop_single_prompt() only.
-    Collate sampled responses of different lengths into a single tensor, preparing them for the reward model.
-
-    Args:
-        responses (List[List[int]]): list of responses: each response is the prompt + the policy's output
-        len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
-        pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
-        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
-
-    Returns:
-        Dict[str, torch.Tensor]: A dictionary containing:
-            padded_responses: Tensor of shape (batch_size, max_len) with padded token IDs.
-            reward_masks: Boolean tensor of the same shape with masked: prompt + padding tokens.
-            attn_masks: Boolean tensor of the same shape with masked: padding tokens.
-    """
-    max_len = max(len(response) + 1 for response in responses)
-    padded_responses = []
-    reward_masks = []
-    attn_masks = []
-
-    for response in responses:
-        len_response = len(response)  # len of a sampled response (ie prompt+policy's output)
-        response += [pad_token_id] * (max_len - len_response)
-        reward_mask = [False] * len_prompt + [True] * (len_response - len_prompt) + [False] * (max_len - len_response)
-        attn_mask = [True] * (len_response) + [False] * (max_len - len_response)
-
-        padded_responses.append(response)
-        reward_masks.append(reward_mask)
-        attn_masks.append(attn_mask)
-
-    padded_responses = torch.tensor(padded_responses)
-    reward_masks = torch.tensor(reward_masks, dtype=torch.bool)
-    attn_masks = torch.tensor(attn_masks, dtype=torch.bool)
-
-    return {
-        "padded_responses": padded_responses.to(device),
-        "reward_masks": reward_masks.to(device),
-        "attn_masks": attn_masks.to(device),
-    }
-
-
 # NOTE: responses generated from `generate_batched_loop()` already have an EoS token at the end (unless
 # truncated/max_gen) therefore nothing is added here, responses are already ready to be sliced for logprobs.
 def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
@@ -380,7 +338,7 @@ def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_i
     }
 
 
-def z_scores(rewards, num_samples):
+def z_scores(rewards, num_samples, dr_grpo=None):
     """
     Compute the z-scores of the masked rewards.
     This is the way DeepSeek calculate the advantages in Outcome Supervision.
@@ -388,6 +346,7 @@ def z_scores(rewards, num_samples):
     Args:
         rewards (torch.Tensor): Tensor of shape (B*,) containing the masked rewards.
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
+        dr_grpo (str, optional): if "dr_grpo", compute the advantages per the Dr. GRPO loss method.
 
         *considering B as batch_size * num_samples.
 
@@ -399,9 +358,12 @@ def z_scores(rewards, num_samples):
     # (We don't want stats from different groups/prompts to affect one another.)
     rewards = rewards.view(-1, num_samples)  # batch size inferred (ie rewards.shape[0] // num_samples)
     group_mean = rewards.mean(dim=1, keepdim=True)
-    group_std = rewards.std(dim=1, keepdim=True)
 
-    z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
+    if dr_grpo == "dr_grpo":
+        z_scores = rewards - group_mean
+    else:
+        group_std = rewards.std(dim=1, keepdim=True)
+        z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
 
     return z_scores.view(-1)  # flattening back to (B,)
 
@@ -461,14 +423,21 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
-def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_div, num_samples):
+def grpo_loss(
+    policy_ratio,
+    advantages,
+    loss_mask,
+    min_clip,
+    max_clip,
+    beta,
+    kl_div,
+    num_samples,
+    max_gen=1,
+    variant="grpo",
+):
     """
-    Compute GRPO loss for a batch:
-    - compute both surrogate objective and clipped surrogate objective per token
-    - then unmasked GRPO loss per token
-    - then masked GRPO loss per response
-    - then GRPO loss per group/num_samples
-    - then final mean for the batch
+    Compute original GRPO loss, DAPO or Dr. GRPO variant for a batch.
+    credit to @qgallouedec's TRL doc for enumerating the variants and the papers, which made it faster to implement.
 
     Args:
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
@@ -479,155 +448,56 @@ def grpo_loss(policy_ratio, advantages, loss_mask, min_clip, max_clip, beta, kl_
         beta (float): Beta for the KL divergence penalty term.
         kl_div (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
+        max_gen (int, optional): used for Length Bias in the Dr. GRPO loss (in p.7 of the Dr. GRPO paper)
+                                Defaults to 1. (no effect)
+        variant (str): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo", "gspo"
 
     Returns:
         torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
     """
 
-    # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
-    # ie, each trajectory gets a single advantage.
-    advantages_broadcast = advantages.unsqueeze(-1)
+    # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
+    if variant == "gspo":
+        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)
+    else:
+        # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
+        # ie, each trajectory gets a single advantage.
+        advantages_broadcast = advantages.unsqueeze(-1)
+
     surr_obj_per_token = policy_ratio * advantages_broadcast
     clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
 
     grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-
-    # grpo loss per response
     grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-    grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0...
 
-    # TODO (this part can be simplified to a single .mean() since groups are equal size)
-    # if the vGRPO variant doesn't work, revert this
-    # grpo loss per group/num_samples
-    grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-    # grpo loss for the batch
-    grpo_loss_batch = grpo_loss_group.mean()
+    if variant == "grpo":
+        # grpo loss per response
+        grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
 
-    return grpo_loss_batch
+        # TODO (this part can be simplified to a single .mean() since groups are equal size)
+        # if the vGRPO variant doesn't work, revert this
+        # grpo loss per group/num_samples
+        grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+        # grpo loss for the batch
+        grpo_loss_batch = grpo_loss_group.mean()
 
+        return grpo_loss_batch
 
-# TODO: update in line with the updated grpo_training_loop() func
-def grpo_training_loop_single_prompt(
-    train_loader,
-    policy_model,
-    reference_model,
-    reward_model,
-    optimizer,
-    num_epoch,
-    num_samples,
-    num_grad_updates,
-    policy_config,
-    device,
-    eps=0.2,
-    beta=1.0,
-):
-    """
-    Earliest version for reference, not true to the GRPO paper.
-    This GRPO training loop generates multiple samples for a single prompt at a time.
-    Ie, it will only work for batch size = 1.
+    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+    # Global token-level averaging (longer sequences have more influence on the loss) vs sample-level: 1/n_G * sum(G_i)
+    elif variant == "dapo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
 
+        return grpo_loss_batch
 
-    Args:
-        train_loader (DataLoader): DataLoader providing batches of prompts.
-        policy_model (nn.Module): The language model being trained (policy π_θ).
-        reference_model (nn.Module): A copy of the policy model (π_ref/π_θ_old) used to compute:
-                                    - KL divergence (D_KL(π_ref || π_θ)).
-                                    - Policy ratio (π_θ/π_ref).
-                                    Its weights are periodically synchronized with the policy model.
-        reward_model (nn.Module): A model (r_𝜑) pretrained to predict rewards for completions (frozen).
-        optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
-        num_epoch (int): The total number of training epochs.
-        num_samples (int): The number of responses/samples to generate from the policy model from each prompt.
-        num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
-        policy_config (dict): Configuration dictionary for the policy model.
-        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
-        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
-        beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
-                    trade-off between maximizing reward and staying close to the reference policy.
+    # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+    elif variant == "dr_grpo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
 
-    Returns:
-        None: The function modifies the `policy_model` in place.
+        return grpo_loss_batch
 
-    """
-    reward_model.eval()
-
-    for epoch in range(1, num_epoch + 1):
-        for batch in train_loader:
-            reference_model.load_state_dict(policy_model.state_dict())
-            reference_model.eval()
-            policy_model.eval()
-            responses = []
-            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
-
-            # --- Sampling responses ---
-            # simple sequential sampling for single prompt
-            for i in range(num_samples):
-                torch.manual_seed(123 + i)
-
-                response = generate_loop(
-                    input=batch["padded_prompts"],
-                    model=policy_model,
-                    max_gen=20,
-                    context_length=policy_config["context_length"],
-                    top_k=25,
-                    temp=1.4,
-                )
-                responses.append(response.squeeze(0).tolist())
-
-            collated_batch = response_collator(
-                responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
-                pad_token_id=50256,
-                device=device,
-            )
-
-            with torch.inference_mode():
-                reference_logprobs = log_probs_per_token(
-                    logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
-                    inputs=collated_batch["padded_responses"],
-                    attention_mask=collated_batch["attn_masks"],
-                )
-                # --- Reward model - retrieving advantages ---
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(
-                    collated_batch["padded_responses"],
-                    collated_batch["attn_masks"],
-                ).squeeze(-1)
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
-
-            advantages = z_scores(rewards, num_samples)  # computing outside the inference scope for grads
-
-            # --- Gradient updates loop ---
-            policy_model.train()
-            for grad_step in range(num_grad_updates):
-                policy_logprobs = log_probs_per_token(
-                    logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
-                    inputs=collated_batch["padded_responses"],
-                    attention_mask=collated_batch["attn_masks"],
-                )
-
-                policy_ratio_per_token = torch.exp(policy_logprobs - reference_logprobs)
-
-                # --- GRPO loss ---
-                # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
-                kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
-
-                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surr_obj_per_token = torch.clip(
-                    policy_ratio_per_token, min=1 - eps, max=1 + eps
-                ) * advantages.unsqueeze(-1)
-
-                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-                # masking prompt tokens from the policy ratio+kl_div (advantages was done only on rewards/responses)
-                loss_mask = collated_batch["reward_masks"][:, 1:]
-                grpo_loss_per_token *= loss_mask
-                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
-
-                optimizer.zero_grad()
-                grpo_loss.backward()
-                optimizer.step()
+    else:
+        raise ValueError(f"Unknown loss type: {variant}")
 
 
 # TODO: update in line with the updated grpo_training_loop() func
@@ -765,13 +635,15 @@ def rlhf_grpo_training_loop(
     policy_config,
     device,
     max_gen=35,
-    clip_eps=0.2,
+    min_clip_eps=0.2,
+    max_clip_eps=0.2,
     beta=1.0,
     evaluation=True,
     eval_freq=None,
     eval_batches=None,
     eval_num_samples=1,
     kl_div_threshold=0.5,
+    loss_variant="grpo",
 ):
     """
     GRPO training loop.
@@ -789,7 +661,8 @@ def rlhf_grpo_training_loop(
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         max_gen (int): Maximum number of tokens to generate for each response.
-        clip_eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
+        max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
         evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
@@ -797,6 +670,8 @@ def rlhf_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
+        "gspo".
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -861,7 +736,9 @@ def rlhf_grpo_training_loop(
                     reward_mask=collated_batch["reward_masks"],
                 )
 
-            advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
+            advantages = z_scores(
+                rewards, num_samples, dr_grpo=loss_variant
+            )  # grouping and computing zscores (outside the inference scope)
 
             # --- Gradient updates loop ---
             policy_model.train()
@@ -874,19 +751,26 @@ def rlhf_grpo_training_loop(
                     attention_mask=loss_mask,
                 )
 
-                policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
+                if loss_variant == "gspo":  # normalize policy ratio to the sequence level
+                    pol_logprobs_per_seq = log_probs_per_seq(policy_logprobs, loss_mask)
+                    old_logprobs_per_seq = log_probs_per_seq(old_logprobs, loss_mask)
+                    policy_ratio = torch.exp(pol_logprobs_per_seq - old_logprobs_per_seq)  # shape: (B,)
+                else:  # token level policy ratio
+                    policy_ratio = torch.exp(policy_logprobs - old_logprobs)
+
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
-                    policy_ratio=policy_ratio_per_token,
+                    policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,
-                    min_clip=clip_eps,
-                    max_clip=clip_eps,
+                    min_clip=min_clip_eps,
+                    max_clip=max_clip_eps,
                     beta=beta,
                     kl_div=kl_div,
                     num_samples=num_samples,
+                    variant=loss_variant,
                 )
 
                 optimizer.zero_grad()
@@ -1014,7 +898,7 @@ class GRPOEvaluator:
             # here masking KL div since we are also printing it for the correct tokens.
             kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
             masked_kl_div = kl_div * loss_mask
-            mean_batch_kl_div = (masked_kl_div.sum(dim=-1) / loss_mask.sum(dim=-1)).mean()
+            mean_batch_kl_div = (masked_kl_div.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)).mean()
 
             total_reward += mean_batch_rewards.item()
             total_kl_div += mean_batch_kl_div.item()

@@ -3,6 +3,7 @@ import os
 import torch
 
 import config
+from llm_quest.alignment.gspo.gspo_engine import log_probs_per_seq
 from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     GRPOEvaluator,
     batched_responses_collator,
@@ -177,13 +178,15 @@ def rlvr_grpo_training_loop(
     policy_config,
     device,
     max_gen=70,
-    clip_eps=0.2,
+    min_clip_eps=0.2,
+    max_clip_eps=0.2,
     beta=1.0,
     evaluation=True,
     eval_freq=None,
     eval_batches=None,
     eval_num_samples=1,
     kl_div_threshold=0.5,
+    loss_variant="grpo",
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -202,7 +205,8 @@ def rlvr_grpo_training_loop(
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         max_gen (int): Maximum number of tokens to generate for each response.
-        clip_eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
+        max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
         evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
@@ -210,6 +214,8 @@ def rlvr_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
+        "gspo".
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -274,7 +280,9 @@ def rlvr_grpo_training_loop(
                     correct_answers=correct_answers,
                 )
 
-            advantages = z_scores(rewards, num_samples)  # grouping and computing zscores (outside the inference scope)
+            advantages = z_scores(
+                rewards, num_samples, dr_grpo=loss_variant
+            )  # grouping and computing zscores (outside the inference scope)
 
             # --- Gradient updates loop ---
             policy_model.train()
@@ -287,19 +295,26 @@ def rlvr_grpo_training_loop(
                     attention_mask=loss_mask,
                 )
 
-                policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
+                if loss_variant == "gspo":  # normalize policy ratio to the sequence level
+                    pol_logprobs_per_seq = log_probs_per_seq(policy_logprobs, loss_mask)
+                    old_logprobs_per_seq = log_probs_per_seq(old_logprobs, loss_mask)
+                    policy_ratio = torch.exp(pol_logprobs_per_seq - old_logprobs_per_seq)  # shape: (B,)
+                else:  # token level policy ratio
+                    policy_ratio = torch.exp(policy_logprobs - old_logprobs)
+
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
-                    policy_ratio=policy_ratio_per_token,
+                    policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,
-                    min_clip=clip_eps,
-                    max_clip=clip_eps,
+                    min_clip=min_clip_eps,
+                    max_clip=max_clip_eps,
                     beta=beta,
                     kl_div=kl_div,
                     num_samples=num_samples,
+                    variant=loss_variant,
                 )
 
                 optimizer.zero_grad()
