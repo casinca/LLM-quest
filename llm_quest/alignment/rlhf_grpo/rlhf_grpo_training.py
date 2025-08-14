@@ -24,7 +24,8 @@ num_grad_updates = 4  # alt 1 or 2
 max_gen = 35
 # GRPO hparams
 loss_variant = "grpo"
-clip_eps = 0.2  # alt 0.15
+min_clip_eps = 0.2  # alt 0.15
+max_clip_eps = 0.2  # alt 0.15
 beta = 0.5  # alt 0.1
 # evaluation hparams
 evaluation = True
@@ -109,7 +110,8 @@ if __name__ == "__main__":
         policy_config=gpt_config,
         device=model_device,
         max_gen=max_gen,
-        clip_eps=clip_eps,
+        min_clip_eps=min_clip_eps,
+        max_clip_eps=max_clip_eps,
         beta=beta,
         evaluation=evaluation,
         eval_freq=eval_freq,

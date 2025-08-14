@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 import config
+from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
 from llm_quest.gpt.generate import generate_batched_loop, generate_loop
 from llm_quest.utils import CheckpointEvaluator, ids_to_text
 
@@ -449,15 +450,20 @@ def grpo_loss(
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
         max_gen (int, optional): used for Length Bias in the Dr. GRPO loss (in p.7 of the Dr. GRPO paper)
                                 Defaults to 1. (no effect)
-        variant (str): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo"
+        variant (str): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo", "gspo"
 
     Returns:
         torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
     """
 
-    # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
-    # ie, each trajectory gets a single advantage.
-    advantages_broadcast = advantages.unsqueeze(-1)
+    # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
+    if variant == "gspo":
+        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)
+    else:
+        # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
+        # ie, each trajectory gets a single advantage.
+        advantages_broadcast = advantages.unsqueeze(-1)
+
     surr_obj_per_token = policy_ratio * advantages_broadcast
     clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
 
@@ -629,7 +635,8 @@ def rlhf_grpo_training_loop(
     policy_config,
     device,
     max_gen=35,
-    clip_eps=0.2,
+    min_clip_eps=0.2,
+    max_clip_eps=0.2,
     beta=1.0,
     evaluation=True,
     eval_freq=None,
@@ -654,7 +661,8 @@ def rlhf_grpo_training_loop(
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         max_gen (int): Maximum number of tokens to generate for each response.
-        clip_eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
+        max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
         evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
@@ -662,7 +670,8 @@ def rlhf_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
-        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo".
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
+        "gspo".
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -742,16 +751,22 @@ def rlhf_grpo_training_loop(
                     attention_mask=loss_mask,
                 )
 
-                policy_ratio_per_token = torch.exp(policy_logprobs - old_logprobs)
+                if loss_variant == "gspo":  # normalize policy ratio to the sequence level
+                    pol_logprobs_per_seq = log_probs_per_seq(policy_logprobs, loss_mask)
+                    old_logprobs_per_seq = log_probs_per_seq(old_logprobs, loss_mask)
+                    policy_ratio = torch.exp(pol_logprobs_per_seq - old_logprobs_per_seq)  # shape: (B,)
+                else:  # token level policy ratio
+                    policy_ratio = torch.exp(policy_logprobs - old_logprobs)
+
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
-                    policy_ratio=policy_ratio_per_token,
+                    policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,
-                    min_clip=clip_eps,
-                    max_clip=clip_eps,
+                    min_clip=min_clip_eps,
+                    max_clip=max_clip_eps,
                     beta=beta,
                     kl_div=kl_div,
                     num_samples=num_samples,

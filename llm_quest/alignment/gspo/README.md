@@ -80,22 +80,5 @@ mentioned in the link above compared to the typical ~0.2 default we often see.
 In hindsight, it makes sense, as it's no longer token-based with less variance and a different order of magnitude.  
 This decoupled PPO clipping originated from the [DAPO paper](https://arxiv.org/abs/2503.14476).
 
-- We create a new function `log_probs_per_seq` that reuses `log_probs_per_token` from `grpo_engine.py` to compute the
-  logprobs per-token and uses the `loss_mask/reward_mask` to correctly calc the mean only for the logprobs of the
-  generated tokens.
-
-    Then we can use as a drop-in replacement for the `rlhf_grpo_training_loop` or `rlvr_grpo_training_loop`:
-
-    ```python
-    # instead of [pol/old]_logprobs = log_probs_per_token(logits, inputs, loss_mask)
-    seq_pol_logprobs = log_probs_per_seq(logits, inputs, loss_mask)
-    seq_old_logprobs = log_probs_per_seq(logits, inputs, loss_mask)
-    seq_policy_ratio = torch.exp(seq_pol_logprobs - seq_old_logprobs)
-    
-    # in the grad loop...
-    # no need to unsqueeze the advantages anymore, both shapes are (B,)
-    surr_obj_per_sequence = policy_ratio_per_sequence * advantages
-    clipped_surr_obj_per_sequence = torch.clip(
-        policy_ratio_per_sequence, min=1.0 - eps_clip_min, max=1.0 + eps_clip_max
-    ) * advantages
-    ```
+- `log_probs_per_seq` and `gspo_loss` are used conditionaly in `rlhf_grpo_training_loop` or `rlvr_grpo_training_loop`
+  depending on the `loss_variant` hparam.
