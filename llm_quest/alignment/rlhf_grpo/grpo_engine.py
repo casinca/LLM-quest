@@ -472,7 +472,7 @@ def grpo_loss(
 
     if variant == "grpo":
         # grpo loss per response
-        grpo_loss_seq = grpo_loss_per_token.sum(-1) / (loss_mask.sum(-1) + 1e-8)  # in case there's no resp = div by 0
+        grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
 
         # TODO (this part can be simplified to a single .mean() since groups are equal size)
         # if the vGRPO variant doesn't work, revert this
@@ -486,7 +486,7 @@ def grpo_loss(
     # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
     # Global token-level averaging (longer sequences have more influence on the loss) vs sample-level: 1/n_G * sum(G_i)
     elif variant == "dapo":
-        grpo_loss_batch = grpo_loss_per_token.sum() / (loss_mask.sum() + 1e-8)
+        grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
 
         return grpo_loss_batch
 
@@ -898,7 +898,7 @@ class GRPOEvaluator:
             # here masking KL div since we are also printing it for the correct tokens.
             kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
             masked_kl_div = kl_div * loss_mask
-            mean_batch_kl_div = (masked_kl_div.sum(dim=-1) / loss_mask.sum(dim=-1)).mean()
+            mean_batch_kl_div = (masked_kl_div.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)).mean()
 
             total_reward += mean_batch_rewards.item()
             total_kl_div += mean_batch_kl_div.item()
