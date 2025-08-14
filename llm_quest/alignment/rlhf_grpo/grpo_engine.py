@@ -43,7 +43,6 @@ class PrefRewardCalculator:
     - last_token_score: retrieve the last real token's (EoS in our case) hidden state and project to a scalar
     """
 
-    # TODO NOTE optional edge case: and for KL div too: potential division by zero if reward_masks is all False
     @staticmethod
     def scores_mean_pooling(rewards, reward_mask):
         """
@@ -54,7 +53,7 @@ class PrefRewardCalculator:
         Returns:
             scores (torch.Tensor): shape (b,)
         """
-        return (rewards.squeeze(-1) * reward_mask).sum(dim=1) / reward_mask.sum(dim=1)
+        return (rewards.squeeze(-1) * reward_mask).sum(dim=1) / reward_mask.sum(dim=1).clamp(min=1)
 
     @staticmethod
     def hidden_states_mean_pooling(hidden_states, reward_mask, model_head):
@@ -71,7 +70,7 @@ class PrefRewardCalculator:
         hidden_states = hidden_states * reward_mask.unsqueeze(-1)
 
         # mean pooling over the sequence length (b, s, emb_dim) → (b, emb_dim)
-        mean_hidden_states = hidden_states.sum(dim=1) / reward_mask.sum(dim=1).unsqueeze(-1)
+        mean_hidden_states = hidden_states.sum(dim=1) / reward_mask.sum(dim=1).clamp(min=1).unsqueeze(-1)
 
         # shape: (b, emb_dim) →  (b, 1) → (b, )
         scores = model_head(mean_hidden_states)
@@ -888,8 +887,8 @@ class GRPOEvaluator:
                 # duping answers to match the number of samples
                 correct_answers = [ans for ans in batch["answers"] for _ in range(eval_num_samples)]
                 rewards = reward_calculator(
-                    model_responses=collated_batch["padded_responses"],
-                    correct_answers=correct_answers,
+                    collated_batch["padded_responses"],
+                    correct_answers,
                 )
 
             mean_batch_rewards = rewards.mean()

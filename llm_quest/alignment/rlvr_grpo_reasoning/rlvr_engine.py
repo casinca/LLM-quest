@@ -177,6 +177,7 @@ def rlvr_grpo_training_loop(
     num_grad_updates,
     policy_config,
     device,
+    reward_calculator,
     max_gen=70,
     min_clip_eps=0.2,
     max_clip_eps=0.2,
@@ -204,6 +205,7 @@ def rlvr_grpo_training_loop(
         num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        reward_calculator (Callable): A callable object that calculates the rewards for a batch of responses.
         max_gen (int): Maximum number of tokens to generate for each response.
         min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
@@ -222,7 +224,7 @@ def rlvr_grpo_training_loop(
 
     """
     reference_model.eval()
-    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
+
     chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, min_reward_threshold=0.35, beta=beta)
 
     step = 0
@@ -276,8 +278,8 @@ def rlvr_grpo_training_loop(
                 )
 
                 rewards = reward_calculator(  # shape: (B,)
-                    model_responses=collated_batch["padded_responses"],
-                    correct_answers=correct_answers,
+                    collated_batch["padded_responses"],
+                    correct_answers,
                 )
 
             advantages = z_scores(

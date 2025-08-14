@@ -5,7 +5,11 @@ import transformers
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
+from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import (
+    VerifiableRewardCalculator,
+    rlvr_grpo_prompt_collator,
+    rlvr_grpo_training_loop,
+)
 from llm_quest.dataset import ReasoningDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
@@ -42,6 +46,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")  # using HF tokenizer mainly for batch_decode
+    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)  # or for RPT, import PrefixMatchingReward
 
     # --- datasets & loaders ---
     train_set = ReasoningDataset(config.reasoning_train_path, tokenizer)
@@ -101,6 +106,7 @@ if __name__ == "__main__":
         num_grad_updates=num_grad_updates,
         policy_config=gpt_config,
         device=model_device,
+        reward_calculator=reward_calculator,
         max_gen=max_gen,
         min_clip_eps=min_clip_eps,
         max_clip_eps=max_clip_eps,

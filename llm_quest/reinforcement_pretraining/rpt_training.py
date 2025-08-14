@@ -5,10 +5,10 @@ import transformers
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator
+from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import rlvr_grpo_prompt_collator, rlvr_grpo_training_loop
 from llm_quest.dataset import RPTStructuredDataset
 from llm_quest.gpt.gpt_model import GPTModel
-from llm_quest.reinforcement_pretraining.rpt_engine import rpt_grpo_training_loop
+from llm_quest.reinforcement_pretraining.rpt_engine import PrefixMatchingReward
 
 # --- hyperparameters ---
 gpt_config = config.config_creator("gpt_m")
@@ -18,13 +18,14 @@ lr = 5e-5
 weight_decay = 0.1
 # training hparams
 batch_size = 2
-num_samples = 3
+num_samples = 2
 num_epoch = 1
 num_grad_updates = 2
 max_gen = 250
 labels_length = 10
 # GRPO hparams
-clip_eps = 0.2
+min_clip_eps = 0.2
+max_clip_eps = 0.2
 beta = 0.45
 # evaluation hparams
 evaluation = True
@@ -42,6 +43,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")  # using HF tokenizer mainly for batch_decode
+    reward_calculator = PrefixMatchingReward(tokenizer=tokenizer)
 
     # --- datasets & loaders ---
     # reusing GSM8K dataset instead of Omni-Math
@@ -107,7 +109,7 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
 
-    rpt_grpo_training_loop(
+    rlvr_grpo_training_loop(
         train_loader=train_loader,
         val_loader=val_loader,
         policy_model=policy_model,
@@ -119,8 +121,10 @@ if __name__ == "__main__":
         num_grad_updates=num_grad_updates,
         policy_config=gpt_config,
         device=model_device,
+        reward_calculator=reward_calculator,
         max_gen=max_gen,
-        clip_eps=clip_eps,
+        min_clip_eps=min_clip_eps,
+        max_clip_eps=max_clip_eps,
         beta=beta,
         evaluation=evaluation,
         eval_freq=eval_freq,
