@@ -245,6 +245,18 @@ because:
   In the case of a later implementation of Process supervision, the PRM is compatible since I'm already
   retrieving all mini-rewards at each step for each trajectory, so I can reuse it with process supervision.
 
+### Intermediate masking of log probabilities
+
+The `log_probs_per_token` function was derived from the DPO implementation (where masking logprobs is
+actually directly needed since it's used for the loss calculation). In current PGM algorithms used for RLHF/RLVR,
+there's no urgency to mask logprobs and can be delayed until the loss calculation.  
+Although, I initially kept the masking thinking that logprobs for padding tokens could lead to exploding ratio between
+the old and current policy model, if the delta was high in:
+`policy_ratio_per_token = torch.exp(policy_logprobs - old_and_ref_logprobs)` (or for the KL div) and then amplified with
+the advantages.  
+In practice, it doesn't seem to be a problem nor implemented in popular libs like Huggingface's `trl`. So it was
+removed for readability and a little speedup.
+
 
 ### Difficulties encountered
 
@@ -319,7 +331,7 @@ because:
       of the last real token for the first step.
 
       *Possible solution*: Via the collator, we can keep track of the position of the last real tokens for each prompt
-      and pass it to the generation function and slice with real positions.
+      and pass it to the generation function and slice with real positions. (*This is the current implementation*)
 
 
   In both cases, attention mask helps prevent the model from attending to padding tokens.  

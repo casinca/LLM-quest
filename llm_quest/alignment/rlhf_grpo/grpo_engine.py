@@ -367,7 +367,10 @@ def z_scores(rewards, num_samples, dr_grpo=None):
     return z_scores.view(-1)  # flattening back to (B,)
 
 
-def log_probs_per_token(logits, inputs, attention_mask=None):
+# Removed intermediate masking of logprobs:
+# - see: /LLM-quest/llm_quest/alignment/rlhf_grpo/README.md#additional-details/intermediate-masking-of-logprobs
+# - changed in commit: insert commit
+def log_probs_per_token(logits, inputs):
     """
     Compute and retrieve the log probabilities assigned to each label in a sequence.
     This is similar to the compute_logprobs() method in the `DPOLoss` class.
@@ -375,7 +378,6 @@ def log_probs_per_token(logits, inputs, attention_mask=None):
     Args:
         logits (torch.Tensor): Tensor of shape (B*, S*, vocab_size) containing the logits.
         inputs (torch.Tensor): Tensor of shape (B*, S*) containing the generated tokens from the policy.
-        attention_mask (torch.Tensor, optional): Tensor of shape (B*, S*) for masking prompt+padding tokens.
 
         *considering B as batch_size * num_samples and S as prompt_len+max_gen.
 
@@ -393,9 +395,6 @@ def log_probs_per_token(logits, inputs, attention_mask=None):
         dim=-1,
         index=labels.unsqueeze(-1),
     ).squeeze_(-1)
-
-    if attention_mask is not None:
-        label_log_probs *= attention_mask  # already pre-shifted by 1 in grpo_training_loop()
 
     return label_log_probs  # shape (b, s-1)
 
@@ -643,6 +642,7 @@ def rlhf_grpo_training_loop(
     eval_num_samples=1,
     kl_div_threshold=0.5,
     loss_variant="grpo",
+    save_checkpoint=True,
 ):
     """
     GRPO training loop.
@@ -671,6 +671,7 @@ def rlhf_grpo_training_loop(
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
         loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
         "gspo".
+        save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -715,18 +716,15 @@ def rlhf_grpo_training_loop(
 
             # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
-                # why intermediate masking with loss_mask for logprobs : TODO
                 loss_mask = collated_batch["reward_masks"][:, 1:]
 
                 old_logprobs = log_probs_per_token(  # shape: (B, S-1)
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
-                    attention_mask=loss_mask,
                 )
                 reference_logprobs = log_probs_per_token(
                     logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
-                    attention_mask=loss_mask,
                 )
 
                 rewards = reward_model(  # shape: (B,)
@@ -747,7 +745,6 @@ def rlhf_grpo_training_loop(
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
-                    attention_mask=loss_mask,
                 )
 
                 if loss_variant == "gspo":  # normalize policy ratio to the sequence level
@@ -803,7 +800,9 @@ def rlhf_grpo_training_loop(
                 )
 
                 # save new best checkpoint
-                if chkp_eval.is_rlhf_grpo_best(eval_metrics["val_kl_div"], eval_metrics["val_reward"]):
+                if save_checkpoint and chkp_eval.is_rlhf_grpo_best(
+                    eval_metrics["val_kl_div"], eval_metrics["val_reward"]
+                ):
                     save_path = os.path.join(
                         config.rlhf_grpo_checkpoint_dir,
                         f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
@@ -867,12 +866,10 @@ class GRPOEvaluator:
             policy_logprobs = log_probs_per_token(
                 logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                 inputs=collated_batch["padded_responses"],
-                attention_mask=loss_mask,
             )
             reference_logprobs = log_probs_per_token(
                 logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                 inputs=collated_batch["padded_responses"],
-                attention_mask=loss_mask,
             )
 
             # --- Retrieving rewards ---

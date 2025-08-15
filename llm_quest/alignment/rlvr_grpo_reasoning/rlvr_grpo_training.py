@@ -20,8 +20,8 @@ model_device = "cuda"
 lr = 5e-5
 weight_decay = 0.1
 # training hparams
-batch_size = 2
-num_samples = 2
+batch_size = 4
+num_samples = 4
 num_epoch = 1
 num_grad_updates = 3
 max_gen = 250
@@ -99,7 +99,6 @@ if __name__ == "__main__":
         val_loader=val_loader,
         policy_model=policy_model,
         reference_model=reference_model,
-        tokenizer=tokenizer,
         optimizer=optimizer,
         num_epoch=num_epoch,
         num_samples=num_samples,

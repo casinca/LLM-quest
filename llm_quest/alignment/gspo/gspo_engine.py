@@ -23,7 +23,7 @@ def log_probs_per_seq(logprobs_per_token, attention_mask):
     """
     # here the mask is not optional as we don't want padding+prompt tokens to be considered for the mean
     # (if token-level, we can delay the masking until the loss calculation)
-    seq_logprobs = logprobs_per_token.sum(dim=1) / attention_mask.sum(dim=1)  # shape: (B,)
+    seq_logprobs = (logprobs_per_token * attention_mask).sum(dim=1) / attention_mask.sum(dim=1)  # shape: (B,)
 
     return seq_logprobs
 
