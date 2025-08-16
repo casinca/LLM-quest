@@ -1,3 +1,14 @@
+# A reimplementation of the Number Token Loss - Wasserstein Distance variant (NTL-WAS) from the paper:
+#
+# Regress, Don’t Guess – A Regression-like Loss on Number Tokens for Language Models
+# https://arxiv.org/abs/2411.02083
+#
+# Code repo: https://github.com/tum-ai/number-token-loss/
+#
+# NTL-WAS is more interesting, as NTL with MSE can be suboptimal (with different combination of dot products potentially
+# giving a correct answer despite being wrong because of the weighted average matching the label):
+# Ex: label=4 and pred:probs are 3=0.5 and 5=0.5, res = 3*0.5+5*0.5 = 4.
+# L_mse = (correct value - predicted value)² = (4-4)² = 0 → wrong answer and not penalized.
 import torch
 
 
@@ -13,12 +24,19 @@ class NumTokenLoss:
         self.device = device
         self.multi_digits = multi_digits
 
-        self.vocab_map = self.get_num_vocab_map(tokenizer)
+        self.num_vocab = self._build_num_vocab_tensor(tokenizer)
+        self.is_number_token = ~torch.isnan(self.num_vocab)
 
-    def get_num_vocab_map(self, tokenizer):
+    def _build_num_vocab_tensor(self, tokenizer):
+        """
+        returns:
+            tensor of shape (vocab_size,) where digits are mapped to their float value and other tokens are mapped to
+            nan.
+        """
+
         # retrieve vocab from the tokenizer
         vocab = tokenizer.get_vocab()
-        vocab_map = torch.full((len(vocab),), float("nan"))
+        num_vocab = torch.full((len(vocab),), float("nan"))
 
         # build vocab mapping from the vocab dictionary
         for string, token_id in vocab.items():
@@ -26,16 +44,16 @@ class NumTokenLoss:
 
             try:
                 token_value = float(stripped_token)
-                single_digit = -1 <= token_value <= 9 and len(stripped_token) == 1
+                single_digit = -1 <= token_value <= 9 and len(stripped_token) == 1  # paper default: single digit only
 
                 if self.multi_digits or single_digit:
-                    vocab_map[token_id] = token_value
+                    num_vocab[token_id] = token_value
 
             except ValueError:
                 # print(f"!!! Parsing failed: Could not convert token {string} to float. Skipping...")
                 continue
 
-        return vocab_map
+        return num_vocab
 
     def calc_ntl_was(self):
         """
