@@ -3,10 +3,10 @@
 # Regress, Don’t Guess – A Regression-like Loss on Number Tokens for Language Models
 # https://arxiv.org/abs/2411.02083
 #
-# Code repo: https://github.com/tum-ai/number-token-loss/
+# Code repo: https://github.com/ai4sd/number-token-loss (old: https://github.com/tum-ai/number-token-loss)
 #
-# NTL-WAS is more interesting, as NTL with MSE can be suboptimal (with different combination of dot products potentially
-# giving a correct answer despite being wrong because of the weighted average matching the label):
+# NTL-WAS is more interesting, as NTL with MSE can be suboptimal, with different combination of dot products potentially
+# giving a correct answer despite being wrong. That is because of the weighted average matching the label:
 # Ex: label=4 and pred:probs are 3=0.5 and 5=0.5, res = 3*0.5+5*0.5 = 4.
 # L_mse = (correct value - predicted value)² = (4-4)² = 0 → wrong answer and not penalized.
 import torch
@@ -25,7 +25,7 @@ class NumTokenLoss:
         self.multi_digits = multi_digits
 
         self.num_vocab = self._build_num_vocab_tensor(tokenizer)
-        self.is_number_token = ~torch.isnan(self.num_vocab)
+        self.number_tokens_mask = ~torch.isnan(self.num_vocab)
 
     def _build_num_vocab_tensor(self, tokenizer):
         """
@@ -55,7 +55,7 @@ class NumTokenLoss:
 
         return num_vocab
 
-    def calc_ntl_was(self):
+    def calc_ntl_was(self, logits, labels, loss_mask=None):
         """
         NumTokenLoss Wasserstein Distance variant (NTL-WAS)
         """
