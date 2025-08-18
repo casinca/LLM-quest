@@ -25,10 +25,10 @@ class NumTokenLoss:
         self.device = device
         self.multi_digits = multi_digits
 
-        self.num_vocab = self._build_num_vocab_tensor(tokenizer)
-        self.num_tokens_mask = ~torch.isnan(self.num_vocab)
+        self.num_nan_vocab = self._get_num_nan_vocab(tokenizer)
+        self.num_tokens_mask = ~torch.isnan(self.num_nan_vocab)
 
-    def _build_num_vocab_tensor(self, tokenizer):
+    def _get_num_nan_vocab(self, tokenizer):
         """
         returns:
             tensor of shape (vocab_size,) where digits are mapped to their float value and other tokens are mapped to
@@ -37,7 +37,7 @@ class NumTokenLoss:
 
         # retrieve vocab from the tokenizer
         vocab = tokenizer.get_vocab()
-        num_vocab = torch.full((len(vocab),), float("nan"))
+        num_nan_vocab = torch.full((len(vocab),), float("nan"))
 
         # build vocab mapping from the vocab dictionary
         for string, token_id in vocab.items():
@@ -48,13 +48,13 @@ class NumTokenLoss:
                 single_digit = -1 <= token_value <= 9 and len(stripped_token) == 1  # paper default: single digit only
 
                 if self.multi_digits or single_digit:
-                    num_vocab[token_id] = token_value
+                    num_nan_vocab[token_id] = token_value
 
             except ValueError:
                 # print(f"!!! Parsing failed: Could not convert token {string} to float. Skipping...")
                 continue
 
-        return num_vocab
+        return num_nan_vocab
 
     # pretty much following the code
     def _calc_ntl_was(self, logits, labels, importance_mask=None, ignore_index=-100):
@@ -62,10 +62,11 @@ class NumTokenLoss:
         NumTokenLoss Wasserstein Distance variant (NTL-WAS)
         """
 
-        # setting padding/ignored tokens' value to NaN, by switching index to 0 (which has a value of NaN in num_vocab)
+        # setting padding/ignored tokens' value to NaN, by switching their token ID to 0 (which has a value of NaN in
+        # num_nan_vocab)
         labels = labels.masked_fill(labels == ignore_index, 0)
         # creating mask for number tokens in the labels
-        labels_values = self.num_vocab[labels]
+        labels_values = self.num_nan_vocab[labels]
         valid_labels_mask = ~torch.isnan(labels_values)
 
         # mask to weight the loss of number tokens based on their importance
@@ -82,10 +83,10 @@ class NumTokenLoss:
         number_logits = logits[:, :, self.num_tokens_mask]
         number_probs = F.softmax(number_logits, dim=-1)
 
-        # they use absolute difference between the true numbers and all possible number values, weighted by their probs.
-        # They leverage the fact that labels are one-hot encoded. No need to compute the difference of CDFs.
+        # they use absolute difference between the true/label numbers and all possible number values (vocab), weighted by
+        # their probs. They leverage the fact that labels are one-hot encoded. No need to compute the difference of CDFs.
         costs_to_labels = torch.abs(
-            labels_values[valid_labels_mask].unsqueeze(-1) - self.num_vocab[self.num_tokens_mask]
+            labels_values[valid_labels_mask].unsqueeze(-1) - self.num_nan_vocab[self.num_tokens_mask]
         )
         loss = (costs_to_labels * number_probs[valid_labels_mask]).sum(-1)
 
@@ -93,7 +94,7 @@ class NumTokenLoss:
             # normalized by the number of tokens that have a non-zero weight
             loss = (loss * labels_imp_mask).sum() / labels_imp_mask.count_nonzero()
 
-        return loss.mean()  # (for conciseness, if importance mask: mean of a scalar is just the scalar itself)
+        return loss.mean()  # (for conciseness, if importance_mask: mean of a scalar is just the scalar itself)
 
     def __call__(self, logits, labels, importance_mask=None, ignore_index=-100):
         return self._calc_ntl_was(logits, labels, importance_mask, ignore_index)
