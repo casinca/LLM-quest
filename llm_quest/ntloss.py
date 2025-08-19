@@ -1,12 +1,12 @@
-# A simple reimplementation of the Number Token Loss - Wasserstein Distance variant (NTL-WAS) from the paper:
+# A simpler reimplementation of the Number Token Loss - Wasserstein Distance variant (NTL-WAS) from the ICML 2025 paper:
 #
 # Regress, Don’t Guess – A Regression-like Loss on Number Tokens for Language Models
 # https://arxiv.org/abs/2411.02083
 #
 # Code repo: https://github.com/ai4sd/number-token-loss (old: https://github.com/tum-ai/number-token-loss)
 #
-# NTL-WAS is more interesting, as NTL MSE can be suboptimal, with different combination of dot products potentially
-# giving a correct answer despite being wrong. That is because of the weighted average matching the label:
+# NTL-WAS is more interesting, as NTL MSE can be suboptimal. That is because different combination of dot products
+# can potentially give a correct answer despite being wrong. Consequence of the weighted average matching the label.
 # Ex: label=4 and num_pred:prob are 3=0.5 and 5=0.5 → res = 3*0.5 + 5*0.5 = 4 (predicted 3 and 5, avg = 4)
 # L_mse = (correct value - predicted value)² = (4-4)² = 0 → wrong prediction and not penalized.
 import torch
@@ -30,6 +30,25 @@ class NumTokenLoss:
         self.multi_digits = multi_digits
         self.num_nan_vocab = self._get_num_nan_vocab(tokenizer).to(device)
         self.num_tokens_mask = ~torch.isnan(self.num_nan_vocab)
+        self.num_only_values = self.num_nan_vocab[self.num_tokens_mask]
+
+        self.distance_matrix = self._get_cached_distance_matrix()
+
+    def _get_cached_distance_matrix(self):
+        """
+        For small 0-9 digits case: we cache the distance matrix between all number tokens and the label numbers.
+        We end up with a matrix where distance_matrix[i][j] = |token_value_i - token_value_j|
+
+            0   1  2  3  4  5  6  7  8  9   PRED
+        0 [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        1  [1, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        2  [2, 1, 0, 1, 2, 3, 4, 5, 6, 7],
+        3  [3, 2, 1, 0, 1, 2, 3, 4, 5, 6],
+        ...
+        LABEL
+        """
+        distance_matrix = torch.abs(self.num_only_values.unsqueeze(0) - self.num_only_values.unsqueeze(1))
+        return distance_matrix
 
     def _get_num_nan_vocab(self, tokenizer):
         """
@@ -75,8 +94,9 @@ class NumTokenLoss:
         # num_nan_vocab)
         labels = labels.masked_fill(labels == ignore_index, 0)
         # creating mask for number tokens in the labels
-        labels_values = self.num_nan_vocab[labels]
-        valid_labels_mask = ~torch.isnan(labels_values)
+        all_labels_values = self.num_nan_vocab[labels]
+        valid_labels_mask = ~torch.isnan(all_labels_values)
+        valid_labels_values = all_labels_values[valid_labels_mask]
 
         # mask to weight the loss of number tokens based on their importance
         if importance_mask is not None:
@@ -93,12 +113,17 @@ class NumTokenLoss:
         number_probs = F.softmax(number_logits, dim=-1)
 
         # Equation 4 in the paper:
-        # they use absolute difference between the true/label numbers and all possible number values (vocab), weighted by
-        # their probs. They leverage the fact that labels are one-hot encoded which is a simplified case of WAS. 
+        # they use absolute difference between the true/label numbers and all possible number values (vocab), weighted
+        # by their probs. They leverage the fact that labels are one-hot encoded which is a simplified case of WAS. 
         # No need to compute the difference of CDFs.
-        distances_to_labels = torch.abs(
-            labels_values[valid_labels_mask].unsqueeze(-1) - self.num_nan_vocab[self.num_tokens_mask]
-        )
+
+        if not self.multi_digits: # using small cached distance matrix
+            label_indices = valid_labels_values.long() # convert to int to use as indices
+            distances_to_labels = self.distance_matrix[label_indices]
+        else:
+            distances_to_labels = torch.abs(
+                valid_labels_values.unsqueeze(-1) - self.num_only_values
+            )
         # shape: (num_valid_tokens,)
         valid_tokens_loss = (distances_to_labels * number_probs[valid_labels_mask]).sum(-1)
 
