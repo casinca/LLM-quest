@@ -1,31 +1,34 @@
-# A reimplementation of the Number Token Loss - Wasserstein Distance variant (NTL-WAS) from the paper:
+# A simple reimplementation of the Number Token Loss - Wasserstein Distance variant (NTL-WAS) from the paper:
 #
 # Regress, Don’t Guess – A Regression-like Loss on Number Tokens for Language Models
 # https://arxiv.org/abs/2411.02083
 #
 # Code repo: https://github.com/ai4sd/number-token-loss (old: https://github.com/tum-ai/number-token-loss)
 #
-# NTL-WAS is more interesting, as NTL with MSE can be suboptimal, with different combination of dot products potentially
+# NTL-WAS is more interesting, as NTL MSE can be suboptimal, with different combination of dot products potentially
 # giving a correct answer despite being wrong. That is because of the weighted average matching the label:
-# Ex: label=4 and pred:probs are 3=0.5 and 5=0.5, res = 3*0.5+5*0.5 = 4.
-# L_mse = (correct value - predicted value)² = (4-4)² = 0 → wrong answer and not penalized.
+# Ex: label=4 and num_pred:prob are 3=0.5 and 5=0.5 → res = 3*0.5 + 5*0.5 = 4 (predicted 3 and 5, avg = 4)
+# L_mse = (correct value - predicted value)² = (4-4)² = 0 → wrong prediction and not penalized.
 import torch
 from torch.nn import functional as F
 
 
 class NumTokenLoss:
-    def __init__(self, tokenizer, ntl_coeff=0.3, device=None, multi_digits=False):
+    """
+    NumTokenLoss Wasserstein Distance variant (NTL-WAS):
+
+    CE loss penalizes all incorrect predictions equally, ignoring potential numerical proximity. If the label is 4 and
+    the model predicts 3 or 199, will yield the same loss. 
+    NTL aims to give some credit to the model for having a prediction close to the label.
+    """
+    def __init__(self, tokenizer, device="cuda", multi_digits=False):
         """
         tokenizer (Tokenizer): transformers tokenizer to use
-        ntl_coeff (float): weight of the NumTokenLoss (default: 0.3)
         device (str): device to use for the NumTokenLoss
         multi_digits (bool): whether to allow token to be a multiple digit number (ie "123")
         """
-        self.ntl_coeff = ntl_coeff
-        self.device = device
         self.multi_digits = multi_digits
-
-        self.num_nan_vocab = self._get_num_nan_vocab(tokenizer)
+        self.num_nan_vocab = self._get_num_nan_vocab(tokenizer).to(device)
         self.num_tokens_mask = ~torch.isnan(self.num_nan_vocab)
 
     def _get_num_nan_vocab(self, tokenizer):
@@ -59,9 +62,15 @@ class NumTokenLoss:
     # pretty much following the code
     def _calc_ntl_was(self, logits, labels, importance_mask=None, ignore_index=-100):
         """
-        NumTokenLoss Wasserstein Distance variant (NTL-WAS)
-        """
+        logits (Tensor): logits of the model, shape (b, seq_len, vocab_size)
+        labels (Tensor): labels of the model, shape (b, seq_len)
+        importance_mask (Tensor): mask to weight number tokens by defined importance (not necessarily a binary mask),
+        shape (b, seq_len)
+        ignore_index (int): Token ID to ignore. default: -100
 
+        returns:
+            loss (Tensor): mean ntl-was loss for a batch, shape (1,)
+        """
         # setting padding/ignored tokens' value to NaN, by switching their token ID to 0 (which has a value of NaN in
         # num_nan_vocab)
         labels = labels.masked_fill(labels == ignore_index, 0)
@@ -73,28 +82,33 @@ class NumTokenLoss:
         if importance_mask is not None:
             labels_imp_mask = importance_mask[valid_labels_mask]
 
-        # if there's no valid labels (number tokens) or all tokens are masked:
+        # if there's no valid labels (number tokens) or all tokens are masked/unimportant:
         #  we return the loss as 0 (ie no loss added to the main one)
-        if not valid_labels_mask.any() or (importance_mask is not None and not importance_mask.any()):
+        if not valid_labels_mask.any() or (importance_mask is not None and not labels_imp_mask.any()):
             return 0.0
 
         # --- Loss calculation ---
-        # get probs of number tokens predictions
+        # get probs of predicted number tokens
         number_logits = logits[:, :, self.num_tokens_mask]
         number_probs = F.softmax(number_logits, dim=-1)
 
+        # Equation 4 in the paper:
         # they use absolute difference between the true/label numbers and all possible number values (vocab), weighted by
-        # their probs. They leverage the fact that labels are one-hot encoded. No need to compute the difference of CDFs.
-        costs_to_labels = torch.abs(
+        # their probs. They leverage the fact that labels are one-hot encoded which is a simplified case of WAS. 
+        # No need to compute the difference of CDFs.
+        distances_to_labels = torch.abs(
             labels_values[valid_labels_mask].unsqueeze(-1) - self.num_nan_vocab[self.num_tokens_mask]
         )
-        loss = (costs_to_labels * number_probs[valid_labels_mask]).sum(-1)
+        # shape: (num_valid_tokens,)
+        valid_tokens_loss = (distances_to_labels * number_probs[valid_labels_mask]).sum(-1)
 
         if importance_mask is not None:
             # normalized by the number of tokens that have a non-zero weight
-            loss = (loss * labels_imp_mask).sum() / labels_imp_mask.count_nonzero()
+            batch_loss = (valid_tokens_loss * labels_imp_mask).sum() / labels_imp_mask.count_nonzero()
+        else:
+            batch_loss = valid_tokens_loss.mean()
 
-        return loss.mean()  # (for conciseness, if importance_mask: mean of a scalar is just the scalar itself)
+        return batch_loss
 
-    def __call__(self, logits, labels, importance_mask=None, ignore_index=-100):
-        return self._calc_ntl_was(logits, labels, importance_mask, ignore_index)
+    def __call__(self, *args, **kwargs):
+        return self._calc_ntl_was(*args, **kwargs)
