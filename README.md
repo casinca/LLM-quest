@@ -90,7 +90,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 &nbsp;
     
 - Common:
-   - NumTokenLoss: Regression-like Loss on Number Tokens (Wasserstein Distance variant)
+   - NumTokenLoss (Regression-like Loss on Number Tokens - Wasserstein Distance variant)
    - QK-Clip (Query-Key clipping) from Moonshot.ai's MuonClip, alternative to logit softcapping and QK norm.
    - DyT (Dynamic Tanh, normalization free ([*Zhu et al, 2025*](https://arxiv.org/abs/2503.10622)) alternative to 
    RMSNorm, LayerNorm)

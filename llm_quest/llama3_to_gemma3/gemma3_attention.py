@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from llm_quest.rope import RoPE
+from llm_quest.common.rope import RoPE
 
 
 # - add:

@@ -36,7 +36,7 @@ if __name__ == "__main__":
     from llm_quest.engine import training_eval_loop
     from llm_quest.gpt.gpt_attention import MultiHeadAttention
     from llm_quest.gpt.gpt_model import GPTModel
-    from llm_quest.lora import LoRALinearLayer
+    from llm_quest.common.lora import LoRALinearLayer
     from llm_quest.utils import load_weights_into_gpt
 
     tokenizer = tiktoken.get_encoding("gpt2")

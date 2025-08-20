@@ -1,6 +1,6 @@
 import torch
 
-from llm_quest.rope import RoPE
+from llm_quest.common.rope import RoPE
 
 
 class GlobalBuffers:

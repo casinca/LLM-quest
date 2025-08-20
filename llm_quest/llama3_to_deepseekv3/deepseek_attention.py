@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from llm_quest.gpt_to_llama3.llama_transformer_block import RMSNorm
-from llm_quest.rope import RoPE
+from llm_quest.common.rope import RoPE
 
 
 class MultiLatentAttention(nn.Module):
