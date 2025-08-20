@@ -498,9 +498,19 @@ def grpo_loss(
         raise ValueError(f"Unknown loss type: {variant}")
 
 
-# TODO: update in line with the updated grpo_training_loop() func
+# NOTE: oldest GRPO version with single batch was removed in commit:
+# https://github.com/casinca/LLM-quest/commit/da15e415aa91f70d34f4263b17df0e54e7c68f73
+
+
+# At the time, the goal of this variant was to do training with 2 models only:
+# - policy serving as π_θ, π_θ_old and π_ref
+# - reward model serving as r_𝜑
+#
+# This doesn't seem to be that experimental after all since Qwen (for RLVR) doesn't even used kl div for their GSPO and
+# Qwen3 model. Which basically resumes to having a single model + single reward function (or reward model for RLHF)
 def grpo_training_loop_variant_experimental(
     train_loader,
+    val_loader,
     policy_model,
     reward_model,
     optimizer,
@@ -509,8 +519,17 @@ def grpo_training_loop_variant_experimental(
     num_grad_updates,
     policy_config,
     device,
-    eps=0.2,
+    max_gen=35,
+    min_clip_eps=0.2,
+    max_clip_eps=0.2,
     beta=1.0,
+    evaluation=True,
+    eval_freq=None,
+    eval_batches=None,
+    eval_num_samples=1,
+    kl_div_threshold=0.5,
+    loss_variant="grpo",
+    save_checkpoint=True,
 ):
     """
     GRPO training with just 2 models (1 policy + 1 reward model).
@@ -521,103 +540,160 @@ def grpo_training_loop_variant_experimental(
 
     We are left with a single model for π_θ, π_θ_old and π_ref.
     The drawback is that π_ref anchor role isn't as strong, since it's updated every sample/batch with π_θ_old.
+    Thus a high beta would be recommended to compensate.
 
     Args:
         train_loader (DataLoader): DataLoader providing batches of prompts.
+        val_loader (DataLoader): DataLoader providing batches of prompts for evaluation.
         policy_model (nn.Module): The language model being trained (policy π_θ) also used as π_θ_old and π_ref (KL div).
         reward_model (nn.Module): r_𝜑 pretrained to predict rewards for completions (frozen).
         optimizer (torch.optim.Optimizer): Optimizer for updating the policy model's parameters.
         num_epoch (int): The total number of training epochs.
         num_samples (int): The number of responses/samples to generate from the policy model for each prompt.
         num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
-        policy_config (dict): Configuration dictionary for the policy model.
+        policy_config (dict): Configuration dictionary for the policy model (used for context length).
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
-        eps (float): Clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function.
+        max_gen (int): Maximum number of tokens to generate for each response.
+        min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
+        max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
+        evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
+        eval_freq (int, optional): Frequency (in training steps) at which to perform evaluation. Defaults to None.
+        eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
+        eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
+        kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
+        "gspo".
+        save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
 
     Returns:
         None: The function modifies the `policy_model` in place.
 
     """
     reward_model.eval()
+    chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, beta=beta)
 
+    step = 0
     for epoch in range(1, num_epoch + 1):
         for batch in train_loader:
+            step += 1
             policy_model.eval()  # for every new batch, π_θ, π_θ_old and π_ref are the same
-            # note: generate_loop() comes with torch.inference_mode(), no need to reapply here
 
-            torch.manual_seed(123)
             # --- Sampling responses ---
-            # interleaving the prompts to generate multiple samples in parallel
             dup_prompts = batch["padded_prompts"].repeat_interleave(num_samples, dim=0)
-            responses = generate_loop(
-                input=dup_prompts,
+            dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
+            last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
+
+            responses = generate_batched_loop(
+                input_tensor=dup_prompts,
                 model=policy_model,
-                max_gen=20,
+                attention_mask=dup_prompts_masks,
+                max_gen=max_gen,
                 context_length=policy_config["context_length"],
-                top_k=25,
-                temp=0,
-            )
+                top_k=20,
+                temp=1,
+                last_real=last_real_pos,
+            )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
                 responses,
                 len_prompt=batch["padded_prompts"].shape[-1],
-                pad_token_id=50256,
                 device=device,
             )
 
+            # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
+                loss_mask = collated_batch["reward_masks"][:, 1:]
                 # we now use π_θ in inference mode for both π_ref and π_θ_old
-                old_and_ref_logprobs = log_probs_per_token(
+                old_and_ref_logprobs = log_probs_per_token(  # shape: (B, S-1)
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
-                    attention_mask=collated_batch["attn_masks"],
                 )
-                # Reward model - retrieving advantages -
-                # full reward = mean pooling over the sequence length (I chose Outcome Supervision, ie not per token)
-                mini_rewards = reward_model(
+                rewards = reward_model(  # shape: (B,)
                     collated_batch["padded_responses"],
-                    collated_batch["attn_masks"],
-                ).squeeze(-1)
-                mini_rewards *= collated_batch["reward_masks"]
-                rewards = mini_rewards.sum(dim=1) / collated_batch["reward_masks"].sum(dim=1)
+                    attn_mask=collated_batch["attn_masks"],
+                    reward_mask=collated_batch["reward_masks"],
+                )
 
-            advantages = z_scores(rewards, num_samples)  # computing outside the inference scope
+            advantages = z_scores(rewards, num_samples, dr_grpo=loss_variant)
 
-            policy_model.train()
             # --- Gradient updates loop ---
+            policy_model.train()
+            cum_grpo_loss = 0.0
+            cum_kl_div = 0.0
+
             for grad_step in range(num_grad_updates):
                 policy_logprobs = log_probs_per_token(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
-                    attention_mask=collated_batch["attn_masks"],
                 )
 
-                # --- GRPO loss ---
                 # π_ref = π_θ_old
-                policy_ratio_per_token = torch.exp(policy_logprobs - old_and_ref_logprobs)
-                # KL divergence per token (could have also been reparametrized in terms of policy_ratio)
+                if loss_variant == "gspo":  # normalize policy ratio to the sequence level
+                    pol_logprobs_per_seq = log_probs_per_seq(policy_logprobs, loss_mask)
+                    old_logprobs_per_seq = log_probs_per_seq(old_and_ref_logprobs, loss_mask)
+                    policy_ratio = torch.exp(pol_logprobs_per_seq - old_logprobs_per_seq)  # shape: (B,)
+                else:  # token level policy ratio
+                    policy_ratio = torch.exp(policy_logprobs - old_and_ref_logprobs)
+
                 kl_div = kl_div_per_token(policy_logprobs, old_and_ref_logprobs)
 
-                # (PyTorch will broadcast the advantages, unsqueeze to emphasize advantages aren't per tokens)
-                surr_obj_per_token = policy_ratio_per_token * advantages.unsqueeze(-1)
-                clipped_surr_obj_per_token = torch.clip(
-                    policy_ratio_per_token, min=1 - eps, max=1 + eps
-                ) * advantages.unsqueeze(-1)
-
-                grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-                # masking prompt + padding tokens from the policy ratio+kl_div
-                # (advantages were calculated on rewards/response only, ie we didn't count the prompt + padded tokens)
-                # (log probs were calculated on prompt + policy's output only, ie we didn't count padded tokens)
-                # the mask will naturally cancel out the prompt part + padded tokens to focus on tokens of interest.
-                loss_mask = collated_batch["reward_masks"][:, 1:]
-                grpo_loss_per_token *= loss_mask
-                grpo_loss = grpo_loss_per_token.sum() / loss_mask.sum()
+                # loss, backprop, update
+                grpo_loss_batch = grpo_loss(
+                    policy_ratio=policy_ratio,
+                    advantages=advantages,
+                    loss_mask=loss_mask,
+                    min_clip=min_clip_eps,
+                    max_clip=max_clip_eps,
+                    beta=beta,
+                    kl_div=kl_div,
+                    num_samples=num_samples,
+                    variant=loss_variant,
+                )
 
                 optimizer.zero_grad()
-                grpo_loss.backward()
+                grpo_loss_batch.backward()
                 optimizer.step()
+
+                cum_grpo_loss += grpo_loss_batch.item()
+                # using the training kl div as proxy for the evaluation here
+                cum_kl_div += ((kl_div * loss_mask).sum() / loss_mask.sum()).item()
+
+            avg_grpo_loss = cum_grpo_loss / num_grad_updates
+            avg_kl_div = cum_kl_div / num_grad_updates
+
+            # --- Evaluation ---
+            if evaluation and eval_freq is not None and (step % eval_freq == 0):
+                eval_metrics = GRPOEvaluator.evaluate(
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    policy_model=policy_model,
+                    reference_model=policy_model,  # won't be used for evaluation
+                    evaluation_type="rlhf",
+                    reward_model=reward_model,
+                    policy_config=policy_config,
+                    device=device,
+                    max_gen=max_gen,
+                    eval_num_samples=eval_num_samples,
+                    eval_num_batches=eval_batches,
+                )
+                print(
+                    f"Step {step} | "
+                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | "
+                    f"T. Rwd: {eval_metrics['train_reward']:.4f} | "
+                    f"V. Rwd: {eval_metrics['val_reward']:.4f} | "
+                    f"Avg KL Div (training): {avg_kl_div:.4f}"
+                )
+
+                # save new best checkpoint
+                # (On policy KL div used as proxy)
+                if save_checkpoint and chkp_eval.is_rlhf_grpo_best(avg_kl_div, eval_metrics["val_reward"]):
+                    save_path = os.path.join(
+                        config.rlhf_grpo_checkpoint_dir,
+                        f"best_checkpoint_{step}_score_{chkp_eval.max_score_grpo:.3f}.pt",
+                    )
+                    torch.save(policy_model.state_dict(), save_path)
 
 
 def rlhf_grpo_training_loop(
