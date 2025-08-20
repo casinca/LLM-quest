@@ -138,7 +138,7 @@ TINY_VIT_CONFIG = {
     "n_heads": 8,
     "drop_rate": 0.3,
     "qkv_bias": True,
-    "num_classes": 10,  # CIFAR-10 has... 10 classes
+    "num_classes": 10,  # CIFAR-10 has 10 classes
 }
 
 
