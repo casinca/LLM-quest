@@ -13,9 +13,9 @@ def generate_simple_loop(input_tensor, model, max_gen, context_length):
             logits = model(trunc_input)
         # taking last vector since goal is "next word" prediction, and getting idx of the highest logit
         logits = logits[:, -1, :]
-        tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim to concat (needs same dim)
+        next_token = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim to concat (needs same dim)
         input_tensor = torch.cat(
-            (input_tensor, tok_id_next), dim=-1
+            (input_tensor, next_token), dim=-1
         )  # adding predicted token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted token ids
@@ -66,19 +66,85 @@ def generate_loop(
         if top_k:
             logits = top_k_sampling(logits, top_k)
         if temp > 0:
-            tok_id_next = sample_with_temperature(logits, temp)  # next tok id is taken from the prob distrib
+            next_token = sample_with_temperature(logits, temp)  # next tok id is taken from the prob distrib
         else:
-            tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
-        if tok_id_next == eos_id:  # if a EoT is seen stops the generation earlier
+        if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
             break
 
         input_tensor = torch.cat(
-            (input_tensor, tok_id_next), dim=-1
+            (input_tensor, next_token), dim=-1
         )  # adding chosen token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted words
     return input_tensor
+
+
+def generate_loop_kv_cache(
+    input_tensor,
+    model,
+    max_gen,
+    context_length,
+    top_k=None,
+    temp=0.0,
+    eos_id=None,
+    device="cuda",
+):
+    """
+    Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
+
+    Args:
+        input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
+        IDs.
+        model (nn.Module): The GPT model used for text generation.
+        max_gen (int): The maximum number of new tokens to generate for each sequence.
+        context_length (int): The maximum sequence length (context window) the model can handle.
+        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        temp (float, optional): Temperature sampling:
+                                - if >1, increases entropy (randomness)
+                                - if <1, decreases entropy (more deterministic)
+                                - if 1, untempered distribution
+                                - if 0, uses greedy sampling. Defaults to 0.0.
+        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to None.
+        device (str, optional): Device to move the input tensor to. Defaults to "cuda".
+
+    Returns:
+        torch.Tensor: Input tensor concatenated with generated token IDs
+    """
+    token_ids = []  # little optim to avoid repeated concatenation in the loop. Concat once at the end.
+    input_tensor = input_tensor.to(device)
+
+    # --- first generation to build the kv cache ---
+    # truncate input to compatible context size, shape (b, ctx_len)
+    trunc_input = input_tensor[:, -context_length:]
+
+    with torch.inference_mode():
+        logits, kv_cache = model(trunc_input, kv_cache=None)[:, -1, :]
+
+    # --- subsequent generations with kv cache ---
+    for _ in range(max_gen):
+
+        # sampling logic
+        if top_k:
+            logits = top_k_sampling(logits, top_k)
+        if temp > 0:
+            next_token = sample_with_temperature(logits, temp)
+        else:
+            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+
+        if eos_id is not None and next_token == eos_id:
+            break
+
+        token_ids.append(next_token)
+
+        with torch.inference_mode():
+            logits, kv_cache = model(next_token, kv_cache=kv_cache)
+            next_token = logits.squeeze(-1)  # (b, 1) → (b,) same as logits[:, -1, :] but more elegant for single tok
+
+    # final "input" is actually initial input+all predicted words
+    return input_tensor.cat(token_ids, dim=-1)
 
 
 # It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
@@ -162,10 +228,9 @@ def generate_batched_loop(
         else:
             logits = logits[:, -1, :]  # (N_active, v)
 
-        # sample for the N_active/unfinished rows
+        # sampling for the N_active/unfinished rows
         if top_k:
             logits = top_k_sampling(logits, top_k)
-
         if temp > 0:
             next_toks = sample_with_temperature(logits, temp)  # (N_active, 1)
         else:
@@ -223,8 +288,8 @@ def sample_with_temperature(logits, temp):
         torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
     """
     probs = torch.softmax(logits / temp, dim=-1)
-    tok_id_next = torch.multinomial(probs, num_samples=1)
-    return tok_id_next
+    next_token = torch.multinomial(probs, num_samples=1)
+    return next_token
 
 
 # test code
