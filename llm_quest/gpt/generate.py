@@ -1,5 +1,7 @@
 import torch
 
+from llm_quest.gpt.gpt_attention import KVCache
+
 
 def generate_simple_loop(input_tensor, model, max_gen, context_length):
     """
@@ -91,60 +93,40 @@ def generate_loop_kv_cache(
     eos_id=None,
     device="cuda",
 ):
-    """
-    Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
+    """Standalone function, same as generate_loop() but with KV cache."""
 
-    Args:
-        input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
-        IDs.
-        model (nn.Module): The GPT model used for text generation.
-        max_gen (int): The maximum number of new tokens to generate for each sequence.
-        context_length (int): The maximum sequence length (context window) the model can handle.
-        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
-        temp (float, optional): Temperature sampling:
-                                - if >1, increases entropy (randomness)
-                                - if <1, decreases entropy (more deterministic)
-                                - if 1, untempered distribution
-                                - if 0, uses greedy sampling. Defaults to 0.0.
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
-                                Defaults to None.
-        device (str, optional): Device to move the input tensor to. Defaults to "cuda".
-
-    Returns:
-        torch.Tensor: Input tensor concatenated with generated token IDs
-    """
-    token_ids = []  # little optim to avoid repeated concatenation in the loop. Concat once at the end.
+    token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
+    kv_cache = KVCache(num_layers=len(model.trf_blocks))
     input_tensor = input_tensor.to(device)
 
-    # --- first generation to build the kv cache ---
     # truncate input to compatible context size, shape (b, ctx_len)
     trunc_input = input_tensor[:, -context_length:]
 
+    # --- first generation to build the kv cache ---
     with torch.inference_mode():
-        logits, kv_cache = model(trunc_input, kv_cache=None)[:, -1, :]
+        logits = model(trunc_input, kv_cache=kv_cache)[:, -1, :]
 
-    # --- subsequent generations with kv cache ---
-    for _ in range(max_gen):
+        # --- continuing generations with kv cache ---
+        for _ in range(max_gen):
+            
+            # sampling logic
+            if top_k:
+                logits = top_k_sampling(logits, top_k)
+            if temp > 0:
+                next_token = sample_with_temperature(logits, temp)
+            else:
+                next_token = torch.argmax(logits, dim=-1, keepdim=True)
 
-        # sampling logic
-        if top_k:
-            logits = top_k_sampling(logits, top_k)
-        if temp > 0:
-            next_token = sample_with_temperature(logits, temp)
-        else:
-            next_token = torch.argmax(logits, dim=-1, keepdim=True)
+            if eos_id is not None and next_token == eos_id:
+                break
 
-        if eos_id is not None and next_token == eos_id:
-            break
+            token_ids.append(next_token)
 
-        token_ids.append(next_token)
-
-        with torch.inference_mode():
-            logits, kv_cache = model(next_token, kv_cache=kv_cache)
-            next_token = logits.squeeze(-1)  # (b, 1) → (b,) same as logits[:, -1, :] but more elegant for single tok
+            # since 1 token/seq, we can also squeeze now (b, 1, v) → (b, v) same as logits[:, -1, :]
+            logits = model(next_token, kv_cache=kv_cache).squeeze(1)
 
     # final "input" is actually initial input+all predicted words
-    return input_tensor.cat(token_ids, dim=-1)
+    return torch.cat([input_tensor]+token_ids, dim=-1)
 
 
 # It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
