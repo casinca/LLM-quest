@@ -102,6 +102,40 @@ class MultiHeadAttentionWrapper(nn.Module):
         return self.out_proj(multi_ctx_concat)
 
 
+class KVCache:
+    """
+    TODO
+    """
+    def __init__(self, num_layers):
+        self.num_layers = num_layers
+        self.keys_cache = [None] * num_layers
+        self.values_cache = [None] * num_layers
+
+    def update(self, keys, values, layer_idx):
+        # initialize the caches
+        if self.keys_cache[layer_idx] is None:
+            self.keys_cache[layer_idx] = keys
+            self.values_cache[layer_idx] = values
+        else:
+            # update the caches
+            self.keys_cache[layer_idx] = torch.cat([self.keys_cache[layer_idx], keys], dim=2)
+            self.values_cache[layer_idx] = torch.cat([self.values_cache[layer_idx], values], dim=2)
+
+
+    def get_kv(self, layer_idx):
+        return self.keys_cache[layer_idx], self.values_cache[layer_idx]
+
+    def get_seq_length(self):
+        """
+        Returns the length of the cached keys (or values same) in the cache
+        This is used to determine the length of the input sequence (for positional embeddings)
+        """
+        if self.keys_cache[0] is None:
+            return 0 # if the cache is not initialized
+
+        return self.keys_cache[0].shape[2] # shape: (b, num_heads, [seq_len], head_dim)
+
+
 # MHA optimized, splitting our tensors per head then merging back
 class MultiHeadAttention(nn.Module):
     """
