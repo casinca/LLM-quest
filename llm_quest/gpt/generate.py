@@ -108,7 +108,7 @@ def generate_loop_kv_cache(
 
         # --- continuing generations with kv cache ---
         for _ in range(max_gen):
-            
+
             # sampling logic
             if top_k:
                 logits = top_k_sampling(logits, top_k)
@@ -126,7 +126,7 @@ def generate_loop_kv_cache(
             logits = model(next_token, kv_cache=kv_cache).squeeze(1)
 
     # final "input" is actually initial input+all predicted words
-    return torch.cat([input_tensor]+token_ids, dim=-1)
+    return torch.cat([input_tensor] + token_ids, dim=-1)
 
 
 # It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
@@ -356,7 +356,7 @@ if __name__ == "__main__":
     output3 = generate_loop(
         input_tensor=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
         model=model,
-        max_gen=20,
+        max_gen=300,
         context_length=model_settings["context_length"],
         top_k=25,
         temp=1.4,
