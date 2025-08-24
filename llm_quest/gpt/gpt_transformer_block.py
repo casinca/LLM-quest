@@ -101,9 +101,11 @@ class TransformerBlock(nn.Module):
             - context_length (int): Context length for attention
             - n_heads (int): Number of attention heads
             - qkv_bias (bool): Whether to use bias in query, key, and value projections
+
+        layer_idx (int): Layer index (used here for the KV cache)
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx=None):
         super().__init__()
 
         self.att = MultiHeadAttention(
@@ -113,13 +115,14 @@ class TransformerBlock(nn.Module):
             ctx_len=cfg["context_length"],
             num_heads=cfg["n_heads"],
             qkv_bias=cfg["qkv_bias"],
+            layer_idx=layer_idx,
         )
         self.ln_1 = LayerNorm(cfg["emb_dim"])
         self.ln_2 = LayerNorm(cfg["emb_dim"])
         self.ffn = FFN(cfg)
         self.dropout = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, kv_cache=None):
         """
         This is a pre-LN arch, contrary to the original paper on transformers (which is post-LN)
         Somehow GPT paper has a post-LN fig.1 but OpenAI impl is pre-LN
@@ -127,10 +130,11 @@ class TransformerBlock(nn.Module):
         Args:
             x: Input tensor of shape (b, seq_len, emb_dim)
             attn_mask: Optional attention mask of shape (b, seq_len)
+            kv_cache: Optional KV cache for caching keys and values
         """
         residual = x
         x = self.ln_1(x)
-        x = self.att(x, attn_mask)
+        x = self.att(x, attn_mask, kv_cache)
         x = self.dropout(x)
         x = x + residual
         residual = x
