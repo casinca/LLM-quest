@@ -66,7 +66,7 @@ def generate_loop(
         if top_k:
             logits = top_k_sampling(logits, top_k)
         if temp > 0:
-            tok_id_next = sample_with_temperature(logits, temp)  # next tok id is taken from the prob distrib
+            tok_id_next = apply_temperature(logits, temp)  # next tok id is taken from the prob distrib
         else:
             tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
@@ -167,7 +167,7 @@ def generate_batched_loop(
             logits = top_k_sampling(logits, top_k)
 
         if temp > 0:
-            next_toks = sample_with_temperature(logits, temp)  # (N_active, 1)
+            next_toks = apply_temperature(logits, temp)  # (N_active, 1)
         else:
             next_toks = logits.argmax(dim=-1, keepdim=True)  # (N_active, 1)
 
@@ -189,7 +189,7 @@ def generate_batched_loop(
 
 def top_k_sampling(logits, k):
     """
-    Performs top-k sampling on the input logits by keeping only the k highest probability tokens.
+    Performs top-k sampling on the logits by keeping only the k highest probability tokens.
 
     Args:
         logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores)
@@ -208,7 +208,39 @@ def top_k_sampling(logits, k):
     return filt_logits
 
 
-def sample_with_temperature(logits, temp):
+def top_p_sampling(logits, p):
+    """
+    Performs top-p nucleus sampling on the logits.
+    The goal is to find the smallest set of top tokens whose cumulative probability is at least p.
+    https://arxiv.org/abs/1904.09751
+
+    Args:
+        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
+        p (float): The cumulative probability threshold for top-p sampling
+
+    Returns:
+        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
+    """
+    probs = torch.softmax(logits, dim=-1)
+    sorted_probs, og_idx = torch.sort(probs, dim=-1, descending=True)
+    cum_probs = torch.cumsum(sorted_probs, dim=-1)  # CDF
+
+    p_mask = cum_probs > p
+    # trick (seen on HF) to keep the pivot/threshold token in the set (by shifting the mask by 1)
+    p_mask[:, 1:] = p_mask[:, :-1].clone()
+    p_mask[:, 0] = False  # putting back first token in the set (we'll always need the most probable token)
+    sorted_probs.masked_fill_(p_mask, 0.0)
+
+    # re-assigning the sorted masked probs to the original indices
+    probs.scatter_(-1, og_idx, sorted_probs)
+    # renormalize probs to sum up to 1
+    probs /= probs.sum(dim=-1, keepdim=True)
+
+    next_token = torch.multinomial(probs, num_samples=1)
+    return next_token
+
+
+def apply_temperature(logits, temp):
     """
     Performs temperature scaling on the input logits and samples from the resulting distribution
 
