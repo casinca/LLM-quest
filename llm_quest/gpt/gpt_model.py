@@ -46,14 +46,14 @@ class GPTModel(nn.Module):
         past_len = 0
         if kv_cache is not None:
             # need to add the length to correctly offset the positions for the current tokens
-            past_len = kv_cache.get_seq_length()
+            past_len = kv_cache.start_pos
 
-        # pos tensor has the same length as the current batch seq len
-        # and not fixed ctx_len size, thus having a dynamic shape per batch
         positions = torch.arange(past_len, past_len + seq_len, device=x.device)
         pos_emb = self.pos_emb_dict(positions)  # same device as input
 
         # old way:
+        # pos tensor has the same length as the current batch seq len
+        # and not fixed ctx_len size, thus having a dynamic shape per batch
         # pos_emb = self.pos_emb_dict(torch.arange(seq_len, device=x.device))  # same device as input
 
         x = x + pos_emb

@@ -95,9 +95,16 @@ def generate_loop_kv_cache(
     """Standalone function, same as generate_loop() but with KV cache."""
 
     token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
-    kv_cache = KVCache(num_layers=len(model.trf_blocks))
-    input_tensor = input_tensor.to(device)
 
+    num_layers = len(model.trf_blocks)
+
+    # Init KV cache
+    kv_cache = KVCache(
+        num_layers=num_layers,
+        max_seq_len=context_length,
+    )
+
+    input_tensor = input_tensor.to(device)
     # truncate input to compatible context size, shape (b, ctx_len)
     trunc_input = input_tensor[:, -context_length:]
 
