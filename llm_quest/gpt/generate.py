@@ -1,5 +1,7 @@
 import torch
 
+from llm_quest.gpt.gpt_attention import KVCache
+
 
 def generate_simple_loop(input_tensor, model, max_gen, context_length):
     """
@@ -13,9 +15,9 @@ def generate_simple_loop(input_tensor, model, max_gen, context_length):
             logits = model(trunc_input)
         # taking last vector since goal is "next word" prediction, and getting idx of the highest logit
         logits = logits[:, -1, :]
-        tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim to concat (needs same dim)
+        next_token = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim to concat (needs same dim)
         input_tensor = torch.cat(
-            (input_tensor, tok_id_next), dim=-1
+            (input_tensor, next_token), dim=-1
         )  # adding predicted token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted token ids
@@ -28,6 +30,7 @@ def generate_loop(
     max_gen,
     context_length,
     top_k=None,
+    top_p=None,
     temp=0.0,
     eos_id=None,
     device="cuda",
@@ -42,6 +45,8 @@ def generate_loop(
         max_gen (int): The maximum number of new tokens to generate for each sequence.
         context_length (int): The maximum sequence length (context window) the model can handle.
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
+                                Defaults to None.
         temp (float, optional): Temperature sampling:
                                 - if >1, increases entropy (randomness)
                                 - if <1, decreases entropy (more deterministic)
@@ -63,22 +68,64 @@ def generate_loop(
         with torch.inference_mode():  # no need for grads as we're generating
             logits = model(trunc_input)[:, -1, :]  # taking last vector (next word prediction)
 
-        if top_k:
-            logits = top_k_sampling(logits, top_k)
-        if temp > 0:
-            tok_id_next = apply_temperature(logits, temp)  # next tok id is taken from the prob distrib
-        else:
-            tok_id_next = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
+        next_token = sampling(logits, top_k, top_p, temp)
 
-        if tok_id_next == eos_id:  # if a EoT is seen stops the generation earlier
+        if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
             break
 
         input_tensor = torch.cat(
-            (input_tensor, tok_id_next), dim=-1
+            (input_tensor, next_token), dim=-1
         )  # adding chosen token id back to the input for the next loop
 
     # final "input" is actually initial input+all predicted words
     return input_tensor
+
+
+def generate_loop_kv_cache(
+    input_tensor,
+    model,
+    max_gen,
+    context_length,
+    top_k=None,
+    top_p=None,
+    temp=0.0,
+    eos_id=None,
+    device="cuda",
+):
+    """Standalone function, same as generate_loop() but with KV cache."""
+
+    token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
+
+    num_layers = len(model.trf_blocks)
+
+    # Init KV cache
+    kv_cache = KVCache(
+        num_layers=num_layers,
+        max_seq_len=context_length,
+    )
+
+    input_tensor = input_tensor.to(device)
+    # truncate input to compatible context size, shape (b, ctx_len)
+    trunc_input = input_tensor[:, -context_length:]
+
+    # --- first generation to build the kv cache ---
+    with torch.inference_mode():
+        logits = model(trunc_input, kv_cache=kv_cache)[:, -1, :]
+
+        # --- continuing generations with kv cache ---
+        for _ in range(max_gen):
+            next_token = sampling(logits, top_k, top_p, temp)
+
+            if eos_id is not None and next_token == eos_id:
+                break
+
+            token_ids.append(next_token)
+
+            # since 1 token/seq, we can also squeeze now (b, 1, v) → (b, v) same as logits[:, -1, :]
+            logits = model(next_token, kv_cache=kv_cache).squeeze(1)
+
+    # final "input" is actually initial input+all predicted words
+    return torch.cat([input_tensor] + token_ids, dim=-1)
 
 
 # It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
@@ -96,6 +143,7 @@ def generate_batched_loop(
     max_gen,
     context_length,
     top_k=None,
+    top_p=None,
     temp=0.0,
     eos_id=50256,
     device="cuda",
@@ -113,6 +161,8 @@ def generate_batched_loop(
         max_gen (int): The maximum number of new tokens to generate for each sequence.
         context_length (int): The maximum sequence length (context window) the model can handle.
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
+                                Defaults to None.
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
@@ -162,14 +212,8 @@ def generate_batched_loop(
         else:
             logits = logits[:, -1, :]  # (N_active, v)
 
-        # sample for the N_active/unfinished rows
-        if top_k:
-            logits = top_k_sampling(logits, top_k)
-
-        if temp > 0:
-            next_toks = apply_temperature(logits, temp)  # (N_active, 1)
-        else:
-            next_toks = logits.argmax(dim=-1, keepdim=True)  # (N_active, 1)
+        # sampling for the N_active/unfinished rows
+        next_toks = sampling(logits, top_k, top_p, temp)  # (N_active, 1)
 
         # create a tensor full of eos_id, insert sampled tokens back into the batch only for unfinished generations
         full_next_toks = torch.full((batch_size, 1), eos_id, device=device, dtype=torch.long)
@@ -187,17 +231,50 @@ def generate_batched_loop(
     return input_tensor
 
 
-def top_k_sampling(logits, k):
+def sampling(logits, top_k=None, top_p=None, temp=0.0):
+    """
+    Performs sampling on the logits.
+
+    Args:
+        logits (torch.Tensor): logits tensor representing last tokens raw probs (scores) in a batch, shape (b, v)
+        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
+                                Defaults to None, range [0.0, 1.0].
+        temp (float): Temperature for softmax sampling:
+                        - if >1, increases entropy (randomness)
+                        - if <1, decreases entropy (more deterministic)
+                        - if 1, untempered distribution
+    """
+
+    if temp > 0.0:
+        logits = logits / temp  # inplace update to inference tensor outside InferenceMode is not allowed
+
+    if top_p:
+        next_token = _top_p_sampling(logits, top_p, top_k)
+
+    elif top_k:
+        next_token = _top_k_sampling(logits, top_k)
+
+    elif temp > 0.0:  # sampling from the full distribution (tempered or not, if temp = 1)
+        probs = torch.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+
+    else:  # greedy decoding
+        next_token = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
+
+    return next_token
+
+
+def _top_k_sampling(logits, k):
     """
     Performs top-k sampling on the logits by keeping only the k highest probability tokens.
 
     Args:
-        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores)
+        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
         k (int): Number of top tokens to keep
 
     Returns:
-        torch.Tensor: Filtered logits tensor with only the top k values preserved and all others set to negative
-                    infinity
+        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
     """
     top_k, top_idx = torch.topk(logits, k)
     # initiate a tensor of the size of logits with all values set to -inf
@@ -205,10 +282,13 @@ def top_k_sampling(logits, k):
     # mapping top k values back via their idx, on the given dim (-1), in place
     filt_logits.scatter_(-1, top_idx, top_k)
 
-    return filt_logits
+    probs = torch.softmax(filt_logits, dim=-1)
+    next_token = torch.multinomial(probs, num_samples=1)
+
+    return next_token
 
 
-def top_p_sampling(logits, p):
+def _top_p_sampling(logits, p, top_k=None):
     """
     Performs top-p nucleus sampling on the logits.
     The goal is to find the smallest set of top tokens whose cumulative probability is at least p.
@@ -216,12 +296,21 @@ def top_p_sampling(logits, p):
 
     Args:
         logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
-        p (float): The cumulative probability threshold for top-p sampling
+        p (float): The cumulative probability threshold for top-p sampling, range [0.0, 1.0].
+        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
 
     Returns:
         torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
     """
+    # limiting top-p to top-k tokens if specified
+    if top_k:
+        top_k, _ = torch.topk(logits, top_k)
+        last_top_k = top_k[:, -1].unsqueeze(1)  # getting last top-k as cutoff point to mask
+        top_k_mask = logits < last_top_k
+        logits.masked_fill_(top_k_mask, -torch.inf)
+
     probs = torch.softmax(logits, dim=-1)
+
     sorted_probs, og_idx = torch.sort(probs, dim=-1, descending=True)
     cum_probs = torch.cumsum(sorted_probs, dim=-1)  # CDF
 
@@ -237,26 +326,8 @@ def top_p_sampling(logits, p):
     probs /= probs.sum(dim=-1, keepdim=True)
 
     next_token = torch.multinomial(probs, num_samples=1)
+
     return next_token
-
-
-def apply_temperature(logits, temp):
-    """
-    Performs temperature scaling on the input logits and samples from the resulting distribution
-
-    Args:
-        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
-        temp (float): Temperature for softmax sampling:
-                        - if >1, increases entropy (randomness)
-                        - if <1, decreases entropy (more deterministic)
-                        - if 1, untempered distribution
-
-    Returns:
-        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
-    """
-    probs = torch.softmax(logits / temp, dim=-1)
-    tok_id_next = torch.multinomial(probs, num_samples=1)
-    return tok_id_next
 
 
 # test code
@@ -338,12 +409,13 @@ if __name__ == "__main__":
 
     model.to(device)  # we move the model to GPU *after* loading weights
 
-    output3 = generate_loop(
+    output3 = generate_loop_kv_cache(
         input_tensor=text_to_ids("This is where it", tokenizer=tokenizer).repeat_interleave(3, dim=0),
         model=model,
         max_gen=20,
         context_length=model_settings["context_length"],
         top_k=25,
+        top_p=0.9,
         temp=1.4,
     )
 

@@ -102,6 +102,92 @@ class MultiHeadAttentionWrapper(nn.Module):
         return self.out_proj(multi_ctx_concat)
 
 
+# Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
+class KVCache:
+    """
+    KV cache with preallocation and updating by directly indexing into the cache.
+    We avoid torch.cat() operations from the old KVcache.
+
+    Args:
+        num_layers (int): Number of transformer layers
+        max_seq_len (int): Maximum sequence length (context_length)
+    """
+
+    def __init__(self, num_layers, max_seq_len):
+        self.num_layers = num_layers
+        self.max_seq_len = max_seq_len
+
+        self.keys_cache = None
+        self.values_cache = None
+
+        self.start_pos = 0  # track current sequence length
+
+    def _initialize(self, batch_size, num_heads, head_dim, device, dtype):
+        """
+        initialize cache tensors on first call
+        """
+
+        self.keys_cache = []
+        self.values_cache = []
+
+        for _ in range(self.num_layers):
+            self.keys_cache.append(
+                torch.zeros(
+                    batch_size,
+                    num_heads,
+                    self.max_seq_len,
+                    head_dim,
+                    device=device,
+                    dtype=dtype,
+                )
+            )
+            self.values_cache.append(
+                torch.zeros(
+                    batch_size,
+                    num_heads,
+                    self.max_seq_len,
+                    head_dim,
+                    device=device,
+                    dtype=dtype,
+                )
+            )
+
+    def get_updated_cache(self, keys, values, layer_idx):
+        """
+        Update cache with the new keys and values and return the full cached keys and values.
+
+        Args:
+            keys: New keys tensor of shape (batch_size, num_heads, new_seq_len, head_dim)
+            values: New values tensor of shape (batch_size, num_heads, new_seq_len, head_dim)
+            layer_idx: Layer index to update
+
+        Note: In most scenarios new_seq_len should be 1
+
+        Returns:
+            A tuple containing the full cached keys and values up to the current sequence length.
+        """
+        batch_size, num_heads, new_seq_len, head_dim = keys.shape
+
+        if self.keys_cache is None and self.values_cache is None:
+            self._initialize(batch_size, num_heads, head_dim, keys.device, keys.dtype)
+
+        end_pos = self.start_pos + new_seq_len
+
+        # update from the new keys and values into the pre-allocated cache
+        self.keys_cache[layer_idx][:, :, self.start_pos : end_pos, :] = keys
+        self.values_cache[layer_idx][:, :, self.start_pos : end_pos, :] = values
+
+        # update sequence length after the last layer has been processed for the next call
+        if layer_idx == self.num_layers - 1:
+            self.start_pos += new_seq_len
+
+        # return slices of the cache, up to the new current sequence length
+        return (
+            self.keys_cache[layer_idx][:, :, :end_pos, :],
+            self.values_cache[layer_idx][:, :, :end_pos, :],
+        )
+
+
 # MHA optimized, splitting our tensors per head then merging back
 class MultiHeadAttention(nn.Module):
     """
@@ -119,6 +205,7 @@ class MultiHeadAttention(nn.Module):
         num_heads (int): Number of attention heads
         qkv_bias (bool, optional): Whether to include bias terms in query/key/value projections.
                                 Defaults to False.
+        layer_idx (int): Layer index (used here for the KV cache indexing)
 
     Attributes:
         head_dim (int): Dimension of each attention head (d_out // num_heads)
@@ -130,7 +217,7 @@ class MultiHeadAttention(nn.Module):
         out_proj (nn.Linear): Output projection layer
     """
 
-    def __init__(self, d_in, d_out, dropout, ctx_len, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, dropout, ctx_len, num_heads, qkv_bias=False, layer_idx=None):
         super().__init__()
         if d_out % num_heads != 0:
             raise ValueError("d_out must be divisible by num_heads")
@@ -145,12 +232,14 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_out // self.num_heads
         self.att_scaling = self.head_dim**-0.5
         self.out_proj = nn.Linear(d_out, d_out)  # optional additional learnable params for the output
+        self.layer_idx = layer_idx
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, kv_cache=None):
         """
         args:
             x: (b, seq_len, d_in)
             attn_mask (optional): (b, seq_len) used for padding tokens
+            kv_cache (optional): KVCache instance/object
         """
         queries = self.w_queries(x)  # shape (b, s, d_out) aka augmented emb dim if d_out > d_in
         keys = self.w_keys(x)
@@ -163,28 +252,42 @@ class MultiHeadAttention(nn.Module):
         keys = keys.view(b, seq_len, self.num_heads, -1)
         values = values.view(b, seq_len, self.num_heads, -1)
 
-        # attention scores
         # transposing first, head_dim and seq len for correct matmul within each head, ex 2,6,2,2 → 2,2,6,2
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
-        att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
+        values = values.transpose(1, 2)
+
+        # --- KV Cache update ---
+        if kv_cache is not None:
+            keys, values = kv_cache.get_updated_cache(keys, values, self.layer_idx)
+
+        att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len) or w/ KVc (b, num_heads, 1, seq_len)
         scaled_att_scores = att_scores * self.att_scaling
 
-        # masking in place and normalizing with softmax
-        current_mask = self.mask[:seq_len, :seq_len]  # mask up to seq length/num of tokens
+        # --- Masking ---
+        # with KVcache, Q and K don't have the same length anymore, can't just use "seq_len" but for training will work
+        # too, since q_seq_len = k_seq_len = seq_len
+        q_seq_len = queries.shape[2]
+        k_seq_len = keys.shape[2]
+        # mask fix for KV cache (sequence length Q and K mismatch)
+        if k_seq_len > q_seq_len:
+            start_pos = k_seq_len - q_seq_len
+            curr_mask = self.mask[start_pos:k_seq_len, :k_seq_len]
+        else:
+            curr_mask = self.mask[:q_seq_len, :k_seq_len]
+
         if attn_mask is not None:
             # reshape & combine masks (invert attn_mask to get True = padding)
-            current_mask = current_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+            curr_mask = curr_mask.view(1, 1, q_seq_len, k_seq_len) | ~attn_mask.view(b, 1, 1, k_seq_len)
         # using a small value instead of -inf for padding tokens attending to padding tokens:
         # this is an edge case in left padding where pad x pad becomes a full vector of -infs and softmax will NaN.
         # https://github.com/huggingface/transformers/issues/32390
         mask_value = torch.finfo(scaled_att_scores.dtype).min / 2
-        scaled_att_scores.masked_fill_(current_mask, mask_value)  # mask where True
+        scaled_att_scores.masked_fill_(curr_mask, mask_value)  # mask where True
 
         att_weights = torch.softmax(scaled_att_scores, dim=-1)
         att_weights = self.dropout(att_weights)  # reg
 
-        values = values.transpose(1, 2)  # transposing head dim and seq len of V for correct matmul
         ctx_tensor = att_weights @ values
         # transposing one last time to get back our initial split shape
         # (batch, num_heads, seq_len, head_dim) → (batch, seq len, num_heads, head_dim)
