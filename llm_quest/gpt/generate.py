@@ -395,7 +395,7 @@ if __name__ == "__main__":
 
     # ---------------------------- PART C ------- Testing generation with OpenAI's pretrained weights
 
-    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
+    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s)
 
     tokenizer = tiktoken.get_encoding("gpt2")
     model_settings = config.config_creator("gpt_s")
