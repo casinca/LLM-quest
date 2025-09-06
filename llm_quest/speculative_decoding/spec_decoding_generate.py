@@ -9,21 +9,19 @@ from llm_quest.speculative_decoding.spec_decoding_engine import speculative_gene
 from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
 
 # --- Hyperparameters ---
-max_gen = 20
-draft_max_gen = 3
-target_context_length = 1024  # TODO switch to config
-draft_context_length = 768
+max_gen = 200
+draft_max_gen = 5
 seed = 123
-temp = 1.4
-top_k = 25
+temp = 0.0
+top_k = None
 top_p = None
 
-prompt = "This is where it"
+prompt = "All there is"
 
 if __name__ == "__main__":
 
     target_settings, target_params = download_and_load_gpt2(
-        model_size="355M", models_dir=config.openai_pretrained_w_gpt2_m
+        model_size="774M", models_dir=config.openai_pretrained_w_gpt2_l
     )
     draft_settings, draft_params = download_and_load_gpt2(
         model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s
@@ -31,7 +29,7 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    target_model_config = config.config_creator("gpt_m")
+    target_model_config = config.config_creator("gpt_l")
     draft_model_config = config.config_creator("gpt_s")
 
     device = "cuda"
@@ -50,7 +48,7 @@ if __name__ == "__main__":
         draft_model=draft_model,
         prompt=text_to_ids(prompt, tokenizer=tokenizer),
         max_gen=max_gen,
-        context_length=draft_context_length,  # TODO need both?
+        context_length=draft_model_config["context_length"],
         draft_max_gen=draft_max_gen,
         top_k=top_k,
         top_p=top_p,
@@ -91,7 +89,7 @@ if __name__ == "__main__":
         input_tensor=text_to_ids(prompt, tokenizer=tokenizer),
         model=target_model,
         max_gen=max_gen,
-        context_length=draft_context_length,
+        context_length=target_model_config["context_length"],
         top_k=top_k,
         top_p=top_p,
         temp=temp,

@@ -203,6 +203,8 @@ reasoning_val_path = root_dir / "data" / "processed_data" / "gsm8k_processed" / 
 # --- models ---
 openai_pretrained_w_gpt2_s = root_dir / "checkpoints" / "gpt2_small"
 openai_pretrained_w_gpt2_m = root_dir / "checkpoints" / "gpt2_medium"
+openai_pretrained_w_gpt2_l = root_dir / "checkpoints" / "gpt2_large"
+openai_pretrained_w_gpt2_xl = root_dir / "checkpoints" / "gpt2_xl"
 custom_pretrained_w_gpt2 = root_dir / "checkpoints" / "model_and_optim_save.pth"
 
 ft_classifier_w_gpt2 = root_dir / "checkpoints" / "ft_classifier_model_and_optim_save.pth"

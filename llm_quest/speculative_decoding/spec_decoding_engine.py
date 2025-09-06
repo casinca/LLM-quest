@@ -18,7 +18,7 @@ def get_logprobs(logits, generated_tokens, temp=0.0):
         torch.Tensor: The log probabilities of the generated tokens, shape (b, s)
     """
     if temp > 0.0:
-        logits = logits / temp  # TODO see if safe for inplace and squeeze_
+        logits = logits / temp
 
     logprobs = torch.log_softmax(logits, dim=-1)
 
@@ -26,7 +26,7 @@ def get_logprobs(logits, generated_tokens, temp=0.0):
         logprobs,
         dim=-1,
         index=generated_tokens.unsqueeze(-1),  # needs same shape (b, s, 1) as logprobs for gather
-    ).squeeze(-1)
+    ).squeeze_(-1)
 
     return gen_tokens_logprobs
 
@@ -69,7 +69,7 @@ def _rejection_sampling(draft_logits, target_logits, top_k, top_p, temp):
     return next_token
 
 
-def speculative_sampling_greedy(target_logits, generated_tokens):
+def speculative_sampling_greedy(target_logits, generated_tokens, remaining_tokens):
     """
     Simplified route for greedy/deterministic case of speculative sampling, leveraging one hot encoding distributions we
     don't need the draft model's distributions to compute acceptance/rejection.
@@ -78,6 +78,7 @@ def speculative_sampling_greedy(target_logits, generated_tokens):
     target_logits (torch.Tensor): The logit distributions from the target model for each next-token prediction in the
     draft sequence, shape (b, draft_max_gen+1, v)
     generated_tokens (torch.Tensor): The generated tokens, shape (b, draft_max_gen)
+    remaining_tokens (int): The number of tokens left to generate
 
     returns:
         torch.Tensor: The accepted tokens + last token, shape (b, num_accepted + 1)
@@ -97,8 +98,8 @@ def speculative_sampling_greedy(target_logits, generated_tokens):
             accepted_tokens.append(next_token.item())
             break
 
-    if num_accepted == num_drafted:
-        next_token = sampling(target_logits[:, -1, :], temp=0.0)
+    if num_accepted == num_drafted and remaining_tokens > num_drafted:
+        next_token = torch.argmax(target_logits[:, -1, :], dim=-1)
         accepted_tokens.append(next_token.item())
 
     accepted_tokens = torch.tensor(accepted_tokens, device=generated_tokens.device).unsqueeze(0)
@@ -117,6 +118,7 @@ def speculative_sampling(
     draft_logits,
     target_logits,
     generated_tokens,
+    remaining_tokens,
     top_k,
     top_p,
     temp,
@@ -133,6 +135,7 @@ def speculative_sampling(
         target_logits (torch.Tensor): The logit distributions from the target model for each next-token prediction in the
         draft sequence, shape (b, draft_max_gen+1, v)
         generated_tokens (torch.Tensor): The generated tokens, shape (b, draft_max_gen)
+        remaining_tokens (int): The number of tokens left to generate
         top_k (int | None): limits sampling to top k most likely tokens. None to disable.
         top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
                                 None to disable.
@@ -170,7 +173,8 @@ def speculative_sampling(
             accepted_tokens.append(next_token.item())
             break
 
-    if num_accepted == num_drafted:  # all accepted, sample bonus token from target model x ~ p_γ+1(x)
+    # all accepted, sample bonus token from target model x ~ p_γ+1(x)
+    if num_accepted == num_drafted and remaining_tokens > num_drafted:
         next_token = sampling(target_logits[:, -1, :], top_k, top_p, temp)
         accepted_tokens.append(next_token.item())
 
@@ -183,7 +187,8 @@ def _speculative_step(
     target_model,
     draft_model,
     current_sequence,
-    draft_max_gen,  # this is γ from the paper
+    draft_max_gen,
+    remaining_tokens,
     context_length,
     top_k=None,
     top_p=None,
@@ -191,7 +196,27 @@ def _speculative_step(
     eos_id=None,
 ):
     """
-    # TODO
+    Speculative orchestrator: Performs a single step of speculative decoding.
+
+    This function uses the draft model to generate `draft_max_gen` candidate tokens, we then verify these tokens with
+    the target model via the `speculative_sampling` function to determine which drafted tokens are accepted.
+
+    Args:
+        target_model: The target (larger) model for verification
+        draft_model: The draft/approximation (smaller) model for speculation
+        current_sequence (torch.Tensor): Input sequence tokens, shape (b, prompt_len + previously generated tokens)
+        draft_max_gen (int): Number of tokens to draft per iteration (γ in the paper)
+        remaining_tokens (int): The number of tokens left to generate
+        context_length (int): Maximum context length for the draft model
+        top_k (int | None): limits sampling to top k most likely tokens. None to disable.
+        top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
+                                None to disable.
+        temp (float): The temperature for the distribution, needs to be > 0.0
+        eos_id (int): End of sequence token ID
+
+    Returns:
+        accepted_tokens(torch.Tensor): tensor containing the tokens accepted in this speculative step, shape (b,
+        accepted_tokens)
     """
     # we will use the KVcache for the draft/approximation model to speed it up even more
     # The target model isn't generating tokens, just being passed the prompt+generated tokens for its probabilities
@@ -200,7 +225,7 @@ def _speculative_step(
 
     kv_cache = KVCache(num_layers=len(draft_model.trf_blocks), max_seq_len=context_length)
     trunc_seq = current_sequence[:, -context_length:] if curr_len > context_length else current_sequence
-    draft_logits = draft_model(trunc_seq, kv_cache=kv_cache)[:, -1, :]
+    draft_logits = draft_model(trunc_seq, kv_cache=kv_cache)[:, -1, :]  # fill the cache
 
     # --- Drafting tokens with the approximation/draft model ---
     for _ in range(draft_max_gen):
@@ -228,12 +253,14 @@ def _speculative_step(
     draft_sequence = full_sequence[:, curr_len:]
 
     if temp == 0.0:
-        accepted_tokens = speculative_sampling_greedy(target_logits, draft_sequence)
+        accepted_tokens = speculative_sampling_greedy(target_logits, draft_sequence, remaining_tokens)
     else:
-        # (inside else block to avoid unnecessary computation if temp == 0.0)
+        # (get draft logits inside else block to avoid unnecessary computation if temp == 0.0)
         draft_logits = draft_model(full_sequence, kv_cache=None)
         draft_logits = draft_logits[:, curr_len - 1 : curr_len + draft_len - 1, :]
-        accepted_tokens = speculative_sampling(draft_logits, target_logits, draft_sequence, top_k, top_p, temp)
+        accepted_tokens = speculative_sampling(
+            draft_logits, target_logits, draft_sequence, remaining_tokens, top_k, top_p, temp
+        )
 
     return accepted_tokens
 
@@ -243,7 +270,7 @@ def speculative_generate(
     draft_model,
     prompt,
     max_gen,
-    draft_max_gen,  # this is γ from the paper
+    draft_max_gen,
     context_length,
     top_k=None,
     top_p=None,
@@ -286,11 +313,12 @@ def speculative_generate(
                 break
 
             # one iteration of speculative decoding
-            new_tokens = _speculative_step(  # shape (b, <= curr_draft_max) "<" if EoS is hit
+            new_tokens = _speculative_step(  # shape (b, <= curr_draft_max+1) "<" if EoS is hit
                 target_model=target_model,
                 draft_model=draft_model,
                 current_sequence=current_sequence,
                 draft_max_gen=curr_draft_max,
+                remaining_tokens=remaining_tokens,
                 context_length=context_length,
                 top_k=top_k,
                 top_p=top_p,
