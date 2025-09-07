@@ -108,8 +108,7 @@ def speculative_sampling_greedy(target_logits, generated_tokens, remaining_token
 
 
 # NOTE: Passing distributions (PMF) for acceptance might be weird as we don't need it for comparing sequentially
-# single tokens' probabilities p(x_i) and q(x_i).
-# However, we still need them in case of:
+# single tokens' probabilities p(x_i) and q(x_i), however, we still need them in case of:
 # - rejection, for the adjusted distribution p'(x) = norm(max(0, p(x) - q(x))).
 # - all accepted, for the bonus token sampled from the target model
 # And we don't know beforehand which token will be rejected, hence the reason for keeping distributions
@@ -218,48 +217,48 @@ def _speculative_step(
         accepted_tokens(torch.Tensor): tensor containing the tokens accepted in this speculative step, shape (b,
         accepted_tokens)
     """
-    # we will use the KVcache for the draft/approximation model to speed it up even more
-    # The target model isn't generating tokens, just being passed the prompt+generated tokens for its probabilities
     draft_tokens = []
+    draft_logits = []
     curr_len = current_sequence.shape[1]
 
     kv_cache = KVCache(num_layers=len(draft_model.trf_blocks), max_seq_len=context_length)
     trunc_seq = current_sequence[:, -context_length:] if curr_len > context_length else current_sequence
-    draft_logits = draft_model(trunc_seq, kv_cache=kv_cache)[:, -1, :]  # fill the cache
+
+    drafted_logits = draft_model(trunc_seq, kv_cache=kv_cache)[:, -1, :]  # fill the cache
+    draft_logits.append(drafted_logits.unsqueeze(1))
 
     # --- Drafting tokens with the approximation/draft model ---
     for _ in range(draft_max_gen):
-        next_token = sampling(draft_logits, top_k, top_p, temp)
+        next_token = sampling(drafted_logits, top_k, top_p, temp)
 
         if eos_id is not None and next_token.item() == eos_id:
             draft_tokens.append(next_token)
             break
 
         draft_tokens.append(next_token)
-        draft_logits = draft_model(next_token, kv_cache=kv_cache).squeeze(1)
+        drafted_logits = draft_model(next_token, kv_cache=kv_cache)[:, -1, :]
+        draft_logits.append(drafted_logits.unsqueeze(1))
 
     full_sequence = torch.cat([current_sequence] + draft_tokens, dim=-1)
 
     # --- Determining the number of accepted tokens ---
-    # passing all the tokens (prompt + draft tokens) to the target model to retrieve its probability distributions
-    # also passing to the draft model itself (because we used KVcache and had only access to a single token distrib)
-    # TODO if refeeding to the draft model is too slow, we'd have to retrieve incrementally during the loop
-    # Slicing as we are not interested in prompts logits:
-    # - prompt_len - 1 to include the logits distribution of the 1st draft, from the last prompt token
-    # - For the target model, we include the prediction from the last token, for the bonus token, shape (b, γ+1, v)
-    draft_len = len(draft_tokens)
+    # slicing to retrieve only the logits distributions for the drafted tokens:
+    # - curr_len - 1 to include the logits distribution of the 1st draft, from the
+    # - For the target model, we include the prediction from the last token, for the bonus token,
+    drafted_sequence = full_sequence[:, curr_len:]
+    drafted_len = drafted_sequence.shape[1]
+
     target_logits = target_model(full_sequence, kv_cache=None)
-    target_logits = target_logits[:, curr_len - 1 : curr_len + draft_len :, :]
-    draft_sequence = full_sequence[:, curr_len:]
+    target_logits = target_logits[:, curr_len - 1 : curr_len + drafted_len :, :]  # shape (b, γ+1, v)
 
     if temp == 0.0:
-        accepted_tokens = speculative_sampling_greedy(target_logits, draft_sequence, remaining_tokens)
+        accepted_tokens = speculative_sampling_greedy(target_logits, drafted_sequence, remaining_tokens)
     else:
+        draft_logits_tensor = torch.cat(draft_logits[:-1], dim=1)  # shape (b, γ, v)
         # (get draft logits inside else block to avoid unnecessary computation if temp == 0.0)
-        draft_logits = draft_model(full_sequence, kv_cache=None)
-        draft_logits = draft_logits[:, curr_len - 1 : curr_len + draft_len - 1, :]
+        # draft_logits_tensor = draft_logits_tensor[:, curr_len - 1 : curr_len + drafted_len - 1, :]
         accepted_tokens = speculative_sampling(
-            draft_logits, target_logits, draft_sequence, remaining_tokens, top_k, top_p, temp
+            draft_logits_tensor, target_logits, drafted_sequence, remaining_tokens, top_k, top_p, temp
         )
 
     return accepted_tokens
