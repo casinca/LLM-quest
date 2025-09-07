@@ -4,23 +4,58 @@ from llm_quest.gpt.generate import _top_k_sampling, _top_p_sampling, sampling
 from llm_quest.gpt.gpt_attention import KVCache
 
 
+def get_modified_distrib(logits, top_k, top_p, temp, return_logprobs=False):
+    """
+    Helper function that takes logits, convert to and return probability distribution based on temperature and filter
+    based on top_k/top_p if specified.
+
+    args:
+        logits (torch.Tensor): The logits from the model, shape (b, v)
+        top_k (int | None): limits sampling to top k most likely tokens. None to disable.
+        top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
+                                None to disable.
+        temp (float): The temperature for the distribution
+        return_logprobs (bool): Whether to return the log probabilities instead of the probabilities
+
+    returns:
+        torch.Tensor: The probabilities or log probabilities of the generated tokens, shape (b, v)
+    """
+    # logits = logits.float() # check if it makes a difference vs bf16, need to be uniformized everywhere needed
+    if temp > 0.0:
+        logits = logits / temp
+
+    probs = torch.softmax(logits, dim=-1)
+
+    if top_p:
+        probs = _top_p_sampling(probs, top_p, top_k)
+    elif top_k:
+        probs = _top_k_sampling(probs, top_k)
+
+    probs /= probs.sum(dim=-1, keepdim=True)  # renormalize to sum up to 1
+
+    if return_logprobs:
+        return torch.log(probs)
+
+    return probs
+
+
 # This is similar to the compute_logprobs() method in the `DPOLoss` class.
-def get_logprobs(logits, generated_tokens, temp=0.0):
+def get_logprobs(logits, generated_tokens, top_k, top_p, temp=0.0):
     """
     Function to calculate and retrieve the log probability of each generated tokens
 
     args:
         logits (torch.Tensor): The output logits from the model, shape (b, s, v),
         generated_tokens (torch.Tensor): The generated tokens, shape (b, s),
+        top_k (int | None): limits sampling to top k most likely tokens. None to disable.
+        top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
+                                None to disable.
         temp (float): The temperature for the distribution
 
     Returns:
         torch.Tensor: The log probabilities of the generated tokens, shape (b, s)
     """
-    if temp > 0.0:
-        logits = logits / temp
-
-    logprobs = torch.log_softmax(logits, dim=-1)
+    logprobs = get_modified_distrib(logits, top_k, top_p, temp, return_logprobs=True)
 
     gen_tokens_logprobs = torch.gather(
         logprobs,
@@ -48,20 +83,10 @@ def _rejection_sampling(draft_logits, target_logits, top_k, top_p, temp):
     """
     assert temp > 0.0, "Temperature needs to be > 0.0, greedy decoding is handled separately"
 
-    if temp > 0.0:
-        target_logits = target_logits / temp
-        draft_logits = draft_logits / temp
+    target_probs = get_modified_distrib(target_logits, top_k, top_p, temp)
+    draft_probs = get_modified_distrib(draft_logits, top_k, top_p, temp)
 
-    target_probs = torch.softmax(target_logits, dim=-1)
-    draft_probs = torch.softmax(draft_logits, dim=-1)
-
-    zeroes = torch.zeros_like(target_probs)
-    adjusted_probs = torch.max(zeroes, target_probs - draft_probs)
-
-    if top_p:
-        adjusted_probs = _top_p_sampling(adjusted_probs, top_p, top_k)
-    elif top_k:
-        adjusted_probs = _top_k_sampling(adjusted_probs, top_k)
+    adjusted_probs = torch.clamp_min(target_probs - draft_probs, 0.0)
 
     adjusted_probs /= adjusted_probs.sum(dim=-1, keepdim=True)  # renormalize to sum up to 1
     next_token = torch.multinomial(adjusted_probs, num_samples=1)
@@ -149,8 +174,8 @@ def speculative_sampling(
     num_accepted = 0
     num_drafted = generated_tokens.shape[1]
 
-    draft_logprobs = get_logprobs(draft_logits, generated_tokens, temp)
-    target_logprobs = get_logprobs(target_logits[:, :-1, :], generated_tokens, temp)
+    draft_logprobs = get_logprobs(draft_logits, generated_tokens, top_k, top_p, temp)
+    target_logprobs = get_logprobs(target_logits[:, :-1, :], generated_tokens, top_k, top_p, temp)
 
     ratios = torch.exp(target_logprobs - draft_logprobs)
 
@@ -254,7 +279,7 @@ def _speculative_step(
     if temp == 0.0:
         accepted_tokens = speculative_sampling_greedy(target_logits, drafted_sequence, remaining_tokens)
     else:
-        draft_logits_tensor = torch.cat(draft_logits[:-1], dim=1)  # shape (b, γ, v)
+        draft_logits_tensor = torch.cat(draft_logits[:drafted_len], dim=1)  # shape (b, γ, v)
         # (get draft logits inside else block to avoid unnecessary computation if temp == 0.0)
         # draft_logits_tensor = draft_logits_tensor[:, curr_len - 1 : curr_len + drafted_len - 1, :]
         accepted_tokens = speculative_sampling(
