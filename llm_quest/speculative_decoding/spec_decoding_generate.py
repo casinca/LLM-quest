@@ -9,8 +9,8 @@ from llm_quest.speculative_decoding.spec_decoding_engine import speculative_gene
 from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
 
 # --- Hyperparameters ---
-max_gen = 200
-draft_max_gen = 5
+max_gen = 150
+draft_max_gen = 5  # gamma(γ) in the paper
 seed = 123
 temp = 0.0
 top_k = None
@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    target_model_config = config.config_creator("gpt_l")
+    target_model_config = config.config_creator("gpt_l")  # needs a larger model to make speculative decoding worth
     draft_model_config = config.config_creator("gpt_s")
 
     device = "cuda"
@@ -43,6 +43,10 @@ if __name__ == "__main__":
     target_model.to(device=device, dtype=torch.bfloat16).eval()
     draft_model.to(device=device, dtype=torch.bfloat16).eval()
     torch.manual_seed(seed)
+    import time
+
+    torch.manual_seed(seed)
+    start_time_speculative = time.time()
     output = speculative_generate(
         target_model=target_model,
         draft_model=draft_model,
@@ -56,47 +60,56 @@ if __name__ == "__main__":
         eos_id=50256,
         device=device,
     )
+    end_time_speculative = time.time()
     print("\nOutput from speculative decoding:")
     print(output)
+    print(output.shape)
     print("\n")
     print(ids_to_text(output, tokenizer))
+    print(f"Speculative decoding time: {end_time_speculative - start_time_speculative:.4f} seconds")
+#
+# print("-------------")
+#
+#   keeping for debugging
+#
+# torch.manual_seed(seed)
+# output2 = speculative_generate(
+#    target_model=target_model,
+#    draft_model=target_model,
+#    prompt=text_to_ids(prompt, tokenizer=tokenizer),
+#    max_gen=max_gen,
+#    context_length=target_model_config["context_length"],
+#    draft_max_gen=draft_max_gen,
+#    top_k=top_k,
+#    top_p=top_p,
+#    temp=temp,
+#    eos_id=50256,
+#    device=device,
+# )
+# print("\nOutput from speculative decoding:")
+# print(output2)
+# print("\n")
+# print(ids_to_text(output2, tokenizer))
+#
+print("-------------")
 
-    print("-------------")
-
-    #    torch.manual_seed(seed)
-    #    output2 = speculative_generate(
-    #        target_model=target_model,
-    #        draft_model=target_model,
-    #        prompt=text_to_ids(prompt, tokenizer=tokenizer),
-    #        max_gen=max_gen,
-    #        context_length=draft_context_length,
-    #        draft_max_gen=draft_max_gen,
-    #        top_k=top_k,
-    #        top_p=top_p,
-    #        temp=temp,
-    #        eos_id=50256,
-    #        device=device,
-    #    )
-    #    print("\nOutput from speculative decoding:")
-    #    print(output2)
-    #    print("\n")
-    #    print(ids_to_text(output2, tokenizer))
-    #
-    # print("-------------")
-
-    torch.manual_seed(seed)
-    output3 = generate_loop_kv_cache(
-        input_tensor=text_to_ids(prompt, tokenizer=tokenizer),
-        model=target_model,
-        max_gen=max_gen,
-        context_length=target_model_config["context_length"],
-        top_k=top_k,
-        top_p=top_p,
-        temp=temp,
-        eos_id=50256,
-        device=device,
-    )
-    print("\nOutput from target model:")
-    print(output3)
-    print("\n")
-    print(ids_to_text(output3, tokenizer))
+torch.manual_seed(seed)
+start_time_target = time.time()
+output3 = generate_loop_kv_cache(
+    input_tensor=text_to_ids(prompt, tokenizer=tokenizer),
+    model=target_model,
+    max_gen=max_gen,
+    context_length=target_model_config["context_length"],
+    top_k=top_k,
+    top_p=top_p,
+    temp=temp,
+    eos_id=50256,
+    device=device,
+)
+end_time_target = time.time()
+print("\nOutput from target model:")
+print(output3)
+print(output3.shape)
+print("\n")
+print(ids_to_text(output3, tokenizer))
+print(f"Target model time: {end_time_target - start_time_target:.4f} seconds")
