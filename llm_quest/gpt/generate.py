@@ -244,58 +244,59 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
                         - if >1, increases entropy (randomness)
                         - if <1, decreases entropy (more deterministic)
                         - if 1, untempered distribution
-    """
-
-    if temp > 0.0:
-        logits = logits / temp  # inplace update to inference tensor outside InferenceMode is not allowed
-
-    if top_p:
-        next_token = _top_p_sampling(logits, top_p, top_k)
-
-    elif top_k:
-        next_token = _top_k_sampling(logits, top_k)
-
-    elif temp > 0.0:  # sampling from the full distribution (tempered or not, if temp = 1)
-        probs = torch.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-
-    else:  # greedy decoding
-        next_token = torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
-
-    return next_token
-
-
-def _top_k_sampling(logits, k):
-    """
-    Performs top-k sampling on the logits by keeping only the k highest probability tokens.
-
-    Args:
-        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
-        k (int): Number of top tokens to keep
 
     Returns:
-        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
+        torch.Tensor: Sampled token ID from the distribution, shape (b, 1)
     """
-    top_k, top_idx = torch.topk(logits, k)
-    # initiate a tensor of the size of logits with all values set to -inf
-    filt_logits = torch.full_like(logits, -torch.inf)
-    # mapping top k values back via their idx, on the given dim (-1), in place
-    filt_logits.scatter_(-1, top_idx, top_k)
+    # TODO top_k and top_p doesn't work anymore with the new implementation
+    assert top_k is None or top_p is None, "top_k and top_p cannot be specified at the same time"
 
-    probs = torch.softmax(filt_logits, dim=-1)
+    if temp == 0.0:
+        return torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
+
+    logits = logits / temp  # inplace update to inference tensor outside InferenceMode is not allowed
+    probs = torch.softmax(logits, dim=-1)
+
+    if top_p:
+        probs = _top_p_sampling(probs, top_p, top_k)
+
+    elif top_k:
+        probs = _top_k_sampling(probs, top_k)
+
+    probs /= probs.sum(dim=-1, keepdim=True)  # renormalize new distrib/ sum up to 1
     next_token = torch.multinomial(probs, num_samples=1)
 
     return next_token
 
 
-def _top_p_sampling(logits, p, top_k=None):
+def _top_k_sampling(probs, k):
     """
-    Performs top-p nucleus sampling on the logits.
+    Performs top-k sampling on the probabilities by keeping only the k highest probability tokens.
+
+    Args:
+        probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
+        k (int): Number of top tokens to keep
+
+    Returns:
+        torch.Tensor: Sampled token IDs from the distribution, shape (b, 1)
+    """
+    top_k_probs, top_idx = torch.topk(probs, k)
+    # initiate a tensor of the size of probabilities with all values set to 0
+    filt_probs = torch.full_like(probs, 0.0)
+    # mapping top k values back via their idx, on the given dim (-1), in place
+    filt_probs.scatter_(-1, top_idx, top_k_probs)
+
+    return filt_probs
+
+
+def _top_p_sampling(probs, p, top_k=None):
+    """
+    Performs top-p nucleus sampling on the probabilities.
     The goal is to find the smallest set of top tokens whose cumulative probability is at least p.
     https://arxiv.org/abs/1904.09751
 
     Args:
-        logits (torch.Tensor): Input logits tensor representing token raw probabilities (scores), shape (b, v)
+        probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
         p (float): The cumulative probability threshold for top-p sampling, range [0.0, 1.0].
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
 
@@ -304,12 +305,10 @@ def _top_p_sampling(logits, p, top_k=None):
     """
     # limiting top-p to top-k tokens if specified
     if top_k:
-        top_k, _ = torch.topk(logits, top_k)
-        last_top_k = top_k[:, -1].unsqueeze(1)  # getting last top-k as cutoff point to mask
-        top_k_mask = logits < last_top_k
-        logits.masked_fill_(top_k_mask, -torch.inf)
-
-    probs = torch.softmax(logits, dim=-1)
+        top_k_probs, _ = torch.topk(probs, top_k)
+        last_top_k_probs = top_k_probs[:, -1].unsqueeze(1)  # getting last top-k as cutoff point to mask
+        top_k_mask = probs < last_top_k_probs
+        probs.masked_fill_(top_k_mask, 0.0)
 
     sorted_probs, og_idx = torch.sort(probs, dim=-1, descending=True)
     cum_probs = torch.cumsum(sorted_probs, dim=-1)  # CDF
@@ -322,12 +321,8 @@ def _top_p_sampling(logits, p, top_k=None):
 
     # re-assigning the sorted masked probs to the original indices
     probs.scatter_(-1, og_idx, sorted_probs)
-    # renormalize probs to sum up to 1
-    probs /= probs.sum(dim=-1, keepdim=True)
 
-    next_token = torch.multinomial(probs, num_samples=1)
-
-    return next_token
+    return probs
 
 
 # test code
@@ -395,7 +390,7 @@ if __name__ == "__main__":
 
     # ---------------------------- PART C ------- Testing generation with OpenAI's pretrained weights
 
-    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
+    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s)
 
     tokenizer = tiktoken.get_encoding("gpt2")
     model_settings = config.config_creator("gpt_s")
@@ -415,7 +410,7 @@ if __name__ == "__main__":
         max_gen=20,
         context_length=model_settings["context_length"],
         top_k=25,
-        top_p=0.9,
+        top_p=None,
         temp=1.4,
     )
 

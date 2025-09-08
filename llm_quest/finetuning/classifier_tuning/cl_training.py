@@ -29,7 +29,7 @@ val_loader = DataLoader(val_set, batch_size=batch_size, drop_last=False, num_wor
 
 
 # pretrained model params
-settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2)
+settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s)
 # model config
 model_config = config.config_creator("gpt_s")
 model_config["drop_rate"] = 0.0
