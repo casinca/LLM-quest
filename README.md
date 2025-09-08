@@ -10,6 +10,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 ## Latest
 
+- Speculative Decoding from scratch
 - Reinforcement Pretraining (RPT) from scratch
 - Qwen GSPO (Group Sequence Policy Optimization)
 - Moonshot.ai's standalone QK-Clip technique (from MuonClip) and own Magnitude-QK-Clip variant
