@@ -89,7 +89,7 @@ def _rejection_sampling(draft_logits, target_logits, top_k, top_p, temp):
     adjusted_probs = torch.clamp_min(target_probs - draft_probs, 0.0)
 
     adjusted_probs /= adjusted_probs.sum(dim=-1, keepdim=True)  # renormalize to sum up to 1
-    next_token = torch.multinomial(adjusted_probs, num_samples=1)
+    next_token = torch.multinomial(adjusted_probs, num_samples=1).squeeze(0)
 
     return next_token
 
@@ -108,6 +108,7 @@ def speculative_sampling_greedy(target_logits, generated_tokens, remaining_token
     returns:
         torch.Tensor: The accepted tokens + last token, shape (b, num_accepted + 1)
     """
+    # (vectorized overhead wasn't worth for this size and was slower than the loop)
     accepted_tokens = []
     num_accepted = 0
     num_drafted = generated_tokens.shape[1]
@@ -116,19 +117,17 @@ def speculative_sampling_greedy(target_logits, generated_tokens, remaining_token
 
     for i in range(num_drafted):
         if target_choices[0, i] == generated_tokens[0, i]:
-            accepted_tokens.append(generated_tokens[0, i].item())
+            accepted_tokens.append(generated_tokens[0, i])
             num_accepted += 1
         else:
-            next_token = target_choices[0, i]
-            accepted_tokens.append(next_token.item())
+            accepted_tokens.append(target_choices[0, i])
             break
 
     if num_accepted == num_drafted and remaining_tokens > num_drafted:
-        next_token = torch.argmax(target_logits[:, -1, :], dim=-1)
-        accepted_tokens.append(next_token.item())
+        bonus_token = torch.argmax(target_logits[:, -1, :], dim=-1)
+        accepted_tokens.append(bonus_token.squeeze(0))
 
-    accepted_tokens = torch.tensor(accepted_tokens, device=generated_tokens.device).unsqueeze(0)
-
+    accepted_tokens = torch.stack(accepted_tokens).unsqueeze(0)
     return accepted_tokens
 
 
@@ -170,9 +169,10 @@ def speculative_sampling(
     """
     assert temp > 0.0, "Temperature needs to be > 0.0, greedy decoding is handled separately"
 
-    accepted_tokens = []
     num_accepted = 0
+    accepted_tokens = []
     num_drafted = generated_tokens.shape[1]
+    random_values = torch.rand(num_drafted, device=generated_tokens.device)
 
     draft_logprobs = get_logprobs(draft_logits, generated_tokens, top_k, top_p, temp)
     target_logprobs = get_logprobs(target_logits[:, :-1, :], generated_tokens, top_k, top_p, temp)
@@ -180,11 +180,11 @@ def speculative_sampling(
     ratios = torch.exp(target_logprobs - draft_logprobs)
 
     for i in range(num_drafted):
-        r = torch.rand(1).item()
+        r = random_values[i]
 
         # acceptance condition: r < p(x) / q(x), ie if p(x) >= q(x) or probabilistically if p(x) < q(x)
         if r < ratios[0, i]:
-            accepted_tokens.append(generated_tokens[0, i].item())
+            accepted_tokens.append(generated_tokens[0, i].squeeze())
             num_accepted += 1
         else:  # rejection: we sample the last token from the adjusted distribution
             next_token = _rejection_sampling(
@@ -194,16 +194,15 @@ def speculative_sampling(
                 top_p,
                 temp,
             )
-            accepted_tokens.append(next_token.item())
+            accepted_tokens.append(next_token.squeeze())
             break
 
     # all accepted, sample bonus token from target model x ~ p_γ+1(x)
     if num_accepted == num_drafted and remaining_tokens > num_drafted:
-        next_token = sampling(target_logits[:, -1, :], top_k, top_p, temp)
-        accepted_tokens.append(next_token.item())
+        bonus_token = sampling(target_logits[:, -1, :], top_k, top_p, temp)
+        accepted_tokens.append(bonus_token.squeeze())
 
-    accepted_tokens = torch.tensor(accepted_tokens, device=generated_tokens.device).unsqueeze(0)
-
+    accepted_tokens = torch.stack(accepted_tokens).unsqueeze(0)
     return accepted_tokens
 
 
