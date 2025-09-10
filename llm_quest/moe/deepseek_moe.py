@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 
@@ -19,12 +21,12 @@ class Expert(nn.Module):
 
     def __init__(self, cfg, scaling_factor):
         super().__init__()
-        self.lin1 = nn.Linear(cfg["emb_dim"], int(scaling_factor * cfg["hidden_dim"]), dtype=cfg["dtype"], bias=False)
+        self.hidden_dim = int(scaling_factor * cfg["hidden_dim"])
+
+        self.lin1 = nn.Linear(cfg["emb_dim"], self.hidden_dim, dtype=cfg["dtype"], bias=False)
         self.silu_activ = SiLU()
-        self.lin_gate = nn.Linear(
-            cfg["emb_dim"], int(scaling_factor * cfg["hidden_dim"]), dtype=cfg["dtype"], bias=False
-        )
-        self.lin2 = nn.Linear(int(scaling_factor * cfg["hidden_dim"]), cfg["emb_dim"], dtype=cfg["dtype"], bias=False)
+        self.lin_gate = nn.Linear(cfg["emb_dim"], self.hidden_dim, dtype=cfg["dtype"], bias=False)
+        self.lin2 = nn.Linear(self.hidden_dim, cfg["emb_dim"], dtype=cfg["dtype"], bias=False)
 
     def forward(self, x):
         x1 = self.lin1(x)
@@ -48,14 +50,110 @@ class Expert_GeLU(nn.Module):
 
     def __init__(self, cfg, scaling_factor):
         super().__init__()
+        self.hidden_dim = int(4 * scaling_factor * cfg["emb_dim"])
+
         self.layers = nn.Sequential(
-            nn.Linear(cfg["emb_dim"], int(4 * cfg["emb_dim"] * scaling_factor)),
+            nn.Linear(cfg["emb_dim"], self.hidden_dim),
             GELU(),
-            nn.Linear(int(4 * cfg["emb_dim"] * scaling_factor), cfg["emb_dim"]),
+            nn.Linear(self.hidden_dim, cfg["emb_dim"]),
         )
 
     def forward(self, x):
         return self.layers(x)
+
+
+class VectorizedLinear(nn.Module):
+    """
+    This class creates a batch of `num_experts` linear layers and biases, as if we had multiple nn.Linear in a batch
+    dimension.
+    """
+
+    def __init__(self, num_experts, in_features, out_features, bias=True):
+        """
+        Args:
+            num_experts (int): Number of experts (batch dimension).
+            in_features (int): Number of input features .
+            out_features (int): Number of output features.
+            bias (bool): Whether to use bias.
+        """
+        super().__init__()
+        self.num_experts = num_experts
+        self.weight = nn.Parameter(torch.empty(num_experts, in_features, out_features))
+
+        if bias:
+            self.bias = nn.Parameter(torch.empty(num_experts, out_features))
+        else:
+            self.bias = None
+
+        self._kaiming_init()
+
+    def _kaiming_init(self):
+        """
+        Kaiming uniform initialization:
+        PyTorch copy pasta for initializing the weights of the linear layers and biases, the same way as nn.Linear:
+        https://github.com/pytorch/pytorch/blob/main/torch/nn/modules/linear.py#L117-L128
+        """
+        for i in range(self.num_experts):
+            nn.init.kaiming_uniform_(self.weight[i], a=math.sqrt(5))
+            if self.bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[i])
+                bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+                nn.init.uniform_(self.bias[i], -bound, bound)
+
+    def forward(self, x):
+        assert x.ndim == 4, "x should be (b, num_experts, s, in_features)"  # broadcasted if num_experts is 1
+        # ex shapes with first linear `self.lin1`:
+        # x.shape: (b, 1, s, emb_dim) and weight.shape: (num_experts, emb_dim, hidden_dim/out_features)
+        # output.shape we want (b, num_experts, s, hidden_dim)
+        # alt with einsum: x = torch.einsum("bnse,neh->bnsh", x, self.weight)
+        x = x @ self.weight
+
+        if self.bias is not None:
+            # bias shape: (num_experts, hidden_dim) needs to be broadcasted to (1, num_experts, 1, hidden dim)
+            x += self.bias.unsqueeze(0).unsqueeze(2)
+
+        return x  # shape (b, num_experts, s, hidden_dim)
+
+
+class VectorizedSharedExperts(nn.Module):
+    """
+    This class is the same as having a nn.ModuleList of `num_experts` Expert modules.
+    Since shared experts have the same size and are always active, we can vectorize the computation, instead of doing a
+    for loop previously:
+            for expert in self.shared_experts:
+                output += expert(x)
+
+    Now we do a batched `num_experts` feedforward pass.
+    """
+
+    def __init__(self, num_experts, cfg, scaling_factor, bias=True):
+        """
+        Args:
+            num_experts (int): Number of experts (batch dimension).
+            cfg (dict): Config dictionary containing model hyperparameters. It must include the "emb_dim",
+                which specifies the embedding dimension.
+            scaling_factor (float): A multiplier used to scale the hidden layer size.
+            bias (bool): Whether to use bias.
+        """
+        super().__init__()
+        self.hidden_dim = int(scaling_factor * cfg["hidden_dim"])
+
+        # we don't use premade nn.Linear layers anymore, we have to build the linear layers and bias manually to get a
+        # batch of "num_experts" linear layers and biases, done with `VectorizedLinear`
+        self.lin1 = VectorizedLinear(num_experts, cfg["emb_dim"], self.hidden_dim, bias)
+        self.silu = nn.functional.silu  # using pytorch's built-in SiLU than my own for speed
+        self.lin2 = VectorizedLinear(num_experts, self.hidden_dim, cfg["emb_dim"], bias)
+
+    def forward(self, x):
+        assert x.ndim == 3, "x should be (b, s, emb_dim)"
+
+        x = x.unsqueeze(1)  # unsqueeze to add the num_experts dimension (b, 1, s, emb_dim)
+
+        x = self.lin1(x)
+        x = self.silu(x)
+        x = self.lin2(x)
+
+        return torch.sum(x, dim=1)  # sum over the num_experts dimension to get back (b, s, emb_dim)
 
 
 class DeepSeekMoE(nn.Module):
@@ -88,7 +186,7 @@ class DeepSeekMoE(nn.Module):
 
         # separate experts into shared and routed groups
         self.routed_experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(self.num_routed)])
-        self.shared_experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(self.num_shared)])
+        self.shared_experts = VectorizedSharedExperts(self.num_shared, cfg, scaling_factor)
 
         # init gate and biases for routed experts only
         self.gate = nn.Linear(cfg["emb_dim"], self.num_routed, bias=True)
@@ -100,8 +198,7 @@ class DeepSeekMoE(nn.Module):
         output = torch.zeros_like(x)  # preallocating output
 
         # process shared experts (always active)
-        for expert in self.shared_experts:
-            output += expert(x)
+        output += self.shared_experts(x)
 
         # gating
         gate_logits = self.gate(x)  # shape (b,s, num_routed)
