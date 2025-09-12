@@ -77,6 +77,102 @@ class MoE(nn.Module):
     def forward(self, x):
         b, s, emb_dim = x.shape
         # gating
+        x_2d = x.view(-1, emb_dim)  # matrix/tabular view for easier indexing row/col manipulation (HF style)
+        gate_logits = self.gate(x_2d)  # shape (b*s, num_experts)
+        gate_probas = nn.functional.softmax(gate_logits, dim=-1)
+        topk_probas, topk_idxs = gate_probas.topk(self.top_k, dim=-1)  # shape (b*s, topk)
+        topk_probas /= topk_probas.sum(dim=-1, keepdim=True)  # normalize to topk range
+
+        # z router loss
+        z_router_loss = (torch.logsumexp(gate_logits, dim=-1) ** 2).mean()  # avoid overflow with torch.logsumexp()
+        # load loss
+        counts = torch.bincount(topk_idxs.view(-1), minlength=self.num_experts).to(dtype=x.dtype)
+        f_i = counts / (self.top_k * b * s)  # count of tokens dispatched to expert i / number of tokens * topk
+        p_i = torch.mean(gate_probas, dim=0)  # fraction of probas dispatched to expert i / number of tokens
+        load_loss = self.num_experts * torch.dot(f_i, p_i)
+        # overall loss
+        self.moe_loss = self.z_router_coeff * z_router_loss + self.load_coeff * load_loss
+
+        output = torch.zeros_like(x_2d)  # preallocating output size
+
+        # Optimized implementation: We only loop through activated/hit experts and use atomic writes via `index_add_`
+        # create a mask of one hot `num_experts` matrices where True/1 position means:
+        # which top-k slot (col) and token (row) are assigned to that expert
+        # shape (b*s, topk, num_experts) → (num_experts, topk, b*s)
+        expert_mask = torch.nn.functional.one_hot(topk_idxs, num_classes=self.num_experts).permute(2, 1, 0)
+        # find which experts (via their idx) are actually used
+        expert_hit_count = expert_mask.sum(dim=(-1, -2))
+        expert_hit_idx = torch.where(expert_hit_count > 0)[0]  # [0] to unpack single elem tuple
+
+        # dispatching
+        for idx in expert_hit_idx:
+            # retrieve the current expert's one hot mask
+            expert_assignment = expert_mask[idx]  # shape (topk, b*s)
+            # retrieve token's coordinates assigned to the current expert
+            topk_pos, token_idx = torch.where(expert_assignment)
+
+            # retrieve selected tokens and weights via the above indices
+            selected_tokens = x_2d[token_idx]  # shape (num_selected_tokens, emb_dim)
+            selected_weights = topk_probas[token_idx, topk_pos].unsqueeze(-1)  # shape (num_selected_tokens, 1)
+
+            # compute weighted expert res and update via index, efficiently, the preallocated output tensor
+            expert_output = self.experts[idx](selected_tokens) * selected_weights
+            output.index_add_(dim=0, index=token_idx, source=expert_output)
+
+        output = output.view(b, s, emb_dim)  # reshape back to original 3D shape
+        return output
+
+
+# Original unoptimized implementation for reference
+class MoE_old(nn.Module):
+    """Mixture of Experts (MoE) layer.
+
+    This layer implements a sparse MoE, where a gate selects a subset of experts for each token.
+    The outputs from the selected experts are then combined to produce the final output.
+
+    Args:
+        cfg (dict): Config dictionary containing model hyperparameters. It must include "emb_dim",
+            which specifies the embedding dimension.
+        num_experts (int): Total number of experts.
+        top_k (int): Number of experts to select
+        scaling_factor (float or "auto"): Scaling factor for the hidden layer size of each expert:
+            - If "auto", will automatically downscale active experts to match GPT2 FFN size
+            - If 1, each expert has the same hidden size as the original GPT2 FFN
+            - If < 1, each expert has a smaller hidden size than the original GPT2 FFN, inversely for > 1
+        load_coeff (float): Coefficient for the load balancing loss.
+        z_router_coeff (float): Coefficient for the router z-loss.
+
+    Attributes:
+        moe_loss (torch.Tensor): Total moe loss, combining load balancing and router z-loss.
+    """
+
+    def __init__(
+        self,
+        cfg,
+        num_experts=8,
+        top_k=2,
+        scaling_factor="auto",
+        load_coeff=10e-2,
+        z_router_coeff=1e-3,
+    ):
+        super().__init__()
+        assert (scaling_factor == "auto") or (
+            cfg["emb_dim"] % scaling_factor == 0
+        ), "emb_dim must be divisible by scaling_factor"
+        assert 0 < top_k <= num_experts, "top_k must be > 0 and and <= num_experts"
+
+        if scaling_factor == "auto":
+            scaling_factor = 1 / top_k
+        self.experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(num_experts)])
+        self.gate = nn.Linear(cfg["emb_dim"], num_experts, bias=True)
+        self.top_k = top_k
+        self.num_experts = num_experts
+        self.load_coeff = load_coeff
+        self.z_router_coeff = z_router_coeff
+
+    def forward(self, x):
+        b, s, emb_dim = x.shape
+        # gating
         gate_logits = self.gate(x)  # shape (b,s, num_experts)
         gate_probas = nn.functional.softmax(gate_logits, dim=-1)
         topk_probas, topk_idxs = gate_probas.topk(self.top_k, dim=-1)  # shape (b,s, topk)
