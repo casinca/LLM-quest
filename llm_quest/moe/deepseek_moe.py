@@ -194,43 +194,40 @@ class DeepSeekMoE(nn.Module):
         self.bias_update_rate = bias_update_rate
 
     def forward(self, x):
-        # b, s, emb_dim = x.shape
-        output = torch.zeros_like(x)  # preallocating output
+        b, s, emb_dim = x.shape
+        x_2d = x.view(-1, emb_dim)
+        output = torch.zeros_like(x_2d)  # preallocating output
 
         # process shared experts (always active)
-        output += self.shared_experts(x)
+        output += self.shared_experts(x).view(-1, emb_dim)
 
         # gating
-        gate_logits = self.gate(x)  # shape (b,s, num_routed)
+        gate_logits = self.gate(x_2d)  # shape (b*s, num_routed)
         gate_probas = nn.functional.softmax(gate_logits, dim=-1)  # we want unbiased probas for weighting
         # adding biases for load balance and top-k experts selection
         biased_probas = gate_probas + self.biases
-        topk_idxs = biased_probas.topk(self.top_k, dim=-1)[1]  # shape (b,s, topk)
+        topk_idxs = biased_probas.topk(self.top_k, dim=-1)[1]  # shape (b*s, topk)
         # retrieving topk probas and normalizing to topk range
         topk_probas = torch.gather(gate_probas, dim=-1, index=topk_idxs)
         topk_probas /= topk_probas.sum(dim=-1, keepdim=True)
 
-        # dispatching (unoptimized)
-        for expert_idx in range(self.num_routed):
-            # computing the mask once for weights and tokens selection
-            weight_mask = expert_idx == topk_idxs
-            # mask for tokens assigned to the ith expert across all topk
-            mask = weight_mask.any(dim=-1)  # shape (b, s, topk) → (b, s)
+        # --- Same logic as `MoE` class in classic_moe.py (less commented here for brevity) ---
+        # We only loop through activated/hit experts and use atomic writes via `index_add_`
+        # shape (b*s, topk, num_experts) → (num_experts, topk, b*s)
+        expert_mask = torch.nn.functional.one_hot(topk_idxs, num_classes=self.num_routed).permute(2, 1, 0)
+        expert_hit_count = expert_mask.sum(dim=(-1, -2))
+        expert_hit_idx = torch.where(expert_hit_count > 0)[0]
 
-            if mask.any():
-                # retrieving weights for the ith expert across all topk (summed)
-                # shape (b, s, topk) → (b, s)
-                expert_weights = (topk_probas * weight_mask).sum(dim=-1)
+        # dispatching
+        for idx in expert_hit_idx:
+            expert_assignment = expert_mask[idx]  # shape (topk, b*s)
+            topk_pos, token_idx = torch.where(expert_assignment)
 
-                # select tokens and weights using the same mask
-                # shape (b, s, emb_dim) → (num_selected_tokens, emb_dim)
-                selected_tokens = x[mask]
-                # shape (b, s) → (num_selected_tokens) → (num_selected_tokens, 1) broadcast for elem-wise mult
-                selected_weights = expert_weights[mask].unsqueeze(-1)
+            selected_tokens = x_2d[token_idx]  # shape (num_selected_tokens, emb_dim)
+            selected_weights = topk_probas[token_idx, topk_pos].unsqueeze(-1)  # shape (num_selected_tokens, 1)
 
-                # compute weighted output
-                expert_output = self.routed_experts[expert_idx](selected_tokens) * selected_weights
-                output[mask] += expert_output
+            expert_output = self.routed_experts[idx](selected_tokens) * selected_weights
+            output.index_add_(dim=0, index=token_idx, source=expert_output)
 
         # updating biases with the violation error per the paper
         # counts is a vector of the number of tokens dispatched to each expert in the batch, shape (num_routed)
@@ -239,6 +236,7 @@ class DeepSeekMoE(nn.Module):
         self.biases += self.bias_update_rate * vio_error.sign()
         self.max_vio = max_violation_batch(counts)  # optional to calc DeepSeek's max violation metric
 
+        output = output.view(b, s, emb_dim)
         return output
 
 

@@ -95,6 +95,7 @@ class MoE(nn.Module):
 
         output = torch.zeros_like(x_2d)  # preallocating output size
 
+        # Optimized implementation: We only loop through activated/hit experts and use atomic writes via `index_add_`
         # create a mask of one hot `num_experts` matrices where True/1 position means:
         # which top-k slot (col) and token (row) are assigned to that expert
         # shape (b*s, topk, num_experts) → (num_experts, topk, b*s)

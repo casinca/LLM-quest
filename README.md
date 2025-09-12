@@ -120,7 +120,6 @@ original GPT-2.
 
 ## potential TODOs
 - non hardcoded cuda devices
-- vectorize MoE dispatching while keeping the code readable
 - reorganize activation and normalization functions in dedicated modules
 - nested TODOs
 - Confusing names: model attn_mask arg (padding tokens only) and attention_mask used as loss mask for alignment
