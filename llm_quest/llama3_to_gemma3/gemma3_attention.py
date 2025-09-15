@@ -165,16 +165,19 @@ class GroupedQueryAttention(nn.Module):
         self.num_kv_groups = num_kv_groups  # (if 1 = MQA, if num_heads = MHA, 1 < GQA < num_heads)
         self.num_repeat = self.num_heads // self.num_kv_groups
         self.att_scaling = self.head_dim**-0.5
+
         self.w_queries = nn.Linear(d_in, d_out, bias=False, dtype=dtype)
         # K and V projected onto num_kv_groups * head_dim, parameter efficiency of GQA
         self.w_keys = nn.Linear(d_in, num_kv_groups * self.head_dim, bias=False, dtype=dtype)
         self.w_values = nn.Linear(d_in, num_kv_groups * self.head_dim, bias=False, dtype=dtype)
+
         self.out_proj = nn.Linear(d_out, d_out, dtype=dtype)  # optional additional learnable params for the output
         self.window_size = window_size
         self.layer_id = layer_id
         self.lg_ratio = local_global_att_ratio + 1  # +1 for 0 indexing fix
-        self.q_ln = LayerNorm(self.head_dim)
-        self.k_ln = LayerNorm(self.head_dim)
+
+        self.q_norm = LayerNorm(self.head_dim)
+        self.k_norm = LayerNorm(self.head_dim)
 
     def forward(self, x, mask, cos, sin, swa_mask=None):
         queries = self.w_queries(x)  # shape (b, s, d_out)
@@ -198,8 +201,8 @@ class GroupedQueryAttention(nn.Module):
         queries = RoPE.apply(queries, cos, sin)
         keys = RoPE.apply(keys, cos, sin)
         # QK Norm (after RoPE, since we need og vectors for rotating)
-        queries = self.q_ln(queries)
-        keys = self.k_ln(keys)
+        queries = self.q_norm(queries)
+        keys = self.k_norm(keys)
         # need to duplicate "num_repeat" time K and V n_heads to match Q n_heads for matmul
         # ex: Q 2,10,6,5 !@ (2,2,6,5).T →  (*5 num_repeat=10/2) → Q @ (2,10,6,5).T
         # in our ex, since we are duping K heads (1st head 5 times, 2nd 5 times), each group of 5 query heads will

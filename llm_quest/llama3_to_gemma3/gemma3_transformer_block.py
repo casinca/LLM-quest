@@ -5,9 +5,8 @@ import torch.nn as nn
 
 from llm_quest.llama3_to_gemma3.gemma3_attention import GroupedQueryAttention
 
-# add: - GeGLU
-#
-# remove: - SwiGLU
+# add: GeGLU
+# remove: SwiGLU
 
 
 # RMSNorm is used instead of LayerNorm for the "normalization" of the embeddings
@@ -93,12 +92,12 @@ class FFN(nn.Module):
 
 class TransformerBlock(nn.Module):
     """
-    Implements a complete Transformer block with self-attention.
+    Implements a complete Transformer block
 
     This block consists of the following components:
-    1. Multi-Head Self-Attention
-    2. RMS Normalization
-    3. Feed-Forward Neural Network
+    1. Grouped Query Attention
+    2. RMS Normalization (pre-normalization)
+    3. Feed-Forward Neural Network with GeGLU
     4. Residual connections
 
     Args:
@@ -106,6 +105,9 @@ class TransformerBlock(nn.Module):
             - emb_dim (int): Embedding dimension
             - context_length (int): Context length for attention
             - n_heads (int): Number of attention heads
+            - num_kv_groups (int): Number of key-value groups for GQA
+            - window_size (int): Window size for SWA
+            - local_global_att_ratio (int): Local-global attention ratio
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
