@@ -3,7 +3,6 @@ import torch.nn as nn
 
 from llm_quest.gpt_to_llama3.llama_attention import GroupedQueryAttention
 
-
 # add: - RMSNorm
 #      - SwiGlu
 #      - dtype setting
@@ -92,12 +91,12 @@ class FFN(nn.Module):
 
 class TransformerBlock(nn.Module):
     """
-    Implements a complete Transformer block with self-attention.
+    Implements a complete Transformer block
 
     This block consists of the following components:
-    1. Multi-Head Self-Attention
-    2. RMS Normalization
-    3. Feed-Forward Neural Network
+    1. Grouped Query Attention
+    2. RMS Normalization (pre-normalization)
+    3. Feed-Forward Neural Network with SwiGLU
     4. Residual connections
 
     Args:
@@ -105,6 +104,7 @@ class TransformerBlock(nn.Module):
             - emb_dim (int): Embedding dimension
             - context_length (int): Context length for attention
             - n_heads (int): Number of attention heads
+            - num_kv_groups (int): Number of key-value groups for GQA
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
@@ -122,11 +122,12 @@ class TransformerBlock(nn.Module):
         self.ffn = FFN(cfg)
 
     def forward(self, x, mask, cos, sin):
-
+        # Pre-norm arch
         residual = x
         x = self.norm_1(x)
         x = self.att(x, mask, cos, sin)
         x = x + residual
+
         residual = x
         x = self.norm_2(x)
         x = self.ffn(x)
