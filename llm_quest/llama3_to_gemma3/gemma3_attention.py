@@ -216,7 +216,7 @@ class GroupedQueryAttention(nn.Module):
         else:
             att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
             # mask up to seq length/num of tokens
-            current_mask = mask.bool()[:seq_len, :seq_len]
+            current_mask = mask[:seq_len, :seq_len]
             # scaling by √(head_dim)
             scaled_att_scores = att_scores * self.att_scaling
             # masking in place and normalizing with softmax

@@ -23,7 +23,7 @@ class GlobalBuffers:
         key = (ctx_len, rope_base, head_dim)
 
         if key not in GlobalBuffers._buffer:
-            mask = torch.triu(torch.ones(ctx_len, ctx_len), diagonal=1)
+            mask = torch.triu(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=1)
             cos, sin = RoPE.compute_angles(rope_base, head_dim, ctx_len, smooth_scaling_cfg)
 
             GlobalBuffers._buffer[key] = (mask, cos, sin)

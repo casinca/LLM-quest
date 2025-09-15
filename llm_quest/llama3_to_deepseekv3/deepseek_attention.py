@@ -95,7 +95,7 @@ class MultiLatentAttention(nn.Module):
         # attention
         att_scores = queries @ keys.mT
         # mask up to seq length/num of tokens
-        current_mask = mask.bool()[:seq_len, :seq_len]
+        current_mask = mask[:seq_len, :seq_len]
         # scaling by √(head_dim + decoup_head_dim)
         scaled_att_scores = att_scores * self.att_scaling
         # masking in place and normalizing with softmax
