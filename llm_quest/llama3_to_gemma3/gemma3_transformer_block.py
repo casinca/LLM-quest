@@ -59,14 +59,27 @@ class FFN(nn.Module):
     """
     This class implements a Feed Forward Neural Network with GeGLU activation.
     GeGLU(x) = (xW + b) ⊗ GELU(xV + c) then we project back onto the emb space with a 3rd linear transform.
-    implementation applies GELU to the first branch and not the gate.
+    (note: +b and +c if bias=True)
+    which gives FFN_GeGLU(x, W, V, W2) = (GELU(xW) ⊗ xV)W2
 
-    The gate linear transform is used for a bilinear transformation with the output of the 1st layer in order to scale
-    (eg, amplify or dampens) the hidden states before projecting back onto the embedding space.
+    The linear gate transform is used for a bilinear transformation with the output of the 1st layer in order to scale
+    (eg, amplify or dampens) the hidden states before projecting back onto the embedding space (with the last linear
+    layer).
 
-    The network consists of three linear layers (with no biases) and a GELU activation function,
-    structured as follows:
-    x ⇉ (Linear1 → GELU) * (Linear_gate) → Linear2 → output
+    So the network consists of three linear layers and a GELU activation function structured as
+    follows:
+
+    #
+    #       ┌─────────┐
+    # x ───►Linear_gate ─────► ┌──────┐
+    #       └─────────┘          │ GELU │───┐
+    #                            └──────┘   │
+    #                                      ▼
+    #                                      * (Elem-wise mult) ─────► ┌─────────┐
+    #                                      ▲                         │ Linear2 │───► output
+    #       ┌───────────┐                  │                          └─────────┘
+    # x ───►  Linear1  │──────────────────┘
+    #       └───────────┘
 
     Args:
         cfg (dict): Config dictionary containing:
@@ -75,19 +88,19 @@ class FFN(nn.Module):
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg):
         super().__init__()
         self.lin1 = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
-        self.gelu_activ = GELU()
         self.lin_gate = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
+        self.gelu_activ = GELU()
         self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"], dtype=cfg["dtype"], bias=False)
 
     def forward(self, x):
+        x_gate = self.lin_gate(x)
+        x_gate = self.gelu_activ(x_gate)
         x1 = self.lin1(x)
-        x1 = self.gelu_activ(x1)
-        x2 = self.lin_gate(x)
 
-        return self.lin2(x1 * x2)
+        return self.lin2(x1 * x_gate)
 
 
 class TransformerBlock(nn.Module):
