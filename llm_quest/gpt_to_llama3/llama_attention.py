@@ -67,7 +67,7 @@ class GroupedQueryAttention(nn.Module):
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
-        # applying pos embedding with RopE
+        # rotating features for positional information, with RoPE
         queries = RoPE.apply(queries, cos, sin)
         keys = RoPE.apply(keys, cos, sin)
         # need to duplicate "num_repeat" time K and V n_heads to match Q n_heads for matmul

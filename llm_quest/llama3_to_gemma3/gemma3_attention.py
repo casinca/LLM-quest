@@ -197,7 +197,7 @@ class GroupedQueryAttention(nn.Module):
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
-        # applying pos embedding with RopE
+        # rotating features for positional information, with RoPE
         queries = RoPE.apply(queries, cos, sin)
         keys = RoPE.apply(keys, cos, sin)
         # QK Norm (after RoPE, since we need og vectors for rotating)
