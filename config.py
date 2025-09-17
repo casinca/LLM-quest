@@ -170,6 +170,110 @@ def config_creator(gpt_size):
     return new_config
 
 
+def qwen3_config_creator(model_size="0.6B-Base"):
+    """
+    Get Qwen3 model configuration for different model sizes.
+
+    Args:
+        model_size (str): Model size identifier ("0.6B-Base", "0.6B", "1.7B", "4B", "30B-A3B")
+
+    Returns:
+        dict: Configuration dictionary for the specified model size
+    """
+    # common hparams
+    base_config = {
+        "vocab_size": 151_669,
+        "rope_base": 1_000_000,
+        "head_dim": 128,
+        "dtype": torch.bfloat16,
+        # "rms_norm_eps": 1e-06,
+    }
+
+    configs = {
+        "temp_dense": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 896,
+            "n_layers": 12,
+            "n_heads": 8,
+            "num_kv_groups": 4,
+            "hidden_dim": 4 * 896,
+            "context_length": 512,
+            "tie_embeddings": True,
+        },
+        ### Dense configs ###
+        #  matching: # https://huggingface.co/Qwen/Qwen3-0.6B-Base/blob/main/config.json
+        "0.6B-Base": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 1024,
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 3072,
+            "context_length": 40_960,
+            "tie_embeddings": True,
+            "vocab_size": 151_936,
+        },
+        # https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/config.json
+        "0.6B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 1024,
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 3072,
+            "context_length": 40_960,
+            "tie_embeddings": True,
+            "vocab_size": 151_936,
+        },
+        "1.7B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 1536,
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 8960,
+            "context_length": 32768,
+            "tie_embeddings": True,
+        },
+        "4B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 2560,
+            "n_layers": 36,
+            "n_heads": 32,
+            "num_kv_groups": 8,
+            "hidden_dim": 6912,
+            "context_length": 131072,
+            "tie_embeddings": True,
+        },
+        ### MoE config ###
+        # TODO needs to be rechecked to match our MoE implementation
+        # https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json
+        "30B-A3B": {
+            **base_config,
+            "model_type": "moe",
+            "emb_dim": 3584,
+            "n_layers": 48,
+            "n_heads": 32,
+            "num_kv_groups": 4,
+            "hidden_dim": 1152,  # Per expert hidden dim (3B activated / ~2.6 scaling)
+            "context_length": 131072,
+            "tie_embeddings": False,
+            "num_experts": 128,
+            "top_k": 8,
+        },
+    }
+
+    if model_size not in configs:
+        raise ValueError(f"Unknown model size: {model_size}. Available sizes: {list(configs.keys())}")
+
+    return configs[model_size]
+
+
 # ----------- PATHS -----------
 
 # Get the relative path (of the config file, at root) convert to absolute directory
