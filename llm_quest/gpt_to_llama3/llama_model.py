@@ -57,7 +57,7 @@ class Llama3Model(nn.Module):
         self.register_buffer("sin", sin)
 
         assert self.emb_dict.weight.shape == self.out_head.weight.shape, "Shape mismatch for weight tying"
-        self.emb_dict.weight = self.out_head.weight  # weights tying
+        self.out_head.weight = self.emb_dict.weight  # weights tying
 
     # TODO attention mask fused with causal
     # (for now ghost argument for backward compatibility with evaluation _calc_loss_batch())

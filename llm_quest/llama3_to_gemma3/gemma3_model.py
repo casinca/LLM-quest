@@ -47,7 +47,7 @@ class Gemma3Model(nn.Module):
         self.register_buffer("sin", sin)
         self.register_buffer("swa_mask", swa_mask)
 
-        self.emb_dict.weight = self.out_head.weight  # weights tying
+        self.out_head.weight = self.emb_dict.weight  # weights tying
 
     # TODO attention mask (for now ghost argument for backward compatibility with evaluation _calc_loss_batch())
     def forward(self, x, attn_mask=None):
