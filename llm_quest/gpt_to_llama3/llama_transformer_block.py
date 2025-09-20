@@ -25,14 +25,17 @@ class RMSNorm(nn.Module):
         emb_dim (int): The dimension of the embeddings to "normalize" over.
     """
 
-    def __init__(self, emb_dim):
+    def __init__(self, emb_dim, dtype=None):
         super().__init__()
-        self.eps = 1e-5
-        self.scale = nn.Parameter(torch.ones(emb_dim))  # γ scale factor (linear coeff)
+        self.eps = 1e-6
+        self.scale = nn.Parameter(torch.ones(emb_dim, dtype=dtype))  # γ scale factor (linear coeff)
 
     def forward(self, x):
-        norm_x = x / (torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)) + self.eps)
-        return self.scale * norm_x
+        input_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        norm_x = x / (torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)) + self.eps)  # sensitive RMS part in fp32
+        return self.scale * norm_x.to(input_dtype)  # partial cast (full cast: (self.scale * norm_x).to(input_dtype))
 
 
 class SiLU(nn.Module):
