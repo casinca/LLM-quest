@@ -35,7 +35,7 @@ class Qwen3Model(nn.Module):
                 [TransformerBlock(cfg) for layer in range(cfg["n_layers"])],
             )
 
-        self.final_norm = PytorchRMSNorm(cfg["emb_dim"])
+        self.final_norm = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
 
         # Weight tying based on model configuration
         # this part is only useful for either: pretraining or reducing memory allocation before loading weights

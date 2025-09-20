@@ -81,8 +81,8 @@ class TransformerBlock(nn.Module):
             head_dim=cfg["head_dim"],
             dtype=cfg["dtype"],
         )
-        self.norm1 = PytorchRMSNorm(cfg["emb_dim"])
-        self.norm2 = PytorchRMSNorm(cfg["emb_dim"])
+        self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
     def forward(self, x, mask, cos, sin):

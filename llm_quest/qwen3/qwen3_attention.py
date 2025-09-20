@@ -6,6 +6,13 @@ from llm_quest.common.rope import RoPE
 
 
 # NOTE RMSNorm has already been implemented, using Pytorch's RMSNorm for changing
+# NOTE FOR REPRO:
+# Can't partially cast Pytorch's RMSNorm to fp32 vs HF's impl (weights aren't promoted to fp32, only RMS part)
+# if using pytorch RMSNorm, some prompts partially diverge
+# if using our own fullcast to fp32, prompts match 100% of the time
+# if using our own partial cast, some prompts partially diverge
+# it's counterintuitive but maybe because of @use_kernel_forward_from_hub("RMSNorm") that overrides their partial cast
+# with a fullcast?
 # TODO:
 # - use from scratch but more efficient, if as fast as Pytorch
 # - put all normalizations in common and import from there
@@ -14,11 +21,12 @@ class PytorchRMSNorm(torch.nn.RMSNorm):
     Wrapper of Pytorch's RMSNorm.
     """
 
-    def __init__(self, emb_dim, eps=1e-6, dtype=torch.float32):
+    def __init__(self, emb_dim, eps=1e-6, dtype=None):
         super().__init__(emb_dim, eps=eps, dtype=dtype)
 
     def forward(self, x):
-        return super().forward(x).to(x.dtype)
+        input_dtype = x.dtype
+        return super().forward(x.to(torch.float32)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
 
 class GroupedQueryAttention(nn.Module):
@@ -65,8 +73,8 @@ class GroupedQueryAttention(nn.Module):
         self.w_values = nn.Linear(d_in, num_kv_groups * self.head_dim, bias=False, dtype=dtype)
         self.out_proj = nn.Linear(self.d_out, d_in, bias=False, dtype=dtype)
 
-        self.q_norm = PytorchRMSNorm(self.head_dim)
-        self.k_norm = PytorchRMSNorm(self.head_dim)
+        self.q_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
+        self.k_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
 
     def forward(self, x, mask, cos, sin):
         queries = self.w_queries(x)  # shape (b, s, d_out)
