@@ -170,6 +170,7 @@ def config_creator(gpt_size):
     return new_config
 
 
+# TODO needs to check for other models than -BASE to avoid redundant configs
 def qwen3_config_creator(model_size="0.6B-Base"):
     """
     Get Qwen3 model configuration for different model sizes.
@@ -182,7 +183,7 @@ def qwen3_config_creator(model_size="0.6B-Base"):
     """
     # common hparams
     base_config = {
-        "vocab_size": 151_669,
+        "vocab_size": 151_936,
         "rope_base": 1_000_000,
         "head_dim": 128,
         "dtype": torch.bfloat16,
@@ -215,7 +216,6 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "hidden_dim": 3072,  # (also called intermediate_size)
             "context_length": 40_960,  # (also called max_position_embeddings)
             "tie_embeddings": True,
-            "vocab_size": 151_936,
         },
         # https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/config.json
         "0.6B": {
@@ -228,17 +228,16 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "hidden_dim": 3072,
             "context_length": 40_960,
             "tie_embeddings": True,
-            "vocab_size": 151_936,
         },
         "1.7B": {
             **base_config,
             "model_type": "dense",
-            "emb_dim": 1536,
+            "emb_dim": 2048,
             "n_layers": 28,
             "n_heads": 16,
             "num_kv_groups": 8,
-            "hidden_dim": 8960,
-            "context_length": 32768,
+            "hidden_dim": 6144,
+            "context_length": 40_960,
             "tie_embeddings": True,
         },
         "4B": {
@@ -248,8 +247,8 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "n_layers": 36,
             "n_heads": 32,
             "num_kv_groups": 8,
-            "hidden_dim": 6912,
-            "context_length": 131072,
+            "hidden_dim": 9728,
+            "context_length": 40_960,
             "tie_embeddings": True,
         },
         ### MoE config ###
@@ -277,7 +276,7 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "num_kv_groups": 4,
             "hidden_dim": 6144,  # (also called intermediate_size, FFN hidden dim not used here for hybrid archs)
             "moe_hidden_dim": 768,  # (also called moe_intermediate_size)  (3B activated / ~2.6 scaling)
-            "context_length": 131072,  # (also called max_position_embeddings)
+            "context_length": 40_960,  # (also called max_position_embeddings)
             "tie_embeddings": False,
             "num_experts": 128,
             "top_k": 8,  # (also called num_experts_per_tok)
