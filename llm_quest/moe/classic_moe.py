@@ -69,7 +69,7 @@ class MoE(nn.Module):
 
         if scaling_factor == "auto":
             scaling_factor = 1 / top_k
-        self.experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(num_experts)])
+        self.experts = nn.ModuleList([ExpertGeLU(cfg, scaling_factor) for _ in range(num_experts)])
         self.gate = nn.Linear(cfg["emb_dim"], num_experts, bias=True)
         self.top_k = top_k
         self.num_experts = num_experts
@@ -165,7 +165,7 @@ class MoE_old(nn.Module):
 
         if scaling_factor == "auto":
             scaling_factor = 1 / top_k
-        self.experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(num_experts)])
+        self.experts = nn.ModuleList([ExpertGeLU(cfg, scaling_factor) for _ in range(num_experts)])
         self.gate = nn.Linear(cfg["emb_dim"], num_experts, bias=True)
         self.top_k = top_k
         self.num_experts = num_experts

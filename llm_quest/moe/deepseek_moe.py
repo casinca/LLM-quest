@@ -3,7 +3,6 @@ import math
 import torch
 import torch.nn as nn
 
-from llm_quest.gpt.gpt_transformer_block import GELU
 from llm_quest.gpt_to_llama3.llama_transformer_block import SiLU
 
 
