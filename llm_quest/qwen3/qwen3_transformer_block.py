@@ -1,5 +1,6 @@
 import torch.nn as nn
 
+from llm_quest.moe.qwen3_moe import Qwen3MoE
 from llm_quest.qwen3.qwen3_attention import GroupedQueryAttention, PytorchRMSNorm
 
 
@@ -95,6 +96,40 @@ class TransformerBlock(nn.Module):
         residual = x
         x = self.norm2(x)
         x = self.ffn(x)
+        x = x + residual
+
+        return x
+
+
+class MoETransformerBlock(nn.Module):
+    """
+    Implements a Qwen3 Transformer block with Mixture of Experts.
+    Same as Dense transformer block, but with MoE instead of FFN.
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = GroupedQueryAttention(
+            d_in=cfg["emb_dim"],
+            num_heads=cfg["n_heads"],
+            num_kv_groups=cfg["num_kv_groups"],
+            head_dim=cfg["head_dim"],
+            dtype=cfg["dtype"],
+        )
+        self.norm_1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.norm_2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.moe = Qwen3MoE(cfg=cfg, training=self.training)
+
+    def forward(self, x, mask, cos, sin):
+        # Pre-normalization architecture
+        residual = x
+        x = self.norm_1(x)
+        x = self.att(x, mask, cos, sin)
+        x = x + residual
+
+        residual = x
+        x = self.norm_2(x)
+        x = self.moe(x)  # Use MoE instead of regular FFN
         x = x + residual
 
         return x
