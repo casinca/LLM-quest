@@ -36,32 +36,6 @@ class Expert(nn.Module):
         return self.lin2(x1 * x2)
 
 
-class Expert_GeLU(nn.Module):
-    """A single expert for the Mixture of Experts (MOE) architecture.
-
-    This class is the same as GPT2 FFN but allowing modular hidden size with the argument scaling_factor, in order to
-    allow more fine-grained control over experts.
-
-    Args:
-        cfg (dict): Config dictionary containing model hyperparameters. It must include the "emb_dim",
-            which specifies the embedding dimension.
-        scaling_factor (float): A multiplier used to scale the hidden layer size.
-    """
-
-    def __init__(self, cfg, scaling_factor):
-        super().__init__()
-        self.hidden_dim = int(4 * scaling_factor * cfg["emb_dim"])
-
-        self.layers = nn.Sequential(
-            nn.Linear(cfg["emb_dim"], self.hidden_dim),
-            GELU(),
-            nn.Linear(self.hidden_dim, cfg["emb_dim"]),
-        )
-
-    def forward(self, x):
-        return self.layers(x)
-
-
 class VectorizedLinear(nn.Module):
     """
     This class creates a batch of `num_experts` linear layers and biases, as if we had multiple nn.Linear in a batch

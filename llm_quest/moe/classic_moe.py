@@ -4,11 +4,11 @@ import torch.nn as nn
 from llm_quest.gpt.gpt_transformer_block import GELU
 
 
-class Expert(nn.Module):
+class ExpertGeLU(nn.Module):
     """A single expert for the Mixture of Experts (MOE) architecture.
 
-    This class is the same as the GPT2 FFN but allowing modular hidden size with the argument scaling_factor, in order
-    to allow more fine-grained control over experts' hidden size.
+    This class is the same as GPT2 FFN but allowing modular hidden size with the argument scaling_factor, in order to
+    allow more fine-grained control over experts.
 
     Args:
         cfg (dict): Config dictionary containing model hyperparameters. It must include the "emb_dim",
@@ -18,10 +18,12 @@ class Expert(nn.Module):
 
     def __init__(self, cfg, scaling_factor):
         super().__init__()
+        self.hidden_dim = int(4 * scaling_factor * cfg["emb_dim"])
+
         self.layers = nn.Sequential(
-            nn.Linear(cfg["emb_dim"], int(4 * cfg["emb_dim"] * scaling_factor)),
+            nn.Linear(cfg["emb_dim"], self.hidden_dim),
             GELU(),
-            nn.Linear(int(4 * cfg["emb_dim"] * scaling_factor), cfg["emb_dim"]),
+            nn.Linear(self.hidden_dim, cfg["emb_dim"]),
         )
 
     def forward(self, x):
