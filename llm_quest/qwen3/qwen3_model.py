@@ -76,7 +76,7 @@ if __name__ == "__main__":
     import config
 
     torch.manual_seed(123)
-    model = Qwen3Model(config.qwen3_config_creator("temp_dense"))
+    model = Qwen3Model(config.qwen3_config_creator("temp_moe"))
 
     sample_input = torch.randint(0, 1000, (2, 10))  # b=2, seq_len=10
     output = model(sample_input)

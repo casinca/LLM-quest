@@ -262,7 +262,7 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "moe_hidden_dim": 4 * 896,
             "context_length": 512,
             "tie_embeddings": False,
-            "num_experts": 32,
+            "num_experts": 16,
             "top_k": 4,
             "aux_loss_coef": 0.001,
         },
