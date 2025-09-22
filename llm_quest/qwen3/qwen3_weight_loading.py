@@ -102,25 +102,25 @@ def load_qwen3_weights(model, model_cfg):
     ### Download weights ###
     try:
         print("Downloading weights file...")
-        if model_type == "moe":
-            # This part of the code is from @rasbt for loading sharded weights
-            repo_dir = snapshot_download(repo_id=hf_model_name)
+        # snapshot_download for both large or MoE to handle multi-file models
+        # this part of the code is from @rasbt for loading sharded weights
+        repo_dir = snapshot_download(repo_id=hf_model_name)
 
-            # Load model index to find all weight files
-            index_path = os.path.join(repo_dir, "model.safetensors.index.json")
-            if os.path.exists(index_path):
-                with open(index_path, "r") as f:
-                    index = json.load(f)
+        # Load model index to find all weight files
+        index_path = os.path.join(repo_dir, "model.safetensors.index.json")
+        if os.path.exists(index_path):
+            with open(index_path, "r") as f:
+                index = json.load(f)
 
-                # Load weights from all shards
-                hf_state_dict = {}
-                for filename in set(index["weight_map"].values()):
-                    shard_path = os.path.join(repo_dir, filename)
-                    shard = load_file(shard_path)
-                    hf_state_dict.update(shard)
-                print(f"Successfully loaded weights from {len(set(index['weight_map'].values()))} files")
+            # Load weights from all shards
+            hf_state_dict = {}
+            for filename in set(index["weight_map"].values()):
+                shard_path = os.path.join(repo_dir, filename)
+                shard = load_file(shard_path)
+                hf_state_dict.update(shard)
+            print(f"Successfully loaded weights from {hf_model_name}")
 
-        else:  # Dense model weights
+        else:  # fallback for small models without sharding
             weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
             hf_state_dict = load_file(weights_file)
             print(f"Successfully loaded weights from {hf_model_name}")
