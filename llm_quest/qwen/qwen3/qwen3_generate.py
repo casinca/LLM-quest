@@ -3,8 +3,8 @@ from transformers import AutoTokenizer
 
 from config import qwen3_config_creator
 from llm_quest.gpt.generate import generate_loop
-from llm_quest.qwen3.qwen3_model import Qwen3Model
-from llm_quest.qwen3.qwen3_weight_loading import load_qwen3_weights
+from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
+from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 
 torch.manual_seed(123)
 device = "cuda"

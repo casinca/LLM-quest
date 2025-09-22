@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 
 from llm_quest.common.buffers import GlobalBuffers
-from llm_quest.qwen3.qwen3_attention import PytorchRMSNorm
-from llm_quest.qwen3.qwen3_transformer_block import MoETransformerBlock, TransformerBlock
+from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
+from llm_quest.qwen.qwen3.qwen3_transformer_block import MoETransformerBlock, TransformerBlock
 
 
 class Qwen3Model(nn.Module):

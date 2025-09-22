@@ -12,7 +12,7 @@ from safetensors.torch import load_file
 from transformers import AutoTokenizer
 
 from config import qwen3_config_creator
-from llm_quest.qwen3.qwen3_model import Qwen3Model
+from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 
 
 # TODO we could refactor some of these or simplify

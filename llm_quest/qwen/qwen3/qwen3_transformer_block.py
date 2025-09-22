@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 from llm_quest.moe.qwen3_moe import Qwen3MoE
-from llm_quest.qwen3.qwen3_attention import GroupedQueryAttention, PytorchRMSNorm
+from llm_quest.qwen.qwen3.qwen3_attention import GroupedQueryAttention, PytorchRMSNorm
 
 
 class FFN(nn.Module):
