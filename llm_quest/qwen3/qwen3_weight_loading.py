@@ -3,8 +3,11 @@ This module loads pretrained Qwen3 models from Hugging Face
 and convert them to work with our custom Qwen3 implementation.
 """
 
+import json
+import os
+
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors.torch import load_file
 from transformers import AutoTokenizer
 
@@ -12,15 +15,18 @@ from config import qwen3_config_creator
 from llm_quest.qwen3.qwen3_model import Qwen3Model
 
 
+# TODO we could refactor some of these or simplify
 def get_weight_mapping(model_cfg):
     """
     Get the mapping between Hugging Face weight names and our implementation weight names.
+    Supports both dense and MoE models based on model_cfg["model_type"].
 
     Returns:
         Dict mapping HF weight names to our weight names
     """
+    model_type = model_cfg["model_type"]
 
-    ### Model part weights ###
+    ### Outer blocks weights (not in transformer blocks) ###
     weight_mapping = {
         # Embeddings
         "model.embed_tokens.weight": "emb_dict.weight",
@@ -36,24 +42,45 @@ def get_weight_mapping(model_cfg):
         layer_prefix_hf = f"model.layers.{i}"
         layer_prefix_ours = f"trf_blocks.{i}"
 
-        weight_mapping.update(
-            {  # Attention weights
-                f"{layer_prefix_hf}.self_attn.q_proj.weight": f"{layer_prefix_ours}.att.w_queries.weight",
-                f"{layer_prefix_hf}.self_attn.k_proj.weight": f"{layer_prefix_ours}.att.w_keys.weight",
-                f"{layer_prefix_hf}.self_attn.v_proj.weight": f"{layer_prefix_ours}.att.w_values.weight",
-                f"{layer_prefix_hf}.self_attn.o_proj.weight": f"{layer_prefix_ours}.att.out_proj.weight",
-                # QK norm weights
-                f"{layer_prefix_hf}.self_attn.q_norm.weight": f"{layer_prefix_ours}.att.q_norm.weight",
-                f"{layer_prefix_hf}.self_attn.k_norm.weight": f"{layer_prefix_ours}.att.k_norm.weight",
-                # FFN weights
+        # Attention weights (same for both dense and MoE)
+        attention_weights = {
+            f"{layer_prefix_hf}.self_attn.q_proj.weight": f"{layer_prefix_ours}.att.w_queries.weight",
+            f"{layer_prefix_hf}.self_attn.k_proj.weight": f"{layer_prefix_ours}.att.w_keys.weight",
+            f"{layer_prefix_hf}.self_attn.v_proj.weight": f"{layer_prefix_ours}.att.w_values.weight",
+            f"{layer_prefix_hf}.self_attn.o_proj.weight": f"{layer_prefix_ours}.att.out_proj.weight",
+            # QK norm weights
+            f"{layer_prefix_hf}.self_attn.q_norm.weight": f"{layer_prefix_ours}.att.q_norm.weight",
+            f"{layer_prefix_hf}.self_attn.k_norm.weight": f"{layer_prefix_ours}.att.k_norm.weight",
+            # Norm weights
+            f"{layer_prefix_hf}.input_layernorm.weight": f"{layer_prefix_ours}.norm1.weight",
+            f"{layer_prefix_hf}.post_attention_layernorm.weight": f"{layer_prefix_ours}.norm2.weight",
+        }
+        weight_mapping.update(attention_weights)
+
+        ### Dense vs MoE ###
+        if model_type == "moe":
+            moe_weights = {
+                # Router/gate weight
+                f"{layer_prefix_hf}.mlp.gate.weight": f"{layer_prefix_ours}.moe.gate.weight",
+            }
+
+            # Expert weights
+            for expert_idx in range(model_cfg["num_experts"]):
+                expert_weights = {
+                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.gate_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin_gate.weight",
+                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.up_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin1.weight",
+                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.down_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin2.weight",
+                }
+                moe_weights.update(expert_weights)
+            weight_mapping.update(moe_weights)
+
+        else:  # Dense FFN
+            ffn_weights = {
                 f"{layer_prefix_hf}.mlp.gate_proj.weight": f"{layer_prefix_ours}.ffn.lin_gate.weight",
                 f"{layer_prefix_hf}.mlp.up_proj.weight": f"{layer_prefix_ours}.ffn.lin1.weight",
                 f"{layer_prefix_hf}.mlp.down_proj.weight": f"{layer_prefix_ours}.ffn.lin2.weight",
-                # Norm weights
-                f"{layer_prefix_hf}.input_layernorm.weight": f"{layer_prefix_ours}.norm1.weight",
-                f"{layer_prefix_hf}.post_attention_layernorm.weight": f"{layer_prefix_ours}.norm2.weight",
             }
-        )
+            weight_mapping.update(ffn_weights)
 
     return weight_mapping
 
@@ -61,21 +88,42 @@ def get_weight_mapping(model_cfg):
 def load_qwen3_weights(model, model_cfg):
     """
     Download Qwen3 weights from Hugging Face and convert + load to our implementation.
+    Supports both dense models (single file) and larger/MoE models (multi-file).
 
     returns:
         model: our Qwen3 model with the corresponding weights loaded
     """
 
     hf_model_name = model_cfg["model_path"]
-    print(f"Loading {hf_model_name} from Hugging Face...")
+    model_type = model_cfg["model_type"]
+    print(f"Loading {hf_model_name} ({model_type}) from Hugging Face...")
 
     #########################
     ### Download weights ###
     try:
         print("Downloading weights file...")
-        weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
-        hf_state_dict = load_file(weights_file)
-        print(f"Successfully loaded weights from {hf_model_name}")
+        if model_type == "moe":
+            # This part of the code is from @rasbt for loading sharded weights
+            repo_dir = snapshot_download(repo_id=hf_model_name)
+
+            # Load model index to find all weight files
+            index_path = os.path.join(repo_dir, "model.safetensors.index.json")
+            if os.path.exists(index_path):
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+
+                # Load weights from all shards
+                hf_state_dict = {}
+                for filename in set(index["weight_map"].values()):
+                    shard_path = os.path.join(repo_dir, filename)
+                    shard = load_file(shard_path)
+                    hf_state_dict.update(shard)
+                print(f"Successfully loaded weights from {len(set(index['weight_map'].values()))} files")
+
+        else:  # Dense model weights
+            weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
+            hf_state_dict = load_file(weights_file)
+            print(f"Successfully loaded weights from {hf_model_name}")
 
     except Exception as e:
         print(f"Error loading model: {e}")
@@ -104,8 +152,10 @@ def load_qwen3_weights(model, model_cfg):
 
     #####################
     ### Load weights ###
-    load_result = model.load_state_dict(converted_weights, strict=False)
-    _handle_weight_tying(model)
+    with torch.no_grad():
+        load_result = model.load_state_dict(converted_weights, strict=False)
+        _handle_weight_tying(model)
+
     _report_loading_status(model, load_result, converted_weights)
 
     return model
