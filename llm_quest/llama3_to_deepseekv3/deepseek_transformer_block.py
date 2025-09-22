@@ -4,7 +4,6 @@ import torch.nn as nn
 from llm_quest.llama3_to_deepseekv3.deepseek_attention import MultiLatentAttention
 from llm_quest.moe.deepseek_moe import DeepSeekMoE
 
-
 # some copy pasta from GTP to Llama3.2 arch, since there are common math functions/classes:
 # - RMSNorm
 # - SwiGlu
@@ -26,14 +25,17 @@ class RMSNorm(nn.Module):
         emb_dim (int): The dimension of the embeddings to "normalize" over.
     """
 
-    def __init__(self, emb_dim):
+    def __init__(self, emb_dim, dtype=None):
         super().__init__()
-        self.eps = 1e-5
-        self.scale = nn.Parameter(torch.ones(emb_dim))  # γ scale factor (linear coeff)
+        self.eps = 1e-6
+        self.scale = nn.Parameter(torch.ones(emb_dim, dtype=dtype))  # γ scale factor (linear coeff)
 
     def forward(self, x):
-        norm_x = x / (torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)) + self.eps)
-        return self.scale * norm_x
+        input_dtype = x.dtype
+        x = x.to(torch.float32)
+
+        norm_x = x / (torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)) + self.eps)  # sensitive RMS part in fp32
+        return self.scale * norm_x.to(input_dtype)  # partial cast (full cast: (self.scale * norm_x).to(input_dtype))
 
 
 class SiLU(nn.Module):
@@ -44,8 +46,9 @@ class SiLU(nn.Module):
     SiLU(x) = x * σ(x)
     where σ(x) is the sigmoid function: 1/(1 + e^(-x))
 
-    This activation function is also known as "swish" and is used as part of the SwiGLU
-    gated activation in the Llama architecture's FFN, replacing the GELU activation from gpt.
+    This activation function is also known as "Swish":
+    Swish is f(x) = x * sigmoid(βx), so SiLU = Swish when β=1 and is used as part of the popular SwiGLU
+    gated activation FFN architecture
     """
 
     def __init__(self) -> None:
@@ -58,12 +61,29 @@ class SiLU(nn.Module):
 class FFN(nn.Module):
     """
     This class implements a Feed Forward Neural Network with SwiGLU activation.
-    The gate linear transform is used for a bilinear transformation with the output of the 1st layer in order to scale
-    (eg, amplify or dampens) the hidden states before projecting back onto the embedding space.
+    SwiGLU(x) = (xW + b) ⊗ SiLU(xV + c) then we project back onto the emb space with a 3rd linear transform.
+    which gives FFN_SwiGLU(x, W, V, W2) = (Swish(xW) ⊗ xV)W2
 
-    The network consists of three linear layers (with no biases) and a SiLU activation function,
-    structured as follows:
-    x ⇉ (Linear1 → SiLU) * (Linear_gate) → Linear2 → output
+    note: +b and +c if bias=True
+
+    The linear gate transform is used for a bilinear transformation with the output of the 1st layer in order to scale
+    (eg, amplify or dampens) the hidden states before projecting back onto the embedding space (with the last linear
+    layer).
+
+    So the network consists of three linear layers and a SiLU activation function structured as
+    follows:
+
+    #
+    #       ┌─────────┐
+    # x ───►Linear_gate ─────► ┌──────┐
+    #       └─────────┘          │ SiLU │───┐
+    #                            └──────┘   │
+    #                                      ▼
+    #                                      * (Elem-wise mult) ─────► ┌─────────┐
+    #                                      ▲                         │ Linear2 │───► output
+    #       ┌───────────┐                  │                          └─────────┘
+    # x ───►  Linear1  │──────────────────┘
+    #       └───────────┘
 
     Args:
         cfg (dict): Config dictionary containing:
@@ -72,19 +92,19 @@ class FFN(nn.Module):
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg):
         super().__init__()
         self.lin1 = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
-        self.silu_activ = SiLU()
         self.lin_gate = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
+        self.silu_activ = SiLU()
         self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"], dtype=cfg["dtype"], bias=False)
 
     def forward(self, x):
+        x_gate = self.lin_gate(x)
+        x_gate = self.silu_activ(x_gate)
         x1 = self.lin1(x)
-        x1 = self.silu_activ(x1)
-        x2 = self.lin_gate(x)
 
-        return self.lin2(x1 * x2)
+        return self.lin2(x1 * x_gate)
 
 
 class TransformerBlock(nn.Module):

@@ -40,7 +40,9 @@ class MTPModule(nn.Module):
         x = self.emb_layer(x)
         x = self.rms_input(x)
         h_prev = self.rms_h_prev(h_prev)
+
         x = self.down_proj(torch.cat([x, h_prev], dim=-1))
+
         h_curr = self.trf_block(x, mask, cos, sin)
         logits = self.out_layer(x)
 
@@ -63,16 +65,18 @@ class MainModel(nn.Module):
         self.trf_blocks = nn.ModuleList(
             [TransformerBlock(cfg, layer) for layer in range(cfg["n_layers"])],
         )
-        self.final_ln = RMSNorm(cfg["emb_dim"])
+        self.final_norm = RMSNorm(cfg["emb_dim"])
         self.out_layer = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
     def forward(self, x, mask, cos, sin):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_layer(x)
+
         for block in self.trf_blocks:
             x = block(x, mask, cos, sin)
+
         h_curr = x
-        x = self.final_ln(h_curr)
+        x = self.final_norm(h_curr)
         logits = self.out_layer(x)
 
         return logits, h_curr  # we return logits + hidden states
@@ -127,7 +131,7 @@ class DeepSeekV3Model(nn.Module):
         return total_loss
 
 
-# test
+# quick test
 if __name__ == "__main__":
     # visual
     inputs = [
@@ -179,12 +183,12 @@ if __name__ == "__main__":
     print(shifted_inputs)
     print(shifted_targets)
 
-    dsv3 = DeepSeekV3Model(config.DEEPSEEK_SMALL)
+    dsv3 = DeepSeekV3Model(config.DEEPSEEK_SMALL_CONFIG)
     dsv3.to(device)
     loss = dsv3(tensor_input, tensor_target, shifted_inputs, shifted_targets)
     print(loss)
 
-    # main_model = MainModel(config.DEEPSEEK_SMALL)
+    # main_model = MainModel(config.DEEPSEEK_SMALL_CONFIG)
     # main_model.to(device)
 
     # logits, h = main_model(tensor_input)

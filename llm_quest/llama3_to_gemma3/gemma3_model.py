@@ -30,8 +30,8 @@ class Gemma3Model(nn.Module):
         self.trf_blocks = nn.ModuleList(
             [TransformerBlock(cfg, layer) for layer in range(cfg["n_layers"])],
         )
-        self.final_ln = RMSNorm(cfg["emb_dim"])
-        self.out = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
+        self.final_norm = RMSNorm(cfg["emb_dim"])
+        self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
         # Initialize buffers
         # Not using extended context length scaling(smooth_scaling_cfg) for pretraining
@@ -47,15 +47,17 @@ class Gemma3Model(nn.Module):
         self.register_buffer("sin", sin)
         self.register_buffer("swa_mask", swa_mask)
 
-        self.emb_dict.weight = self.out.weight  # weights tying
+        self.out_head.weight = self.emb_dict.weight  # weights tying
 
     # TODO attention mask (for now ghost argument for backward compatibility with evaluation _calc_loss_batch())
     def forward(self, x, attn_mask=None):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
+
         for block in self.trf_blocks:
             x = block(x, self.mask, self.cos, self.sin, self.swa_mask)
-        x = self.final_ln(x)
-        logits = self.out(x)
+
+        x = self.final_norm(x)
+        logits = self.out_head(x)
 
         return logits

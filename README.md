@@ -10,6 +10,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 ## Latest
 
+- Qwen3 (dense and MoE) from scratch
 - Speculative Decoding from scratch
 - Reinforcement Pretraining (RPT) from scratch
 - Qwen GSPO (Group Sequence Policy Optimization)
@@ -60,6 +61,11 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
     - SWA
     - QK norm
     - Logit softcapping (Gemma 2, kept for reference)
+
+&nbsp;
+
+ - Qwen3 (dense and MoE) from scratch:
+   - nothing new compared to above architectures
 
 &nbsp;
 

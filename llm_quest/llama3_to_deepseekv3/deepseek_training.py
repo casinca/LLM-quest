@@ -11,6 +11,8 @@ from llm_quest.llama3_to_deepseekv3.custom_collate_mtp import collate_function_m
 from llm_quest.llama3_to_deepseekv3.deepseek_engine import training_eval_loop_mtp
 from llm_quest.llama3_to_deepseekv3.deepseek_model import DeepSeekV3Model
 
+torch.manual_seed(123)
+
 # quick hparams for testing
 num_epoch = 2
 peak_lr = 5e-4

@@ -1,61 +1,7 @@
-import torch
 import torch.nn as nn
 
-from llm_quest.gpt_to_llama3.llama_attention import GroupedQueryAttention
-
-# add: - RMSNorm
-#      - SwiGlu
-#      - dtype setting
-#
-# remove: - dropout
-
-
-# RMSNorm is used instead of LayerNorm for the "normalization" of the embeddings
-# RMSNorm only focuses on re-scaling invariance, doesn't have an intercept (shift) nor recenter to a μ=0.
-class RMSNorm(nn.Module):
-    """
-    This class implements Root Mean Square "Normalization".
-
-    RMSNorm is a simplified version of LayerNorm that only focuses on re-scaling invariance.
-    RMSNorm = γ * x / (RMS(x) + ε)
-    ε small value to avoid div by 0 (same as LayerNorm)
-    The only learnable parameter is the scale factor γ which multiplies the normalized input.
-
-    Args:
-        emb_dim (int): The dimension of the embeddings to "normalize" over.
-    """
-
-    def __init__(self, emb_dim, dtype=None):
-        super().__init__()
-        self.eps = 1e-6
-        self.scale = nn.Parameter(torch.ones(emb_dim, dtype=dtype))  # γ scale factor (linear coeff)
-
-    def forward(self, x):
-        input_dtype = x.dtype
-        x = x.to(torch.float32)
-
-        norm_x = x / (torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)) + self.eps)  # sensitive RMS part in fp32
-        return self.scale * norm_x.to(input_dtype)  # partial cast (full cast: (self.scale * norm_x).to(input_dtype))
-
-
-class SiLU(nn.Module):
-    """
-    This class implements the Sigmoid Linear Unit (SiLU) activation function.
-
-    SiLU is defined as:
-    SiLU(x) = x * σ(x)
-    where σ(x) is the sigmoid function: 1/(1 + e^(-x))
-
-    This activation function is also known as "Swish":
-    Swish is f(x) = x * sigmoid(βx), so SiLU = Swish when β=1 and is used as part of the SwiGLU
-    gated activation in the Llama architecture's FFN, replacing the GELU activation from gpt.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-
-    def forward(self, x):
-        return x * 1 / (1 + torch.exp(-x))
+from llm_quest.moe.qwen3_moe import Qwen3MoE
+from llm_quest.qwen.qwen3.qwen3_attention import GroupedQueryAttention, PytorchRMSNorm
 
 
 class FFN(nn.Module):
@@ -96,7 +42,7 @@ class FFN(nn.Module):
         super().__init__()
         self.lin1 = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
         self.lin_gate = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], dtype=cfg["dtype"], bias=False)
-        self.silu_activ = SiLU()
+        self.silu_activ = nn.functional.silu  # Pytorch's built-in
         self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"], dtype=cfg["dtype"], bias=False)
 
     def forward(self, x):
@@ -109,10 +55,10 @@ class FFN(nn.Module):
 
 class TransformerBlock(nn.Module):
     """
-    Implements a complete Transformer block
+    Implements a complete Qwen3 Transformer block
 
     This block consists of the following components:
-    1. Grouped Query Attention
+    1. Grouped Query Attention with QK-Norm
     2. RMS Normalization (pre-normalization)
     3. Feed-Forward Neural Network with SwiGLU
     4. Residual connections
@@ -123,6 +69,7 @@ class TransformerBlock(nn.Module):
             - context_length (int): Context length for attention
             - n_heads (int): Number of attention heads
             - num_kv_groups (int): Number of key-value groups for GQA
+            - head_dim (int): Head dimension for GQA
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
@@ -130,25 +77,59 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.att = GroupedQueryAttention(
             d_in=cfg["emb_dim"],
-            d_out=cfg["emb_dim"],
             num_heads=cfg["n_heads"],
             num_kv_groups=cfg["num_kv_groups"],
+            head_dim=cfg["head_dim"],
             dtype=cfg["dtype"],
         )
-        self.norm_1 = RMSNorm(cfg["emb_dim"])
-        self.norm_2 = RMSNorm(cfg["emb_dim"])
+        self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
     def forward(self, x, mask, cos, sin):
         # Pre-norm arch
         residual = x
-        x = self.norm_1(x)
+        x = self.norm1(x)
         x = self.att(x, mask, cos, sin)
         x = x + residual
 
         residual = x
-        x = self.norm_2(x)
+        x = self.norm2(x)
         x = self.ffn(x)
+        x = x + residual
+
+        return x
+
+
+class MoETransformerBlock(nn.Module):
+    """
+    Implements a Qwen3 Transformer block with Mixture of Experts.
+    Same as Dense transformer block, but with MoE instead of FFN.
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = GroupedQueryAttention(
+            d_in=cfg["emb_dim"],
+            num_heads=cfg["n_heads"],
+            num_kv_groups=cfg["num_kv_groups"],
+            head_dim=cfg["head_dim"],
+            dtype=cfg["dtype"],
+        )
+        self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.moe = Qwen3MoE(cfg=cfg, training=self.training)
+
+    def forward(self, x, mask, cos, sin):
+        # Pre-normalization architecture
+        residual = x
+        x = self.norm1(x)
+        x = self.att(x, mask, cos, sin)
+        x = x + residual
+
+        residual = x
+        x = self.norm2(x)
+        x = self.moe(x)  # Use MoE instead of regular FFN
         x = x + residual
 
         return x

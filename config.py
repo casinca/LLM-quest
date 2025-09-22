@@ -170,6 +170,126 @@ def config_creator(gpt_size):
     return new_config
 
 
+# TODO needs to check for other models than -BASE to avoid redundant configs
+def qwen3_config_creator(model_size="0.6B-Base"):
+    """
+    Get Qwen3 model configuration for different model sizes.
+
+    Args:
+        model_size (str): Model size identifier ("0.6B-Base", "0.6B", "1.7B", "4B", "30B-A3B")
+
+    Returns:
+        dict: Configuration dictionary for the specified model size
+    """
+    # common hparams
+    base_config = {
+        "vocab_size": 151_936,
+        "rope_base": 1_000_000,
+        "head_dim": 128,
+        "dtype": torch.bfloat16,
+        "model_path": f"Qwen/Qwen3-{model_size}",
+        # "rms_norm_eps": 1e-06,
+        # "device": ""
+    }
+
+    configs = {
+        "temp_dense": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 896,
+            "n_layers": 12,
+            "n_heads": 8,
+            "num_kv_groups": 4,
+            "hidden_dim": 4 * 896,
+            "context_length": 512,
+            "tie_embeddings": True,
+        },
+        ### Dense configs ###
+        #  matching: # https://huggingface.co/Qwen/Qwen3-0.6B-Base/blob/main/config.json
+        "0.6B-Base": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 1024,  # (also called hidden_size)
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 3072,  # (also called intermediate_size)
+            "context_length": 40_960,  # (also called max_position_embeddings)
+            "tie_embeddings": True,
+        },
+        # https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/config.json
+        "0.6B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 1024,
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 3072,
+            "context_length": 40_960,
+            "tie_embeddings": True,
+        },
+        "1.7B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 2048,
+            "n_layers": 28,
+            "n_heads": 16,
+            "num_kv_groups": 8,
+            "hidden_dim": 6144,
+            "context_length": 40_960,
+            "tie_embeddings": True,
+        },
+        "4B": {
+            **base_config,
+            "model_type": "dense",
+            "emb_dim": 2560,
+            "n_layers": 36,
+            "n_heads": 32,
+            "num_kv_groups": 8,
+            "hidden_dim": 9728,
+            "context_length": 40_960,
+            "tie_embeddings": True,
+        },
+        ### MoE config ###
+        "temp_moe": {
+            **base_config,
+            "model_type": "moe",
+            "emb_dim": 896,
+            "n_layers": 12,
+            "n_heads": 8,
+            "num_kv_groups": 4,
+            "moe_hidden_dim": 4 * 896,
+            "context_length": 512,
+            "tie_embeddings": False,
+            "num_experts": 16,
+            "top_k": 4,
+            "aux_loss_coef": 0.001,
+        },
+        # https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json
+        "30B-A3B": {
+            **base_config,
+            "model_type": "moe",
+            "emb_dim": 2048,  # (also called hidden_size)
+            "n_layers": 48,
+            "n_heads": 32,
+            "num_kv_groups": 4,
+            "hidden_dim": 6144,  # (also called intermediate_size, FFN hidden dim not used here for hybrid archs)
+            "moe_hidden_dim": 768,  # (also called moe_intermediate_size)  (3B activated / ~2.6 scaling)
+            "context_length": 40_960,  # (also called max_position_embeddings)
+            "tie_embeddings": False,
+            "num_experts": 128,
+            "top_k": 8,  # (also called num_experts_per_tok)
+            "aux_loss_coef": 0.001,
+        },
+    }
+
+    if model_size not in configs:
+        raise ValueError(f"Unknown model size: {model_size}. Available sizes: {list(configs.keys())}")
+
+    return configs[model_size]
+
+
 # ----------- PATHS -----------
 
 # Get the relative path (of the config file, at root) convert to absolute directory

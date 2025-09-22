@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 
-from llm_quest.gpt_to_llama3.llama_transformer_block import RMSNorm
+from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.common.rope import RoPE
+from llm_quest.gpt_to_llama3.llama_transformer_block import RMSNorm
 
 
 class MultiLatentAttention(nn.Module):
@@ -15,12 +16,9 @@ class MultiLatentAttention(nn.Module):
     Args:
         d_in (int): Input embedding dimension.
         d_out (int): Output embedding dimension (must be divisible by num_heads).
-        ctx_len (int): Maximum context/sequence length.
         num_heads (int): Number of attention heads.
-        rope_base (int, optional): Base for RoPE. Defaults to 500_000.
-        rope_cfg (dict, optional): Configuration for RoPE. Defaults to None.
 
-    note: d_out must be divisible by num_heads, decoup_head_dim must be be divisible by 2 for RoPE.
+    note: d_out must be divisible by num_heads, decoup_head_dim must be divisible by 2 for RoPE.
             A good starting point is choosing d_out / num_heads = being a power of 2
     """
 
@@ -53,8 +51,8 @@ class MultiLatentAttention(nn.Module):
         self.wk_decoup = nn.Linear(d_in, self.decoup_head_dim)
 
         # additional norm for stability, per DeepSeekV3 4.2 Hparams
-        self.q_rms_norm = RMSNorm(self.q_rank)
-        self.kv_rms_norm = RMSNorm(self.kv_rank)
+        self.q_rms_norm = RMSNorm(emb_dim=self.q_rank)
+        self.kv_rms_norm = RMSNorm(emb_dim=self.kv_rank)
 
     def forward(self, x, mask, cos, sin):
         b, seq_len, d_in = x.shape
@@ -95,7 +93,7 @@ class MultiLatentAttention(nn.Module):
         # attention
         att_scores = queries @ keys.mT
         # mask up to seq length/num of tokens
-        current_mask = mask.bool()[:seq_len, :seq_len]
+        current_mask = mask[:seq_len, :seq_len]
         # scaling by √(head_dim + decoup_head_dim)
         scaled_att_scores = att_scores * self.att_scaling
         # masking in place and normalizing with softmax
@@ -112,18 +110,18 @@ class MultiLatentAttention(nn.Module):
         return ctx_tensor
 
 
-# testing
+# quick testing
 if __name__ == "__main__":
     torch.manual_seed(123)
 
     inputs = torch.tensor(
         [
-            [0.43, 0.15, 0.89],  # Your (x^1)
-            [0.55, 0.87, 0.66],  # journey (x^2)
-            [0.57, 0.85, 0.64],  # starts (x^3)
-            [0.22, 0.58, 0.33],  # with (x^4)
-            [0.77, 0.25, 0.10],  # one (x^5)
-            [0.05, 0.80, 0.55],  # step (x^6)
+            [0.43, 0.15, 0.89],
+            [0.55, 0.87, 0.66],
+            [0.57, 0.85, 0.64],
+            [0.22, 0.58, 0.33],
+            [0.77, 0.25, 0.10],
+            [0.05, 0.80, 0.55],
         ]
     )
 
@@ -131,6 +129,10 @@ if __name__ == "__main__":
     d_out = 32
 
     input_batch = torch.stack((inputs, inputs), dim=0)
+    ctx_len = input_batch.shape[1]
+    num_heads = 4
+    # decoupled head dim: d_out must be divisible by num_heads, decoup_head_dim must be divisible by 2 for RoPE.
+    mask, cos, sin = GlobalBuffers().get_buffers(ctx_len, 10_000, d_out // num_heads // 2)
 
-    mla = MultiLatentAttention(d_in, d_out, 6, 4)
-    print(mla(input_batch))
+    mla = MultiLatentAttention(d_in=d_in, d_out=d_out, num_heads=num_heads)
+    print(mla(input_batch, mask, cos, sin))
