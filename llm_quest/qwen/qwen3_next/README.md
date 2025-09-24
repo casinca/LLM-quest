@@ -4,15 +4,28 @@ TODO
 
 https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list
 
-- hybrid linear:SDPA (3:1 ratio, Gated DeltaNet:Gated SDPA with a sigmoid)
+- hybrid linear:SDPA(GQA) (3:1 ratio, Gated DeltaNet:Gated SDPA(GQA) with a sigmoid)
 - partial RoPE: only rotate first 25% features/dimensions for each QK
-- remove all RMSNorm (including QK), Use Zero-Centered RMSNorm with weight decay/L2 (decay/L2 is only for QK in
-  GDN)
+- remove all RMSNorm (including QK), Use Zero-Centered RMSNorm with weight decay/L2  
+  
+  - Despite "L2" being the same color as ZCRMSNorm in the Qwen diagram, it has nothing to do with weight decay for
+    RMSNorm. It's additional L2 specifically for QK.
+  - overall weight decay for ZCRMSNorm changes nothing for the optimizer step (including norm layers by default) It could
+    have been potentially highlighted in cases where we don't usually include normalization layers in the optimizer step
+    akin to https://github.com/karpathy/minGPT/issues/23 not sure without paper but it seems to be an optimizer
+    detail and not an architecture impl.
+
+    In any case the ZCRMSNorm purpose is still valid with below point
+
 - Normalize MoE gate/router weights during init, need post init function
 - MTP no real info
 - they didn't mention but they do use shared expert isolation here for MoEs unlike Qwen3
--
+- Mention that Qwen3-Next is the first model to have a fully gated architecture. We have usual residual connections with
+  shared experts for MoE but also the 2 attention layers are gated. Gates in every component of the architecture.
 
+- check info "Adopt the output gating mechanism from our prior work to reduce low-rank issues in attention."
+
+## ZCRMS part
 so Zero-Centered RMSNorm is not what it seems/interepreted as doing:
 
 $$ x_{\text{RMS\_scaled}} = \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}} $$
