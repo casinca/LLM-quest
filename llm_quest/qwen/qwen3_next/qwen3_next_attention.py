@@ -41,7 +41,7 @@ class ZeroCenteredRMSNorm(nn.Module):
         return (x * rms * (1 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
 
-class GatedSDPA(nn.Module):
+class GatedAttention(nn.Module):
     """
     Gated Scaled Dot Product Attention(SDPA) using GQA as described in Qwen3-Next blogpost.
     It's similar to `Qwen3_attention.py` but with an added sigmoid activated gate and Zero-Centered RMSNorm for QK
@@ -157,7 +157,7 @@ if __name__ == "__main__":
 
     d_in = inputs.shape[-1]
     d_out = 12
-    gsdpa = GatedSDPA(
+    gsdpa = GatedAttention(
         d_in=d_in,
         num_heads=6,
         head_dim=2,
