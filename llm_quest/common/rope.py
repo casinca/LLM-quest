@@ -3,10 +3,6 @@
 import torch
 
 
-# NOTE: The update to integrate partial rotation of dimensions/features in head_dim vectors (necessary for Qwen3-Next
-# implementation) will potentially slow down RoPE in general (when unused) because of repetitive splits and
-# concatenations.
-# TODO instead of integrating, make 2 exclusive paths for classic RoPE and Qwen3-Next style scaling RoPE
 class RoPE:
 
     @staticmethod
@@ -173,6 +169,34 @@ class RoPE:
         return cos, sin
 
     @staticmethod
+    def _apply_partial_rope(x, cos, sin):
+        """
+        Applies partial RoPE to the input tensor x.
+        Separate path in order to avoid repetitive useless splits and concatenations if unused/full RoPE.
+        """
+        seq_length = x.shape[2]
+        rotation_dim = cos.shape[-1]
+        # splitting x into rotated and unrotated parts
+        x_rot, x_rest = x[..., :rotation_dim], x[..., rotation_dim:]
+
+        # splitting dimensions/features in half (paper splits by pairs instead)
+        h1 = x_rot[..., : rotation_dim // 2]
+        h2 = x_rot[..., rotation_dim // 2 :]
+
+        # preparing 2nd coordinates/dimensions matrix for calc optimization
+        rotated = torch.concat((-h2, h1), dim=-1)
+        # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
+        cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
+
+        # apply RoPE efficiently (vectorized vs classic sparse paper)
+        roped = cos * x_rot + sin * rotated
+
+        # concat back rotated and unrotated dimensions/features into original head_dim
+        res = torch.cat((roped, x_rest), dim=-1)
+
+        return res
+
+    @staticmethod
     def apply(x, cos, sin):
         """
         The goal here is to reshape x (input) to apply RoPE efficiently
@@ -200,29 +224,27 @@ class RoPE:
         with cos(mΘ) and sin(mΘ) from our computed_angles()
         """
         b, n_head, seq_length, head_dim = x.shape
-        rotation_dim = cos.shape[-1]  # previously head_dim retrieved from x but now retrieving from cos.shape[-1]
-
         assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
 
-        # splitting x into rotated and unrotated parts
-        x_rot, x_rest = x[..., :rotation_dim], x[..., rotation_dim:]
+        # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be applied
+        if head_dim != cos.shape[-1]:
+            return RoPE._apply_partial_rope(x, cos, sin)
 
-        # splitting dimensions/features in half (paper splits by pairs instead)
-        h1 = x_rot[..., : rotation_dim // 2]
-        h2 = x_rot[..., rotation_dim // 2 :]
+        # Full RoPE
+        else:
+            # splitting dimensions/features in half (paper splits by pairs instead)
+            h1 = x[..., : head_dim // 2]
+            h2 = x[..., head_dim // 2 :]
 
-        # preparing 2nd coordinates/dimensions matrix for calc optimization
-        rotated = torch.concat((-h2, h1), dim=-1)
-        # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-        cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
+            # preparing 2nd coordinates/dimensions matrix for calc optimization
+            rotated = torch.concat((-h2, h1), dim=-1)
+            # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
+            cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
 
-        # apply RoPE efficiently (vectorized vs classic sparse paper)
-        roped = cos * x_rot + sin * rotated
+            # apply RoPE efficiently (vectorized vs classic sparse paper)
+            res = cos * x + sin * rotated
 
-        # concat back rotated and unrotated dimensions/features into original head_dim
-        res = torch.cat((roped, x_rest), dim=-1)
-
-        return res
+            return res
 
 
 if __name__ == "__main__":
