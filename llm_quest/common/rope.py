@@ -226,25 +226,24 @@ class RoPE:
         b, n_head, seq_length, head_dim = x.shape
         assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
 
-        # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be applied
+        # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
         if head_dim != cos.shape[-1]:
             return RoPE._apply_partial_rope(x, cos, sin)
 
         # Full RoPE
-        else:
-            # splitting dimensions/features in half (paper splits by pairs instead)
-            h1 = x[..., : head_dim // 2]
-            h2 = x[..., head_dim // 2 :]
+        # splitting dimensions/features in half (paper splits by pairs instead)
+        h1 = x[..., : head_dim // 2]
+        h2 = x[..., head_dim // 2 :]
 
-            # preparing 2nd coordinates/dimensions matrix for calc optimization
-            rotated = torch.concat((-h2, h1), dim=-1)
-            # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-            cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
+        # preparing 2nd coordinates/dimensions matrix for calc optimization
+        rotated = torch.concat((-h2, h1), dim=-1)
+        # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
+        cos, sin = cos[:seq_length, :].to(x.dtype), sin[:seq_length, :].to(x.dtype)
 
-            # apply RoPE efficiently (vectorized vs classic sparse paper)
-            res = cos * x + sin * rotated
+        # apply RoPE efficiently (vectorized vs classic sparse paper)
+        res = cos * x + sin * rotated
 
-            return res
+        return res
 
 
 if __name__ == "__main__":
