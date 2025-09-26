@@ -18,12 +18,20 @@ https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.l
     In any case the ZCRMSNorm purpose is still valid with below point
 
 - Normalize MoE gate/router weights during init, need post init function
+- 
 - MTP no real info
-- they didn't mention but they do use shared expert isolation here for MoEs unlike Qwen3
-- Mention that Qwen3-Next is the first model to have a fully gated architecture. We have usual residual connections with
-  shared experts for MoE but also the 2 attention layers are gated. Gates in every component of the architecture.
+- they didn't mention but they do use shared expert unlike Qwen3:  
+  BUT MoE isn't pure expert isolation (residual like) like DeepSeekMoE, but gated shared experts variant activated by a sigmoid
+
+- Mention that Qwen3-Next is probably the first midsize open-source model to have a FULLY gated transformer block architecture:
+  - Gated shared expert MoE
+  - Gated classic sdpa
+  - Gated linear attention
+
+
 
 - check info "Adopt the output gating mechanism from our prior work to reduce low-rank issues in attention."
+Gated attention https://arxiv.org/abs/2505.06708
 
 ## ZCRMS part
 so Zero-Centered RMSNorm is not what it seems/interepreted as doing:
@@ -54,3 +62,11 @@ which is what we'd want for a reasonable scaling.
 range (whereas for classic RMSNorm, weights = coeff = potential explosion). All in all, making a RMSNorm with L2
 possible.
 
+
+## Linear attention 
+
+https://sustcsonglin.github.io/blog/2024/deltanet-1/
+
+linear attention: https://arxiv.org/abs/2006.16236
+DeltaNet improvement with parallekism: https://arxiv.org/abs/2406.06484
+GDN: https://arxiv.org/abs/2412.06464
