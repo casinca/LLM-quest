@@ -5,6 +5,8 @@ import torch.nn as nn
 # Qwen3 config.
 # We also remove the Z router loss, to keep only the (LBL) auxiliary loss, actually it's the "global-batch" LBL variant
 # that Qwen use, but no distributed training here, so Global LBL reduces to the classic LBL already implemented.
+#
+# Added Gated shared expert in Qwen3MoE to make it compatible with Qwen3-Next MoE
 
 
 class Expert(nn.Module):
@@ -51,14 +53,14 @@ class Qwen3MoE(nn.Module):
         moe_loss (torch.Tensor): Total moe loss, combining load balancing and router z-loss.
     """
 
-    def __init__(self, cfg, training=False):
+    def __init__(self, cfg):
         super().__init__()
         self.experts = nn.ModuleList([Expert(cfg) for _ in range(cfg["num_experts"])])
         self.gate = nn.Linear(cfg["emb_dim"], cfg["num_experts"], bias=False, dtype=cfg["dtype"])
         self.top_k = cfg["top_k"]
         self.num_experts = cfg["num_experts"]
         self.load_coeff = cfg["aux_loss_coef"]
-        self.training = training
+        self.training = cfg["training"]
 
     def forward(self, x):
         b, s, emb_dim = x.shape

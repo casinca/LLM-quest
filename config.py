@@ -188,6 +188,7 @@ def qwen3_config_creator(model_size="0.6B-Base"):
         "head_dim": 128,
         "dtype": torch.bfloat16,
         "model_path": f"Qwen/Qwen3-{model_size}",
+        "training": False,
         # "rms_norm_eps": 1e-06,
         # "device": ""
     }

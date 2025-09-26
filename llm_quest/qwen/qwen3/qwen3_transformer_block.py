@@ -118,7 +118,7 @@ class MoETransformerBlock(nn.Module):
         )
         self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
-        self.moe = Qwen3MoE(cfg=cfg, training=self.training)
+        self.moe = Qwen3MoE(cfg=cfg)
 
     def forward(self, x, mask, cos, sin):
         # Pre-normalization architecture
