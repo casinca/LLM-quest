@@ -8,8 +8,6 @@ from llm_quest.common.rope import RoPE
 # The classic Attention block is now a Gated SDPA block (basically GQA with an extra sigmoid activated gate)
 # GQA was implemented multiple times in the repo, for a change, using Pytorch's SDPA function
 # TODO
-# TODO pass only the cfg, retrieves args from it + include training flag
-# TODO IMPORTANT adapt mask passing to avoid inverting everytime, curr is not inverted!
 
 
 class ZeroCenteredRMSNorm(nn.Module):
@@ -38,7 +36,7 @@ class ZeroCenteredRMSNorm(nn.Module):
         x = x.to(torch.float32)
 
         rms = torch.rsqrt(torch.mean(x**2, dim=-1, keepdim=True) + self.eps)
-        return (x * rms * (1 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
+        return (x * rms * (1.0 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
 
 class GatedAttention(nn.Module):
@@ -57,31 +55,37 @@ class GatedAttention(nn.Module):
         dtype (torch.dtype, optional): Data type for the weights. Defaults to None.
     """
 
-    def __init__(self, d_in, num_heads, head_dim, num_kv_groups, p_dropout, training=True, dtype=None):
+    def __init__(self, cfg):
         super().__init__()
-        assert num_heads % num_kv_groups == 0, "num_heads must be divisible by num_kv_groups"
 
-        self.num_heads = num_heads
-        self.head_dim = head_dim
+        self.d_in = cfg["emb_dim"]
+        self.num_heads = cfg["n_heads"]
+        self.num_kv_groups = cfg["num_kv_groups"]
+        assert self.num_heads % self.num_kv_groups == 0, "num_heads must be divisible by num_kv_groups"
+        self.head_dim = cfg["head_dim"]
         self.d_out = self.num_heads * self.head_dim
-        self.num_kv_groups = num_kv_groups
+        self.dtype = cfg["dtype"]
+
         self.num_repeat = self.num_heads // self.num_kv_groups
-        self.p_dropout = p_dropout if training else 0.0
+        self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
 
-        self.w_queries = nn.Linear(d_in, self.d_out, bias=False, dtype=dtype)
-        self.w_keys = nn.Linear(d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=dtype)
-        self.w_values = nn.Linear(d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=dtype)
-        self.w_gate = nn.Linear(d_in, self.d_out, bias=False, dtype=dtype)
+        self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        self.w_keys = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
+        self.w_values = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
+        self.w_gate = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
 
-        self.q_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=dtype)
-        self.k_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=dtype)
+        self.q_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
+        self.k_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
 
-        self.out_proj = nn.Linear(self.d_out, d_in, bias=False, dtype=dtype)
+        self.out_proj = nn.Linear(self.d_out, self.d_in, bias=False, dtype=self.dtype)
 
     def forward(self, x, mask, cos, sin, attn_mask=None):
         """
         args:
             x: (b, seq_len, d_in)
+            mask: (seq_len, seq_len) causal mask, should come inverted from GlobalBuffers (for SDPA function)
+            cos: (seq_len, head_dim)
+            sin: (seq_len, head_dim)
             attn_mask (optional): (b, seq_len) used for padding tokens
         """
         b, seq_len, d_in = x.shape
@@ -148,22 +152,22 @@ if __name__ == "__main__":
         ]
     )
 
-    input_batch = torch.stack((inputs, inputs), dim=0)
+    input_batch = torch.stack((inputs, inputs), dim=0).bfloat16()
     # context length/ seq length (b, s, emb_dim)
     ctx_len = input_batch.shape[1]
 
     mask, cos, sin = GlobalBuffers().get_buffers(ctx_len, 10_000, 2)
     mask = ~mask  # for backward compatibility inverting (SPDA:Mask where False OUR:Mask where True)
 
-    d_in = inputs.shape[-1]
-    d_out = 12
-    gsdpa = GatedAttention(
-        d_in=d_in,
-        num_heads=6,
-        head_dim=2,
-        num_kv_groups=2,
-        p_dropout=0.0,
-        training=True,
-    )
+    dummy_cfg = {
+        "emb_dim": inputs.shape[-1],
+        "n_heads": 6,
+        "head_dim": 2,
+        "num_kv_groups": 2,
+        "p_dropout": 0.0,
+        "training": True,
+        "dtype": torch.bfloat16,
+    }
+    gsdpa = GatedAttention(dummy_cfg)
 
     print(gsdpa(input_batch, mask, cos, sin))
