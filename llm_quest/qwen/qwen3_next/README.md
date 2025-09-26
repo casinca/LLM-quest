@@ -21,7 +21,10 @@ https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.l
 - 
 - MTP no real info
 - they didn't mention but they do use shared expert unlike Qwen3:  
-  BUT MoE isn't pure expert isolation (residual like) like DeepSeekMoE, but gated shared experts variant activated by a sigmoid
+  BUT MoE isn't pure expert isolation (residual like) like DeepSeekMoE, but a single large shared expert variant that is
+  weighted by a single scalar gate, these raw weights are normalized with a sigmoid to scale (0, 1) the shared output.  
+  funny exactly part c) of my experimental weighting shared experts from april  
+  https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md
 
 - Mention that Qwen3-Next is probably the first midsize open-source model to have a FULLY gated transformer block architecture:
   - Gated shared expert MoE
