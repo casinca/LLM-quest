@@ -290,6 +290,38 @@ def qwen3_config_creator(model_size="0.6B-Base"):
     return configs[model_size]
 
 
+SMALL_QWEN3_NEXT_CONFIG = {
+    "vocab_size": 151_936,
+    "rope_base": 1_000_000,
+    "partial_rope_factor": 0.25,
+    "n_layers": 12,
+    "linear_sdpa_ratio": 3,
+    "dtype": torch.bfloat16,
+    "tie_embeddings": False,
+    "emb_dim": 896,
+    # gated attention
+    "head_dim": 128,
+    "n_heads": 8,
+    "num_kv_groups": 4,
+    "context_length": 512,
+    # gated deltanet
+    "linear_num_qk_heads": 4,
+    "linear_num_qk_head_dim": 128,
+    "linear_num_value_heads": 8,
+    "linear_num_value_head_dim": 128,
+    "linear_conv_kernel_size": 4,
+    # moe
+    "moe_hidden_dim": 4 * 896,
+    "shared_expert_hidden_dim": 4 * 896,
+    "num_experts": 16,
+    "top_k": 4,
+    "aux_loss_coef": 0.001,
+    # training
+    "training": False,
+    "p_dropout": 0.5,
+}
+
+
 # ----------- PATHS -----------
 
 # Get the relative path (of the config file, at root) convert to absolute directory
