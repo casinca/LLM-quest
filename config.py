@@ -296,7 +296,7 @@ SMALL_QWEN3_NEXT_CONFIG = {
     "rope_base": 1_000_000,
     "partial_rope_factor": 0.25,
     "n_layers": 12,
-    "linear_sdpa_ratio": 3,
+    "linear_sdpa_ratio": 4,  # cycle length for hybrid attention. GatedAttention used every 4 blocks, (3:1 ratio)
     "dtype": torch.bfloat16,
     "tie_embeddings": False,
     "emb_dim": 896,
