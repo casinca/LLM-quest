@@ -27,9 +27,16 @@ https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.l
   https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md
 
 - Mention that Qwen3-Next is probably the first midsize open-source model to have a FULLY gated transformer block architecture:
-  - Gated shared expert MoE
   - Gated classic sdpa
   - Gated linear attention
+  - Shared expert aren't "gated" in the same sense, since it's more like weighted residuals and it's additive not
+    multiplicative.
+    
+    Need to reword this properly
+
+- Also mention that Qwen3-Next is the most complex open-source LLM architecture from a top lab, at the time of
+  writing, incorportaing the very SOTA research on linear attention with their own, more classic, Gated Attention in a
+  hybrid package.
 
 
 
@@ -66,10 +73,53 @@ range (whereas for classic RMSNorm, weights = coeff = potential explosion). All 
 possible.
 
 
-## Linear attention 
+## Linear attention
 
 https://sustcsonglin.github.io/blog/2024/deltanet-1/
 
 linear attention: https://arxiv.org/abs/2006.16236
 DeltaNet improvement with parallekism: https://arxiv.org/abs/2406.06484
 GDN: https://arxiv.org/abs/2412.06464
+delta net: https://proceedings.mlr.press/v139/schlag21a.html
+delta rule: https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+
+Gated DeltaNet (GDN) is a gated variant, from Nvidia researchers, of the former linear attention (insert link) and is a
+strong contender over other gated variants, with SOTA performance. DeltaNet (without gating) had already perfect scores
+in "in-context" learning but also in fuzzy and noisy recall in MAD (insert link) benchmark.
+
+Originally GDN was incorporated in hybrid architecture with SWA and/or Mamba attention blocks (like Gated DeltaNet-H2)
+but Qwen with Qwen3-Next opted instead to implement GDN with their own gated GQA (one of the variant from their Gated
+Attention paper)
+
+start from classic attention equation
+remove softmax and we get linear attention equation
+(develop equations)
+
+but from the linear attention equation, they don't update the state matrix $S_t$ by simply adding outer kv products
+$\mathbf{k}_t \mathbf{v}_t^T$ to the previous state $S_{t-1}$.  
+So instead, they update the state matrix by adapting the delta rule (link paper), ie instead of adding the full outer
+kv products to the previous state $S_{t-1}$, they add an error adjusted $\mathbf{k}_t \mathbf{v}_t^T$ which is also
+regulated by a learning rate $\beta$.  
+the whole thing is similar to classic SGD (stochastic gradient descent) update steps
+
+(develop equation)
+
+That is DeltaNet (link paper delta net original, not their optimized version)
+
+On top of that DeltaNet architecture, they add a gating term (forgetting mechanism, similar to newer RNNs), which
+gave birth to Gated DeltaNet.
+
+(develop equation)
+
+To summarize:
+
+The evolution of linear attention, is that standard linear attention had problems with retrieval error, and the gating
+mechanism from gated variants (GLA, MAMBA) were an improvement in that direction. But these gated linear variants are
+still subpar with in-context learning/recall. These gated variants were in turn improved by adapting the delta rule. We
+end up with current SOTA: Gated DeltaNet.
+
+
+
+
+
+
