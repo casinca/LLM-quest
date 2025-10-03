@@ -58,11 +58,7 @@ class GatedAttention(nn.Module):
     Using Pytorch's built-in SDPA function for Attention calc
 
     Args:
-        d_in (int): Input embedding dimension
-        num_heads (int): Number of attention heads
-        head_dim (int): Head dimension
-        num_kv_groups (int): Number of key-value groups (must divide num_heads)
-        dtype (torch.dtype, optional): Data type for the weights. Defaults to None.
+        cfg (dict): Configuration dictionary containing model hyperparameters
     """
 
     def __init__(self, cfg):
@@ -145,6 +141,124 @@ class GatedAttention(nn.Module):
         return ctx_tensor
 
 
+class GatedDeltaNet(nn.Module):
+    """
+    TODO
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+
+        self.d_in = cfg["emb_dim"]
+        self.num_qk_heads = cfg["linear_num_qk_heads"]
+        self.num_v_heads = cfg["linear_num_value_heads"]
+        self.qk_head_dim = cfg["linear_qk_head_dim"]  # same for Q and K
+        self.vg_head_dim = cfg["linear_value_head_dim"]  # same for V and gate
+        self.conv_kernel_size = cfg["linear_conv_kernel_size"]
+        self.num_repeat = self.num_v_heads // self.num_qk_heads  # similar to GQA (here "GV" grouped value heads)
+
+        self.d_out = self.num_qk_heads * self.qk_head_dim
+        self.d_out_vg = self.num_v_heads * self.vg_head_dim
+
+        self.dtype = cfg["dtype"]
+        self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
+
+        self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        self.w_keys = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        self.w_values = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
+
+        # projection to num_v_heads: this what enables dynamicity of the factors (ie per token) for each value head
+        self.w_beta = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
+        self.w_alpha = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
+        self.prev_state = None  # no prev_state at the beginning, will be init/updated in the gated delta rule forward
+
+        # alpha components, to calc alpha decay factor following Qwen3-Next here, see compute_alpha_factor()
+        A_init = torch.empty(self.num_v_heads, dtype=self.dtype).uniform_(0, 16)
+        self.log_A = nn.Parameter(torch.log(A_init))  # log_A to ensure A > 0
+        self.dt = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
+
+        self.activation = nn.SiLU()
+        self.post_norm = ZeroCenteredRMSNorm(self.d_out_vg, dtype=self.dtype)
+        self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
+        self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
+
+        self.conv_queries = nn.Conv1d(
+            in_channels=self.d_out,
+            out_channels=self.d_out,  # number of kernels/filters
+            kernel_size=self.conv_kernel_size,
+            bias=False,
+            padding=self.conv_kernel_size - 1,  # serves as causal mask
+        )
+        self.conv_keys = nn.Conv1d(
+            in_channels=self.d_out,
+            out_channels=self.d_out,
+            kernel_size=self.conv_kernel_size,
+            bias=False,
+            padding=self.conv_kernel_size - 1,
+            dtype=self.dtype,
+        )
+        self.conv_values = nn.Conv1d(
+            in_channels=self.d_out_vg,
+            out_channels=self.d_out_vg,
+            kernel_size=self.conv_kernel_size,
+            bias=False,
+            padding=self.conv_kernel_size - 1,
+            dtype=self.dtype,
+        )
+
+    def forward(self, x, attn_mask=None):
+        """
+        args:
+            x: (b, seq_len, d_in)
+            attn_mask (optional): (b, seq_len) used for padding tokens, from collators 1=real token, 0=padding
+        """
+        b, seq_len, d_in = x.shape
+
+        # We mask at the beginning (vs classic attention) because of the conv layers
+        if attn_mask is not None:
+            attn_mask = attn_mask.view(b, seq_len, 1)
+            x *= attn_mask
+
+        # shape (b, seq_len, d_out) → (b, d_out, seq_len) for Conv1D expecting that shape
+        queries = self.w_queries(x).transpose(1, 2)
+        keys = self.w_keys(x).transpose(1, 2)
+        values = self.w_values(x).transpose(1, 2)
+
+        # We are not doing features convolution but a temporal convolution, (ie over the sequence length)
+        queries = self.activation(self.conv_queries(queries))[..., :seq_len]
+        keys = self.activation(self.conv_keys(keys))[..., :seq_len]
+        values = self.activation(self.conv_values(values))[..., :seq_len]
+
+        # reshaping to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
+        queries = queries.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
+        keys = keys.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
+        values = values.reshape(b, self.num_v_heads, self.vg_head_dim, -1).transpose(2, 3).contiguous()
+
+        queries = l2_norm(queries)
+        keys = l2_norm(keys)
+
+        if self.num_repeat > 1:  # per the current Qwen3-Next config this should always be the case
+            queries = queries.repeat_interleave(self.num_repeat, dim=1)
+            keys = keys.repeat_interleave(self.num_repeat, dim=1)
+
+        beta = self.w_beta(x).transpose(1, 2).contiguous()  # shape (b, num_v_heads, seq_len) for beta and alpha
+        token_projs = self.w_alpha(x)
+        alpha = compute_alpha_factor(self.log_A, token_projs, self.dt).transpose(1, 2).contiguous()
+
+        ctx_tensor, self.prev_state = gated_delta_rule(queries, keys, values, beta, alpha, self.prev_state)
+
+        # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
+        ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
+        ctx_tensor = self.post_norm(ctx_tensor)
+
+        gate_output = self.activation(self.w_gate(x))  # shape (b, seq_len, d_out_vg)
+        output = gate_output * ctx_tensor
+
+        output = self.out_proj(output)  # shape (b, seq_len, d_in)
+
+        return output
+
+
 # quick test
 if __name__ == "__main__":
     from llm_quest.common.buffers import GlobalBuffers
@@ -163,6 +277,8 @@ if __name__ == "__main__":
     )
 
     input_batch = torch.stack((inputs, inputs), dim=0).bfloat16()
+    attn_mask = torch.tensor([[1, 1, 1, 1, 0, 0]]).repeat(2, 1)
+
     # context length/ seq length (b, s, emb_dim)
     ctx_len = input_batch.shape[1]
 
@@ -174,10 +290,20 @@ if __name__ == "__main__":
         "n_heads": 6,
         "head_dim": 2,
         "num_kv_groups": 2,
+        "linear_num_qk_heads": 2,
+        "linear_num_value_heads": 4,
+        "linear_qk_head_dim": 2,
+        "linear_value_head_dim": 4,
+        "linear_conv_kernel_size": 3,
         "p_dropout": 0.0,
         "training": True,
         "dtype": torch.bfloat16,
     }
-    gsdpa = GatedAttention(dummy_cfg)
+
+    with torch.no_grad():
+        gsdpa = GatedAttention(dummy_cfg)
+        gdnet = GatedDeltaNet(dummy_cfg)
 
     print(gsdpa(input_batch, mask, cos, sin))
+    print(f"\n{'*'*50}\n")
+    print(gdnet(input_batch, attn_mask))  # last 2 vectors masked per attention mask
