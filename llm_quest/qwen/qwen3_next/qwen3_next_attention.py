@@ -38,6 +38,16 @@ class ZeroCenteredRMSNorm(nn.Module):
         rms = torch.rsqrt(torch.mean(x**2, dim=-1, keepdim=True) + self.eps)
         return (x * rms * (1.0 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
+def l2_norm(x):
+    """
+    Reducing Q and K vectors magnitude to unit length, by dividing by their L2 norms.
+    Ie, we are only interested in vector's direction and remove the magnitude.
+    This is only done for GatedDeltaNet.
+
+    args: x: (b, num_head, seq_len, head_dim) should be Q or K
+    """
+    l2_norm = torch.linalg.vector_norm(x, dim=-1, ord=2, keepdim=True)
+    return x * torch.clamp(l2_norm, min=1e-6).reciprocal()
 
 class GatedAttention(nn.Module):
     """
