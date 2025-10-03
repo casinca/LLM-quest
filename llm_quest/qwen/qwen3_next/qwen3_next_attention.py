@@ -38,6 +38,7 @@ class ZeroCenteredRMSNorm(nn.Module):
         rms = torch.rsqrt(torch.mean(x**2, dim=-1, keepdim=True) + self.eps)
         return (x * rms * (1.0 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
+
 def l2_norm(x):
     """
     Reducing Q and K vectors magnitude to unit length, by dividing by their L2 norms.
@@ -48,6 +49,38 @@ def l2_norm(x):
     """
     l2_norm = torch.linalg.vector_norm(x, dim=-1, ord=2, keepdim=True)
     return x * torch.clamp(l2_norm, min=1e-6).reciprocal()
+
+
+# NOTE This was made as a separate helper function because it really needed some more explanation
+def compute_alpha_factor(log_A, a, dt_bias):
+    """
+    Calculates the state decay factor alpha following Qwen3-Next/SSM-style formula.
+
+    Alpha is the exponential decay factor applied to the previous state memory in Gated Delta Rule.
+    This controls how much of the previous state memory we keep or forget.
+
+    alpha = e^(-A * Δt) (can be seen as e^(-Rate * Time)) where A > 0 and Δt > 0:
+    - A is learned as log_A and then exponentiated (e^log_A) to ensure positivity.
+    - Δt is passed through a softplus to ensure positivity.
+    both positivity ensures that alpha via e^ is always in (0, 1) as a final decay factor.
+
+    Δt is the result of the affine function Wx + dt with "a" as Wx (this makes Δt dynamic per token and thus the decay)
+    Δt represents how much duration to apply the decay (time step).
+
+    args:
+        log_A: (num_v_heads,) represents the base (log) decay rate per value head (will be a constant per head)
+        a: (b, seq_len, num_v_heads) the tokens to num_v_heads projections (will be dynamic per token)
+        dt_bias: (num_v_heads,) learnable bias for time step Δt
+
+    returns:
+        alpha: (b, seq_len, num_v_heads) final decay factor per token, range (0, 1)
+    """
+    A = torch.exp(log_A)  # retrieves positive A from the learned logarithm
+    delta_t = torch.nn.functional.softplus(a + dt_bias)  # Δt
+
+    alpha = torch.exp(-A * delta_t)  # e^(-Rate * Time)
+    return alpha
+
 
 def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
     """
