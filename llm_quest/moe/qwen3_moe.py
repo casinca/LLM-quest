@@ -64,7 +64,7 @@ class Qwen3MoE(nn.Module):
         self.shared_expert_hidden_dim = cfg.get("shared_expert_hidden_dim", None)
         if self.shared_expert_hidden_dim is not None:
             self.shared_expert = Expert(cfg, hidden_dim=self.shared_expert_hidden_dim)
-            self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])
+            self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
 
         self.top_k = cfg["top_k"]
         self.num_experts = cfg["num_experts"]

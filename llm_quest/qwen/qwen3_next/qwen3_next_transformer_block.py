@@ -26,7 +26,7 @@ class Qwen3NextTransformerBlock(nn.Module):
         super().__init__()
         # hybrid attention architecture: alternating between GatedDeltaNet and GatedAttention
         ratio = cfg["linear_sdpa_ratio"]
-        self.att = GatedDeltaNet(cfg=cfg) if (layer_idx + 1) % ratio else GatedAttention(cfg=cfg)
+        self.att = GatedDeltaNet(cfg) if (layer_idx + 1) % ratio else GatedAttention(cfg)
         self.norm1 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)
