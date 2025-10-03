@@ -49,6 +49,64 @@ def l2_norm(x):
     l2_norm = torch.linalg.vector_norm(x, dim=-1, ord=2, keepdim=True)
     return x * torch.clamp(l2_norm, min=1e-6).reciprocal()
 
+def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
+    """
+    Gated Delta Rule following equation 10 from the paper: GATED DELTA NETWORKS: IMPROVING MAMBA2 WITH DELTA RULE
+    which is slightly different in terms of calculation than Qwen3-Next (they are doing transposed S_t^T)
+
+    TODO link readme for the beta factorized equation step by step with the code
+
+    args:
+        queries: (b, num_heads, seq_len, qk_head_dim)
+        keys: (b, num_heads, seq_len, qk_head_dim)
+        values: (b, num_heads, seq_len, v_head_dim)
+        beta: (b, num_v_heads, seq_len) writing strength/learning rate per value head and per token
+        alpha: (b, num_v_heads, seq_len) state decay factor: how much of previous state/memory we keep ϵ (0, 1)
+            this is a per head and per token scalar factor (same as beta)
+            -if ~0 forget almost everything
+            -if ~1 remember almost everything
+        prev_state: (b, num_heads, v_head_dim, k_head_dim) previous state/memory.
+
+    returns:
+        attn_output: (b, num_heads, seq_len, v_head_dim) the context tensor
+        prev_state: updated state/memory to be used in the next forward pass
+    """
+    # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_vg_heads
+    b, num_heads, seq_len, k_head_dim = keys.shape
+    v_head_dim = values.shape[-1]
+    scale = queries.shape[-1] ** -0.5  # scaling factor for queries (same as attention scaling)
+
+    # performing the calculation in fp32
+    initial_dtype = queries.dtype
+    queries, keys, values, beta, alpha = map(lambda t: t.to(torch.float32), (queries, keys, values, beta, alpha))
+    queries *= scale
+
+    attn_output = torch.zeros_like(values)
+    if prev_state is None:  # same shape/outer product as the paper ie S_t = vk^T (Qwen is doing kv^T = S_t^T))
+        prev_state = torch.zeros(b, num_heads, v_head_dim, k_head_dim, dtype=values.dtype, device=values.device)
+
+    for t in range(seq_len):
+        k_t = keys[:, :, t, :]  # (b, num_heads, k_head_dim)
+        v_t = values[:, :, t, :]
+        q_t = queries[:, :, t, :]
+        beta_t = beta[:, :, t].unsqueeze(-1)  # (b, num_v_heads, 1)
+        alpha_t = alpha[:, :, t].unsqueeze(-1).unsqueeze(-1)  # (b, num_v_heads, 1, 1)
+
+        # applying, per head for that token the decay factor to previous state (scalar product)
+        gated_prev_state = alpha_t * prev_state  # (b, num_heads, v_head_dim, k_head_dim)
+        # retrieving old value associated to current key, in order to calc the error/delta (doing vector matrix product)
+        v_old = gated_prev_state @ k_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+        delta = v_t - v_old.squeeze(-1)  # (b, num_heads, v_head_dim)
+        scaled_delta = beta_t * delta  # scalar product
+        state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)  # (b, num_heads, v_head_dim, k_head_dim)
+        prev_state = gated_prev_state + state_update  # now is S_t
+
+        attn_t = prev_state @ q_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+        attn_output[:, :, t, :] = attn_t.squeeze(-1)
+
+    return attn_output.to(initial_dtype), prev_state
+
+
 class GatedAttention(nn.Module):
     """
     Gated Scaled Dot Product Attention(SDPA) using GQA as described in Qwen3-Next blogpost.
