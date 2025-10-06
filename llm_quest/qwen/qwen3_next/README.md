@@ -38,6 +38,22 @@ https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.l
   writing, incorportaing the very SOTA research on linear attention with their own, more classic, Gated Attention in a
   hybrid package.
 
+- One might ask why are we not also using RoPE for GDN? The inherent way of computing linear attention
+  (recurrent/sequentially) gives a natural sense of order already  
+  This is also why we don't use causal mask for recurrent GDN (like we do for Gated Attention) but only use an attention
+  mask/padding mask. We only ever have access to the previous state $S_{t-1}$ and the current input $x_t$ for $S_t$, not
+  $S_{t+1}...$  
+  For training efficiency (whole sequence at once) the convolutional layer via padding takes care of
+  the causality.
+
+- mention difference with official Qwen3-Next implementation:
+  - Not using FLA with chunked GDN for simplicity (recurrent GDN only)
+  - Not using fused linears, easier to read/follow along with the architecture visualization in the paper/blogpost
+  - mention diff with paper equation and qwen3-next impl (S_t vs S_t^T)
+
+
+- alpha is not just a scalar passed through a linear layer with projection reduced to (0,1) with a sigmoid but more
+  sophisticated like Space state models are doing $\alpha_t = e^{-A \cdot \Delta t_t}$ Mamba paper eq 4
 
 
 - check info "Adopt the output gating mechanism from our prior work to reduce low-rank issues in attention."
@@ -81,15 +97,20 @@ linear attention: https://arxiv.org/abs/2006.16236
 DeltaNet improvement with parallekism: https://arxiv.org/abs/2406.06484
 GDN: https://arxiv.org/abs/2412.06464
 delta net: https://proceedings.mlr.press/v139/schlag21a.html
-delta rule: https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+delta rule:
+https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+
+mamba: https://arxiv.org/abs/2312.00752
+
+venn diagram source: https://www.nature.com/articles/s42256-025-01034-6
 
 Gated DeltaNet (GDN) is a gated variant, from Nvidia researchers, of the former linear attention (insert link) and is a
 strong contender over other gated variants, with SOTA performance. DeltaNet (without gating) had already perfect scores
 in "in-context" learning but also in fuzzy and noisy recall in MAD (insert link) benchmark.
 
-Originally GDN was incorporated in hybrid architecture with SWA and/or Mamba attention blocks (like Gated DeltaNet-H2)
-but Qwen with Qwen3-Next opted instead to implement GDN with their own gated GQA (one of the variant from their Gated
-Attention paper)
+Originally GDN was incorporated in hybrid architecture with SWA and/or Mamba attention blocks (like the Gated
+DeltaNet-H2 model) but Qwen with Qwen3-Next opted instead to implement GDN with their own gated GQA (one of the variant
+from their Gated Attention paper)
 
 start from classic attention equation
 remove softmax and we get linear attention equation
@@ -115,8 +136,8 @@ To summarize:
 
 The evolution of linear attention, is that standard linear attention had problems with retrieval error, and the gating
 mechanism from gated variants (GLA, MAMBA) were an improvement in that direction. But these gated linear variants are
-still subpar with in-context learning/recall. These gated variants were in turn improved by adapting the delta rule. We
-end up with current SOTA: Gated DeltaNet.
+still subpar with in-context learning/recall. These gated variants were in turn improved by integrating the delta rule.
+We end up with current SOTA: Gated DeltaNet.
 
 
 
