@@ -279,6 +279,7 @@ class GatedDeltaNet(nn.Module):
             kernel_size=self.conv_kernel_size,
             bias=False,
             padding=self.conv_kernel_size - 1,  # serves as causal mask
+            dtype=self.dtype,
         )
         self.conv_keys = nn.Conv1d(
             in_channels=self.d_out,

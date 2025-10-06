@@ -31,11 +31,12 @@ class Qwen3NextTransformerBlock(nn.Module):
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, attn_mask):
 
         residual = x
         x = self.norm1(x)
-        x = self.att(x, mask, cos, sin)
+        # dispatching arguments based on attention type
+        x = self.att(x, mask, cos, sin, attn_mask) if isinstance(self.att, GatedAttention) else self.att(x, attn_mask)
         x = x + residual
 
         residual = x

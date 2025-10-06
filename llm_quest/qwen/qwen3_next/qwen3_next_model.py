@@ -42,12 +42,12 @@ class Qwen3NextModel(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x, attn_mask=None):  # NOTE attention mask Placeholder
+    def forward(self, x, attn_mask=None):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin)
+            x = block(x, self.mask, self.cos, self.sin, attn_mask)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
