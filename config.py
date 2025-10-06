@@ -307,9 +307,9 @@ SMALL_QWEN3_NEXT_CONFIG = {
     "context_length": 512,
     # gated deltanet
     "linear_num_qk_heads": 4,
-    "linear_num_qk_head_dim": 128,
+    "linear_qk_head_dim": 128,
     "linear_num_value_heads": 8,
-    "linear_num_value_head_dim": 128,
+    "linear_value_head_dim": 128,
     "linear_conv_kernel_size": 4,
     # moe
     "moe_hidden_dim": 4 * 896,
