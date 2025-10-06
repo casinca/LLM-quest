@@ -3,11 +3,17 @@ import torch.nn as nn
 
 from llm_quest.common.rope import RoPE
 
-# compared to `Qwen3_attention.py`:
-# We removed all QK Norm and use Zero-Centered RMSNorm instead
-# The classic Attention block is now a Gated SDPA block (basically GQA with an extra sigmoid activated gate)
-# GQA was implemented multiple times in the repo, for a change, using Pytorch's SDPA function
-# TODO
+# Differences compared to `Qwen3_attention.py`:
+#
+# We now have a hybrid attention architecture alternating between:
+#
+# - A modified classic quadratic attention block:
+#       We removed all QK Norm and use Zero-Centered RMSNorm instead
+#       The classic Attention block is now a Gated SDPA block (basically GQA with an extra sigmoid activated gate)
+#       RoPE is only applied to the first 25% of the head dimensions
+#       GQA was implemented multiple times in the repo, for a change, using Pytorch's SDPA function
+#
+# - A new subquadratic attention block: Gated Delta Net
 
 
 class ZeroCenteredRMSNorm(nn.Module):
@@ -234,7 +240,13 @@ class GatedAttention(nn.Module):
 
 class GatedDeltaNet(nn.Module):
     """
-    TODO
+    Gated Delta Net as described in Qwen3-Next blogpost "diagram".
+    This approach is less efficient because linear and conv layers are not fused but is easier to follow along as a from
+    scratch implementation.
+    We are also doing the recurrent Gated Delta Rule and not the optimized Chunked version from FLA/parallel GDN paper.
+
+    It is true that fusing in GDN is even more incentivized since we have 6 linear transformations with: Q,K,V,G
+    and alpha, beta. And speed is the highlight of Qwen3-Next arch.
     """
 
     def __init__(self, cfg):
