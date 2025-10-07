@@ -10,6 +10,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 ## Latest
 
+- Qwen3-Next from scratch
 - Qwen3 (dense and MoE) from scratch
 - Speculative Decoding from scratch
 - Reinforcement Pretraining (RPT) from scratch
@@ -66,6 +67,15 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
  - Qwen3 (dense and MoE) from scratch:
    - nothing new compared to above architectures
+
+&nbsp;
+
+ - Qwen3-Next from scratch:
+   - Gated DeltaNet
+   - Gated Attention
+   - Zero-Centered RMSNorm
+   - Weighted shared expert in MoE
+   - Partial RoPE
 
 &nbsp;
 

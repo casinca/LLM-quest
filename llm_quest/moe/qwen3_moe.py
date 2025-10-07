@@ -5,6 +5,10 @@ import torch.nn as nn
 # Qwen3 config.
 # We also remove the Z router loss, to keep only the (LBL) auxiliary loss, actually it's the "global-batch" LBL variant
 # that Qwen use, but no distributed training here, so Global LBL reduces to the classic LBL already implemented.
+#
+# Added optional weighted shared expert in Qwen3MoE to make it compatible with Qwen3-Next MoE
+# This is actually part c) of my experimental "weighting shared experts" with a single expert:
+# https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md
 
 
 class Expert(nn.Module):
@@ -17,12 +21,13 @@ class Expert(nn.Module):
     Args:
         cfg (dict): Config dictionary containing model hyperparameters. It must include the "emb_dim",
             which specifies the embedding dimension.
+        hidden_dim (int): Hidden dimension of the expert. If None, will use the moe_hidden_dim from the config.
         activation (torch.nn.functional): Built-in activation function from Pytorch.
     """
 
-    def __init__(self, cfg, activation=torch.nn.functional.silu):
+    def __init__(self, cfg, hidden_dim=None, activation=torch.nn.functional.silu):
         super().__init__()
-        self.hidden_dim = cfg["moe_hidden_dim"]
+        self.hidden_dim = hidden_dim if hidden_dim is not None else cfg["moe_hidden_dim"]
 
         self.lin1 = nn.Linear(cfg["emb_dim"], self.hidden_dim, dtype=cfg["dtype"], bias=False)
         self.activation = activation
@@ -46,19 +51,25 @@ class Qwen3MoE(nn.Module):
     Args:
         cfg (dict): Config dictionary containing model hyperparameters, it must include:
         "emb_dim", "num_experts", "top_k", "aux_loss_coef".
-
     Attributes:
         moe_loss (torch.Tensor): Total moe loss, combining load balancing and router z-loss.
     """
 
-    def __init__(self, cfg, training=False):
+    def __init__(self, cfg):
         super().__init__()
         self.experts = nn.ModuleList([Expert(cfg) for _ in range(cfg["num_experts"])])
         self.gate = nn.Linear(cfg["emb_dim"], cfg["num_experts"], bias=False, dtype=cfg["dtype"])
+
+        # Optional weighted shared expert for Qwen3-Next MoE
+        self.shared_expert_hidden_dim = cfg.get("shared_expert_hidden_dim", None)
+        if self.shared_expert_hidden_dim is not None:
+            self.shared_expert = Expert(cfg, hidden_dim=self.shared_expert_hidden_dim)
+            self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
+
         self.top_k = cfg["top_k"]
         self.num_experts = cfg["num_experts"]
         self.load_coeff = cfg["aux_loss_coef"]
-        self.training = training
+        self.training = cfg["training"]
 
     def forward(self, x):
         b, s, emb_dim = x.shape
@@ -102,6 +113,14 @@ class Qwen3MoE(nn.Module):
             # compute weighted expert res and update via index, efficiently, the preallocated output tensor
             expert_output = self.experts[idx](selected_tokens) * selected_weights
             output.index_add_(dim=0, index=token_idx, source=expert_output)
+
+        # optionally, adding weighted shared expert output
+        if self.shared_expert_hidden_dim is not None:
+            shared_expert_output = self.shared_expert(x_2d)
+            scaled_shared_expert_weights = nn.functional.sigmoid(self.shared_expert_gate(x_2d))
+            weighted_shared_expert_output = shared_expert_output * scaled_shared_expert_weights
+
+            output += weighted_shared_expert_output
 
         output = output.view(b, s, emb_dim)  # reshape back to original 3D shape
         return output

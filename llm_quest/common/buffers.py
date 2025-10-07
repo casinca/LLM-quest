@@ -19,12 +19,18 @@ class GlobalBuffers:
     _swa_buffer = {}
 
     @staticmethod
-    def get_buffers(ctx_len, rope_base, head_dim, smooth_scaling_cfg=None):
+    def get_buffers(ctx_len, rope_base, head_dim, smooth_scaling_cfg=None, rotation_factor=1.0):
         key = (ctx_len, rope_base, head_dim)
 
         if key not in GlobalBuffers._buffer:
             mask = torch.triu(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=1)
-            cos, sin = RoPE.compute_angles(rope_base, head_dim, ctx_len, smooth_scaling_cfg)
+            cos, sin = RoPE.compute_angles(
+                base=rope_base,
+                head_dim=head_dim,
+                ctx_len=ctx_len,
+                smooth_scaling_cfg=smooth_scaling_cfg,
+                rotation_factor=rotation_factor,
+            )
 
             GlobalBuffers._buffer[key] = (mask, cos, sin)
 
