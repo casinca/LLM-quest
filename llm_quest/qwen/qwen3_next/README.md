@@ -1,66 +1,61 @@
 # Qwen3-Next from scratch
 
-TODO
+At the time of writing, [Qwen3-Next](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list) is the most complex open-source LLM architecture (text-only) from a top lab,
+incorporating SOTA subquadratic attention variant and their own, more classic, Gated Attention in a hybrid package.
 
-https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list
+An edit of the Venn diagram from this paper: ["Back to recurrent processing at the crossroad of transformers and
+state-space models"](https://www.nature.com/articles/s42256-025-01034-6), this is where we could fit Qwen3-Next:
 
-- hybrid linear:SDPA(GQA) (3:1 ratio, Gated DeltaNet:Gated SDPA(GQA) with a sigmoid)
-- partial RoPE: only rotate first 25% features/dimensions for each QK
-- remove all RMSNorm (including QK), Use Zero-Centered RMSNorm with weight decay/L2  
-  
-  - Despite "L2" being the same color as ZCRMSNorm in the Qwen diagram, it has nothing to do with weight decay for
-    RMSNorm. It's additional L2 specifically for QK.
-  - overall weight decay for ZCRMSNorm changes nothing for the optimizer step (including norm layers by default) It could
-    have been potentially highlighted in cases where we don't usually include normalization layers in the optimizer step
-    akin to https://github.com/karpathy/minGPT/issues/23 not sure without paper but it seems to be an optimizer
-    detail and not an architecture impl.
+<img src="_qwen3_next_img/_qwen3_next_venn_diagram.png" alt="alt text" width="70%" style="display: block; margin: 0
+auto;">
 
-    In any case the ZCRMSNorm purpose is still valid with below point
+&nbsp;
 
-- Normalize MoE gate/router weights during init, need post init function
-- 
-- MTP no real info
-- they didn't mention but they do use shared expert unlike Qwen3:  
-  BUT MoE isn't pure expert isolation (residual like) like DeepSeekMoE, but a single large shared expert variant that is
-  weighted by a single scalar gate, these raw weights are normalized with a sigmoid to scale (0, 1) the shared output.  
-  funny exactly part c) of my experimental weighting shared experts from april  
-  https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md
+## Changes from Qwen3 MoE models
 
-- Mention that Qwen3-Next is probably the first midsize open-source model to have a FULLY gated transformer block architecture:
-  - Gated classic sdpa
-  - Gated linear attention
-  - Shared expert aren't "gated" in the same sense, since it's more like weighted residuals and it's additive not
-    multiplicative.
-    
-    Need to reword this properly
+Besides less architecturally impactful changes, the main highlight of Qwen3-Next is its hybrid attention mechanism
+architecture which balances speed, efficiency and performance.
 
-- Also mention that Qwen3-Next is the most complex open-source LLM architecture from a top lab, at the time of
-  writing, incorportaing the very SOTA research on linear attention with their own, more classic, Gated Attention in a
-  hybrid package.
+- We are alternating attention blocks at a 3:1 ratio between:
+  - **Gated DeltaNet (GDN)**: https://arxiv.org/abs/2412.06464 (More details in TODO link linear helper readme)
+  - **Gated Attention**: https://arxiv.org/abs/2505.06708 (More details in [Gated Attention](#gated-attention) section)
 
-- One might ask why are we not also using RoPE for GDN? The inherent way of computing linear attention
-  (recurrent/sequentially) gives a natural sense of order already  
-  This is also why we don't use causal mask for recurrent GDN (like we do for Gated Attention) but only use an attention
-  mask/padding mask. We only ever have access to the previous state $S_{t-1}$ and the current input $x_t$ for $S_t$, not
-  $S_{t+1}...$  
-  For training efficiency (whole sequence at once) the convolutional layer via padding takes care of
-  the causality.
+- Partial RoPE: Only the first 25% of the head dimensions are rotated with RoPE in Gated Attention ([Why no RoPE in GDN?](#why-no-rope-gdn))
 
-- mention difference with official Qwen3-Next implementation:
-  - Not using FLA with chunked GDN for simplicity (recurrent GDN only)
-  - Not using fused linears, easier to read/follow along with the architecture visualization in the paper/blogpost
-  - mention diff with paper equation and qwen3-next impl (S_t vs S_t^T)
+- They removed all RMSNorm, and replaced them with Zero-Centered RMSNorm (which is RMSNorm that is initialized with
+  0 centered weights instead of 1s, see: [Zero-Centered RMSNorm](#zero-centered-rmsnorm))
 
+- They also added a weighted shared expert, combined with the routed ones, in their MoE block (not seen in the
+  architecture picture). Same as DeepSeek MoE except they use a sigmoid to scale the shared expert output.  
+  Very similar to part c) of [my experimental weighting shared experts stuff](https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md) from earlier this year.
 
-- alpha is not just a scalar passed through a linear layer with projection reduced to (0,1) with a sigmoid but more
-  sophisticated like Space state models are doing $\alpha_t = e^{-A \cdot \Delta t_t}$ Mamba paper eq 4
+- Despite the "L2" block being the same color as Z-C RMSNorm in the Qwen picture, it has nothing to do with weight decay
+  (L2 regularization) for RMSNorm. It is L2 normalization. They are just dividing Q and K vectors by their Euclidean Norm/reduce their magnitude to unit length to
+  keep only the direction as features.
 
+- They mentioned Multi Token Prediction (MTP) in the blogpost and linked the classic papers about it (already cited in
+  the DeepSeekV3 implementation) but it wasn't made public in their inference
+  code, there wasn't enough context to properly implement it the way they did, but it's still a worthy difference to
+  mention from Qwen3 models.
 
-- check info "Adopt the output gating mechanism from our prior work to reduce low-rank issues in attention."
-Gated attention https://arxiv.org/abs/2505.06708
+&nbsp;
 
-## ZCRMS part
-so Zero-Centered RMSNorm is not what it seems/interepreted as doing:
+<img src="_qwen3_next_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%" style="display: block; margin: 0
+auto;">
+
+&nbsp;
+
+### Gated Attention
+
+They tested different scenarios (see Table 1, p.4 of the paper) but for their implementation, they ended up using a classic GQA (Grouped-Query Attention) where the SDPA output/context tensor is scaled down (or not) by an added gate.  
+Similar to GLU types in FFNs, the gate here is a linear projection reduced to a (0, 1) range with a sigmoid thus acting as a factor to modulate the attention output.  
+
+*Why doing this?*  
+Qwen mention it is to reduce low-rank issues from the attention (ie low expressive power/richness of context).  
+The activation function is a classic to introduce non-linearity, the gate will learn to dynamically modulate the attention output ie, dampen or not features, *controlling the flow of information* as they say.
+
+### Zero-Centered RMSNorm
+Zero-Centered RMSNorm is not what it seems/interpreted as doing:
 
 $$ x_{\text{RMS\_scaled}} = \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}} $$
 
@@ -68,79 +63,89 @@ $$ x_{\text{RMS\_scaled}} = \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}} $$
 $$ x_{\text{Zero\_Centered}} = x_{\text{RMS\_scaled}} - \text{mean}(x_{\text{RMS\_scaled}}) $$
 
 
-but they mean in fact initializing the weights/coeff 0 centered (unlike 1s) but since we can't multiply by 0, they add
-for the forward pass a 1 constant to compensate, ie $x \cdot (1+w)$
+They mean, in fact, initializing the weights/coeff as 0 centered (`nn.Parameter(torch.zeros(...))`) unlike traditional 1s
+with `torch.ones()`.  Since multiplying by 0 would make no sense, they add for the forward pass a $+1$ constant to compensate, ie $x \cdot (1+w)$
 
-so basically it's zero centered "weights", not zero centered "RMS", they are changing the baseline to 0 instead of 1
-and the model now learns to change the scale from 0 and they just shift by 1 for the correct activation scaling
+So basically it's zero centered "weights", not zero centered "RMS", they are changing the baseline to 0 instead of 1
+and the model now learns to change the scale from 0 and they just shift by 1 for the correct activation scaling.
 
-The whole point was to counter abnormally large weights in QK norm, centereing weights around 0 indeed helps as a
+The whole point was to counter abnormally large weights in QK norm, centering weights around 0 indeed helps as a
 better starting point.
-But the additional main reason they are doing this is as a very smart trick to make L2 regularization work iiuc:
+But the additional main reason they are doing this is as a very smart trick to make L2 regularization work:
 
-if they apply L2 on a classic RMSNorm it will push the coeff/weights (starting from 1) to 0, which breaks the RMSNorm forward.
-But if they apply L2 on Zero-Centered weights RMSNorm, it'll still push the weights (starting from 0) to 0 (so weights are
-kept low) and for the forward only they just offset by adding 1 to keep the correct RMSNorm scaling. 
+If they apply L2 on a classic RMSNorm it will push the coeff/weights (starting from 1) to 0, which will ruin the RMSNorm
+forward.
+But if they apply L2 on Zero-Centered weights, it'll still push the weights (starting from 0) to 0 (weights are
+still kept low) but to avoid having a coefficient of 0, for the forward only, they just offset by adding 1 to keep the correct RMSNorm scaling. 
 
-But also pushing weights towards 0, intrinsically pushes the coefficients towards
-$(1 + \text{weights} (\approx 0)) \approx 1$
-which is what we'd want for a reasonable scaling.
-range (whereas for classic RMSNorm, weights = coeff = potential explosion). All in all, making a RMSNorm with L2
-possible.
+Pushing weights towards 0, intrinsically pushes the coefficients towards
+$(1 + \text{weights} (\approx 0)) \approx 1$ which is kind of what we'd want for a reasonable scaling range (whereas for
+classic RMSNorm, weights = coeff = potential explosion).  
 
+All in all, making a RMSNorm with L2 possible and keeping weights in stable range.  
+This is more of an optimizer detail (where normalization layers are included in the optimizer step) than an
+architectural change. This is not always the case, for example: https://github.com/karpathy/minGPT/issues/23.
 
-## Linear attention
+### Gated DeltaNet
 
-https://sustcsonglin.github.io/blog/2024/deltanet-1/
+Gated DeltaNet (GDN) is a SOTA gated variant, from Nvidia researchers, of the original [linear
+attention](https://arxiv.org/abs/2006.16236) and is a strong contender against other gated variants.  
+Their scalable [DeltaNet](https://arxiv.org/abs/2406.06484) (without gating) had already perfect scores in "in-context" learning but also in fuzzy and noisy recall in MAD
+benchmark.  
+[@sustcsonglin](https://github.com/sustcsonglin) the lead author shared all the details on her excellent blog: https://sustcsonglin.github.io/blog/2024/deltanet-1/
 
-linear attention: https://arxiv.org/abs/2006.16236
-DeltaNet improvement with parallekism: https://arxiv.org/abs/2406.06484
-GDN: https://arxiv.org/abs/2412.06464
-delta net: https://proceedings.mlr.press/v139/schlag21a.html
-delta rule:
-https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+Originally GDN was incorporated in hybrid architecture with SWA and/or [Mamba](https://arxiv.org/abs/2312.00752) attention blocks (like the Gated
+DeltaNet-H2 model) but Qwen with Qwen3-Next opted instead to implement GDN with their own Gated attention mentioned
+above.
 
-mamba: https://arxiv.org/abs/2312.00752
+Put simply, GDN is the culmination of the evolution of linear attention with the [delta
+rule](https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive)
+and a gating mechanism.  
+More details on Linear attention formula and how we end up to GDN TODO link readme from linear attention
 
-venn diagram source: https://www.nature.com/articles/s42256-025-01034-6
+Note: Alpha (gating term for scaling $S_{t-1}$ in `gated_delta_rule`) is mentioned in the GDN paper equation 10 as
+$\alpha_t \in (0, 1)$.  
+It's not just a simple scalar factor learned from a linear layer
+with projections reduced to (0,1) by a sigmoid but more sophisticated as Space State models (SSMs) are doing: 
+$\alpha_t = e^{-A \cdot \Delta t_t}$ part of equation 4 of the Mamba paper.  
+This is implemented in the helper function `compute_alpha_factor`.
 
-Gated DeltaNet (GDN) is a gated variant, from Nvidia researchers, of the former linear attention (insert link) and is a
-strong contender over other gated variants, with SOTA performance. DeltaNet (without gating) had already perfect scores
-in "in-context" learning but also in fuzzy and noisy recall in MAD (insert link) benchmark.
+&nbsp;
 
-Originally GDN was incorporated in hybrid architecture with SWA and/or Mamba attention blocks (like the Gated
-DeltaNet-H2 model) but Qwen with Qwen3-Next opted instead to implement GDN with their own gated GQA (one of the variant
-from their Gated Attention paper)
+## Implementation differences with Official Qwen3-Next
 
-start from classic attention equation
-remove softmax and we get linear attention equation
-(develop equations)
+For readability and simplicity, there are some differences compared to the efficient Qwen's own implementation:
+- Not using FLA with the chunked Gated delta rule algorithm, but the recurrent simpler version.
+- Not fusing the linear and convolutional layers. We are performing 6 separate projections (Q, K, V, gate, alpha, and
+  beta), this is easier to follow along with the architecture picture above.
 
-but from the linear attention equation, they don't update the state matrix $S_t$ by simply adding outer kv products
-$\mathbf{k}_t \mathbf{v}_t^T$ to the previous state $S_{t-1}$.  
-So instead, they update the state matrix by adapting the delta rule (link paper), ie instead of adding the full outer
-kv products to the previous state $S_{t-1}$, they add an error adjusted $\mathbf{k}_t \mathbf{v}_t^T$ which is also
-regulated by a learning rate $\beta$.  
-the whole thing is similar to classic SGD (stochastic gradient descent) update steps
+  &nbsp;
 
-(develop equation)
+---
 
-That is DeltaNet (link paper delta net original, not their optimized version)
+<a id="why-no-rope-gdn"></a>
+*Why are we not also using RoPE for GDN just like for the quadratic attention?  
+The inherent way of computing linear attention (recurrent/sequentially) already provides a natural sense of order.  
+This is also why we don't use a causal mask for recurrent GDN (like we do for Gated Attention) but only use an attention/padding mask. We only ever have access to the previous state $S_{t-1}$ and the current input $x_t$ for $S_t$, not
+$S_{t+1}...$  
+For training efficiency (whole sequence at once) the convolutional layer via padding takes care of
+the causality.
 
-On top of that DeltaNet architecture, they add a gating term (forgetting mechanism, similar to newer RNNs), which
-gave birth to Gated DeltaNet.
+&nbsp;
 
-(develop equation)
+## Acknowledgements
 
-To summarize:
+All resources mentioned have already been at least hyperlinked through the readme but for grouped accessibility:
 
-The evolution of linear attention, is that standard linear attention had problems with retrieval error, and the gating
-mechanism from gated variants (GLA, MAMBA) were an improvement in that direction. But these gated linear variants are
-still subpar with in-context learning/recall. These gated variants were in turn improved by integrating the delta rule.
-We end up with current SOTA: Gated DeltaNet.
-
-
-
-
-
+- Qwen blogpost: https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list
+- Gated Attention: https://arxiv.org/abs/2505.06708
+- Songlin Yang blogpost on Delta Net: https://sustcsonglin.github.io/blog/2024/deltanet-1/
+- Linear attention: https://arxiv.org/abs/2006.16236
+- DeltaNet improvement with parallelism: https://arxiv.org/abs/2406.06484
+- Gated Delta net: https://arxiv.org/abs/2412.06464
+- Delta net: https://proceedings.mlr.press/v139/schlag21a.html
+- Delta rule:
+  https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+- Mamba: https://arxiv.org/abs/2312.00752
+- Venn diagram source: https://www.nature.com/articles/s42256-025-01034-6
 
