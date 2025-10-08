@@ -103,12 +103,70 @@ rule](https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1
 and a gating mechanism.  
 More details on Linear attention formula and how we end up to GDN TODO link readme from linear attention
 
-Note: Alpha (gating term for scaling $S_{t-1}$ in `gated_delta_rule`) is mentioned in the GDN paper equation 10 as
+*Note:* Alpha (gating term for scaling $S_{t-1}$ in `gated_delta_rule`) is mentioned in the GDN paper equation 10 as
 $\alpha_t \in (0, 1)$.  
 It's not just a simple scalar factor learned from a linear layer
 with projections reduced to (0,1) by a sigmoid but more sophisticated as Space State models (SSMs) are doing: 
 $\alpha_t = e^{-A \cdot \Delta t_t}$ part of equation 4 of the Mamba paper.  
 This is implemented in the helper function `compute_alpha_factor`.
+
+&nbsp;
+
+### Making sense of the Gated Delta Rule equation and the code
+
+The GDN paper equation 10 is writtent as:
+$$ S_t = S_{t-1}(\alpha_t(I - \beta_t k_t k_t^T)) + \beta_t v_t k_t^T $$
+
+With:  
+$S_t$: The state matrix at the current time step $t$ shape `(d_value, d_key)`.  
+$S_{t-1}$: The state from the previous step.  
+$\alpha_t$: The gating term. Scalar $\in (0, 1)$ (computed as the method cited above). It controls how much of the
+entire past memory is forgotten.  
+$\beta_t$: writing strength/learning rate. Also a scalar. It controls how much of the new
+information is written into the memory.  
+$k_t$: The key vector for the current token, shape `(d_key, 1)`.  
+$v_t$: The value vector for the current token, shape `(d_value, 1)`.  
+$I$: identity matrix, shape `(d_key, d_key)`.  
+
+If we re-arrange the equation to match my implementation (also slightly different than Qwen3-Next):  
+We ignore the gate $\alpha_t$ for now, we have:
+
+$S_t = S_{t-1} (I - \beta_t k_t k_t^T) + \beta_t v_t k_t^T$
+
+distribute $S_{t-1}$:  
+$S_t = S_{t-1} - \beta_t (S_{t-1} k_t) k_t^T + \beta_t v_t k_t^T$
+
+factorizing with $\beta_t$ and $k_t^T$:  
+$S_t = S_{t-1} + \beta_t (v_t k_t^T - (S_{t-1} k_t) k_t^T)$  
+$S_t = S_{t-1} + \beta_t (v_t - S_{t-1} k_t) k_t^T$
+
+and finally adding back the gate $\alpha_t$ to scale $S_{t-1}$:  
+$$S_t = (\alpha_t S_{t-1}) + \underbrace{\beta_t (\overbrace{v_t - \underbrace{(\alpha_t S_{t-1}) k_t}_{\text{v\_old}}}^{\text{Delta}})}_{\text{Scaled Delta}} k_t^T$$
+
+
+This is the formula implemented in the code.  
+Step by step:
+
+$\alpha_t S_{t-1}$ as `gated_prev_state = alpha_t * prev_state`  
+$(\alpha_t S_{t-1}) k_t$ as `v_old = gated_prev_state @ k_t.unsqueeze(-1)`  
+$v_t - (\alpha_t S_{t-1}) k_t$ as `delta = v_t - v_old.squeeze(-1)`  
+$\beta_t (v_t - (\alpha_t S_{t-1}) k_t)$ as `scaled_delta = beta_t * delta`  
+$\beta_t (v_t - (\alpha_t S_{t-1}) k_t) k_t^T$ as `state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)`
+
+and finally:  
+$S_t = \underbrace{(\alpha_t S_{t-1})}_{\text{gated\_prev\_state}} + \underbrace{\beta_t (v_t - (\alpha_t S_{t-1}) k_t)
+k_t^T}_{\text{state\_update}}$ as `prev_state = gated_prev_state + state_update`
+
+&nbsp;
+
+> We end up with the main 2 concepts of the gated delta rule:
+> - Forget: start with the previous state and apply decay.
+> - Write: build new state update and add it to the decayed state.
+
+
+
+Overall our attention/context output is:  
+$o_t = S_t q_t$ as `attn_t = prev_state @ q_t.unsqueeze(-1)`
 
 &nbsp;
 
@@ -124,7 +182,7 @@ For readability and simplicity, there are some differences compared to the effic
 ---
 
 <a id="why-no-rope-gdn"></a>
-*Why are we not also using RoPE for GDN just like for the quadratic attention?  
+*Why are we not also using RoPE for GDN just like for the standard quadratic attention?  
 The inherent way of computing linear attention (recurrent/sequentially) already provides a natural sense of order.  
 This is also why we don't use a causal mask for recurrent GDN (like we do for Gated Attention) but only use an attention/padding mask. We only ever have access to the previous state $S_{t-1}$ and the current input $x_t$ for $S_t$, not
 $S_{t+1}...$  
@@ -139,11 +197,11 @@ All resources mentioned have already been at least hyperlinked through the readm
 
 - Qwen blogpost: https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list
 - Gated Attention: https://arxiv.org/abs/2505.06708
-- Songlin Yang blogpost on Delta Net: https://sustcsonglin.github.io/blog/2024/deltanet-1/
+- Songlin Yang blogpost on DeltaNet: https://sustcsonglin.github.io/blog/2024/deltanet-1/
 - Linear attention: https://arxiv.org/abs/2006.16236
 - DeltaNet improvement with parallelism: https://arxiv.org/abs/2406.06484
-- Gated Delta net: https://arxiv.org/abs/2412.06464
-- Delta net: https://proceedings.mlr.press/v139/schlag21a.html
+- Gated Delta Networks: https://arxiv.org/abs/2412.06464
+- DeltaNet: https://proceedings.mlr.press/v139/schlag21a.html
 - Delta rule:
   https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
 - Mamba: https://arxiv.org/abs/2312.00752
