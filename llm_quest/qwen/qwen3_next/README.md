@@ -6,8 +6,9 @@ incorporating SOTA subquadratic attention variant and their own, more classic, G
 An edit of the Venn diagram from this paper: ["Back to recurrent processing at the crossroad of transformers and
 state-space models"](https://www.nature.com/articles/s42256-025-01034-6), this is where we could fit Qwen3-Next:
 
-<img src="_qwen3_next_img/_qwen3_next_venn_diagram.png" alt="alt text" width="70%" style="display: block; margin: 0
-auto;">
+<div align="center">
+  <img src="_qwen3_next_img/_qwen3_next_venn_diagram.png" alt="paper_diagram" width="70%">
+</div>
 
 &nbsp;
 
@@ -40,8 +41,9 @@ architecture which balances speed, efficiency and performance.
 
 &nbsp;
 
-<img src="_qwen3_next_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%" style="display: block; margin: 0
-auto;">
+<div align="center">
+  <img src="_qwen3_next_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%">
+</div>
 
 &nbsp;
 
@@ -57,10 +59,9 @@ The activation function is a classic to introduce non-linearity, the gate will l
 ### Zero-Centered RMSNorm
 Zero-Centered RMSNorm is not what it seems/interpreted as doing:
 
-$$ x_{\text{RMS\_scaled}} = \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}} $$
+$$ x_{\text{RMS scaled}} = \frac{x}{\sqrt{\text{mean}(x^2) + \epsilon}} $$
 
-
-$$ x_{\text{Zero\_Centered}} = x_{\text{RMS\_scaled}} - \text{mean}(x_{\text{RMS\_scaled}}) $$
+$$ x_{\text{Zero Centered}} = x_{\text{RMS scaled}} - \text{mean}(x_{\text{RMS scaled}}) $$
 
 
 They mean, in fact, initializing the weights/coeff as 0 centered (`nn.Parameter(torch.zeros(...))`) unlike traditional 1s
@@ -107,7 +108,7 @@ More details on Linear attention formula and how we end up to GDN TODO link read
 $\alpha_t \in (0, 1)$.  
 It's not just a simple scalar factor learned from a linear layer
 with projections reduced to (0,1) by a sigmoid but more sophisticated as Space State models (SSMs) are doing: 
-$\alpha_t = e^{-A \cdot \Delta t_t}$ part of equation 4 of the Mamba paper.  
+$\alpha_t = e^{-A \cdot \Delta t}$ part of equation 4 of the Mamba paper.  
 This is implemented in the helper function `compute_alpha_factor`.
 
 &nbsp;
@@ -115,6 +116,7 @@ This is implemented in the helper function `compute_alpha_factor`.
 ### Making sense of the Gated Delta Rule equation and the code
 
 The GDN paper equation 10 is writtent as:
+
 $$ S_t = S_{t-1}(\alpha_t(I - \beta_t k_t k_t^T)) + \beta_t v_t k_t^T $$
 
 With:  
@@ -128,7 +130,7 @@ $k_t$: The key vector for the current token, shape `(d_key, 1)`.
 $v_t$: The value vector for the current token, shape `(d_value, 1)`.  
 $I$: identity matrix, shape `(d_key, d_key)`.  
 
-If we re-arrange the equation to match my implementation (also slightly different than Qwen3-Next):  
+If we re-arrange the equation to match my implementation (also slightly different from Qwen3-Next):  
 We ignore the gate $\alpha_t$ for now, we have:
 
 $S_t = S_{t-1} (I - \beta_t k_t k_t^T) + \beta_t v_t k_t^T$
@@ -140,8 +142,9 @@ factorizing with $\beta_t$ and $k_t^T$:
 $S_t = S_{t-1} + \beta_t (v_t k_t^T - (S_{t-1} k_t) k_t^T)$  
 $S_t = S_{t-1} + \beta_t (v_t - S_{t-1} k_t) k_t^T$
 
-and finally adding back the gate $\alpha_t$ to scale $S_{t-1}$:  
-$$S_t = (\alpha_t S_{t-1}) + \underbrace{\beta_t (\overbrace{v_t - \underbrace{(\alpha_t S_{t-1}) k_t}_{\text{v\_old}}}^{\text{Delta}})}_{\text{Scaled Delta}} k_t^T$$
+and finally adding back the gate $\alpha_t$ to scale $S_{t-1}$:
+
+$$S_t = (\alpha_t S_{t-1}) + \underbrace{\beta_t (\overbrace{v_t - \underbrace{(\alpha_t S_{t-1}) k_t}_{\text{v old}}}^{\text{Delta}})}_{\text{Scaled Delta}} k_t^T$$
 
 
 This is the formula implemented in the code.  
@@ -153,9 +156,12 @@ $v_t - (\alpha_t S_{t-1}) k_t$ as `delta = v_t - v_old.squeeze(-1)`
 $\beta_t (v_t - (\alpha_t S_{t-1}) k_t)$ as `scaled_delta = beta_t * delta`  
 $\beta_t (v_t - (\alpha_t S_{t-1}) k_t) k_t^T$ as `state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)`
 
-and finally:  
-$S_t = \underbrace{(\alpha_t S_{t-1})}_{\text{gated\_prev\_state}} + \underbrace{\beta_t (v_t - (\alpha_t S_{t-1}) k_t)
-k_t^T}_{\text{state\_update}}$ as `prev_state = gated_prev_state + state_update`
+and finally:
+
+$$S_t = \underbrace{(\alpha_t S_{t-1})}_{\text{gated prev state}} + \underbrace{\beta_t (v_t - (\alpha_t S_{t-1}) k_t)
+k_t^T}_{\text{state update}}$$
+
+as `prev_state = gated_prev_state + state_update`
 
 &nbsp;
 
