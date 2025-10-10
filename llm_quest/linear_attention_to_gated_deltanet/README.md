@@ -73,7 +73,7 @@ $$
 
 This is from this last re-arrangement and our outer product $\mathbf{v} \otimes \mathbf{k}^\mathsf{T}$, of respective
 shapes (${d \times 1}$, ${1 \times d}$), that they define
-the state matrix $\mathbf{S}_t = \sum_{j=1}^{t} \mathbf{v}_j \mathbf{k}_j^\mathsf{T}$.  
+the state matrix $`\mathbf{S}_t = \sum_{j=1}^{t} \mathbf{v}_j \mathbf{k}_j^\mathsf{T}`$.  
 
 $$
 \mathbf{o}_t = \mathbf{S}_t \mathbf{q}_t
@@ -143,7 +143,7 @@ $$
 
 > This is extremely similar to the residual error in classic ML (as in residual = target - prediction).  
 > Here we could say we're using the value residual error, where $\mathbf{v}_t$ is the target and 
-> $\mathbf{S}_{t-1} \mathbf{k}_t$ is the prediction.
+> $`\mathbf{S}_{t-1} \mathbf{k}_t`$ is the prediction.
 
 &nbsp;
 
