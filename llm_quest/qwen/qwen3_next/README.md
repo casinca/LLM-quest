@@ -17,7 +17,8 @@ Besides less architecturally impactful changes, the main highlight of Qwen3-Next
 architecture which balances speed, efficiency and performance.
 
 - We are alternating attention blocks at a 3:1 ratio between:
-  - **Gated DeltaNet (GDN)**: https://arxiv.org/abs/2412.06464 (More details in TODO link linear helper readme)
+  - **Gated DeltaNet (GDN)**: https://arxiv.org/abs/2412.06464 (More details in 
+  [From Linear Attention to Gated DeltaNet](https://github.com/casinca/LLM-quest/blob/master/llm_quest/linear_attention_to_gated_deltanet/README.md))
   - **Gated Attention**: https://arxiv.org/abs/2505.06708 (More details in [Gated Attention](#gated-attention) section)
 
 - Partial RoPE: Only the first 25% of the head dimensions are rotated with RoPE in Gated Attention ([Why no RoPE in GDN?](#why-no-rope-gdn))
@@ -101,7 +102,7 @@ above.
 Put simply, GDN is the culmination of the evolution of linear attention with the [delta
 rule](https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive)
 and a gating mechanism.  
-More details on Linear attention formula and how we end up to GDN TODO link readme from linear attention
+More details on Linear attention formula and how we end up to GDN in: [From Linear Attention to Gated DeltaNet](https://github.com/casinca/LLM-quest/blob/master/llm_quest/linear_attention_to_gated_deltanet/README.md)
 
 *Note:* Alpha (gating term for scaling $S_{t-1}$ in `gated_delta_rule`) is mentioned in the GDN paper equation 10 as
 $\alpha_t \in (0, 1)$.  
