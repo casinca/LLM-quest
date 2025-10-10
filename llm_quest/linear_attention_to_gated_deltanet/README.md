@@ -23,9 +23,9 @@ $\mathbf{Q}, \mathbf{K}, \mathbf{V}, \mathbf{O} \in \mathbb{R}^{L \times d}$
 
 &nbsp;
 
-In standard attention, we are locked in for the order of operations by the softmax term, we need to do $\mathbf{Q}\mathbf{K}^\mathsf{T}$ first
-before the matmul with $\mathbf{V}$. On top of that, the raw attention scores $\mathbf{Q}\mathbf{K}^\mathsf{T} \in
-\mathbb{R}^{L \times L}$ , which gives its known bottleneck quadratic nature.
+In standard attention, we are locked in for the order of operations by the softmax term, we need to do 
+$\mathbf{Q}\mathbf{K}^\mathsf{T}$ first before the matmul with $\mathbf{V}$. On top of that, the raw attention scores
+$\mathbf {Q}\mathbf{K}^\mathsf{T} \in \mathbb{R}^{L \times L}$, which gives its known bottleneck quadratic nature.
 
 [Linear attention](https://arxiv.org/abs/2006.16236) comes from removing the softmax and re-arranging the terms, made possible by the associative property
 with matrices.  
@@ -56,15 +56,10 @@ born.**
 As soon as $L$ (grows with input) > $d$ (which is a fixed hparam) Linear attention becomes worth it.  
 
 
-
-TODO too vague for inference need to mention commutativity and distributivity below
-
 &nbsp;
 
 Now for inference same principle, with more granularity, for a given time step $t$, and query, key, value vectors 
-$\mathbf{q}_t, \mathbf{k}_t, \mathbf{v}_t \in \mathbb{R}^{d}$, we can easily swap order however we want by leveraging
-column or row
-vectors, ie $\in \mathbb{R}^{1 \times d}$ or $\in \mathbb{R}^{d \times 1}$.
+$\mathbf{q}_t, \mathbf{k}_t, \mathbf{v}_t \in \mathbb{R}^{d}$, leveraging commutativity and distributivity:
 
 $$
 \mathbf{o}_t = \sum_{j=1}^{t} (\mathbf{q}_t^\mathsf{T} \mathbf{k}_j)\mathbf{v}_j
@@ -76,8 +71,9 @@ $$
 = \left(\sum_{j=1}^{t} \mathbf{v}_j \mathbf{k}_j^\mathsf{T}\right) \mathbf{q}_t
 $$
 
-This is from this last re-arrangement and our outer product $\mathbf{v} \otimes \mathbf{k}^\mathsf{T}$ that they define the state matrix $\mathbf{S}_t = \sum_{j=1}^{t} \mathbf{v}_j
-\mathbf{k}_j^\mathsf{T}$.  
+This is from this last re-arrangement and our outer product $\mathbf{v} \otimes \mathbf{k}^\mathsf{T}$, of respective
+shapes (${d \times 1}$, ${1 \times d}$), that they define
+the state matrix $\mathbf{S}_t = \sum_{j=1}^{t} \mathbf{v}_j \mathbf{k}_j^\mathsf{T}$.  
 
 $$
 \mathbf{o}_t = \mathbf{S}_t \mathbf{q}_t
@@ -92,11 +88,13 @@ $$
 
 &nbsp;
 
-This version by expressing state matrix $\mathbf{S}_t \in \mathbb{R}^{d \times d}$ based on its previous state 
+This version by expressing state matrix $`\mathbf{S}_t \in \mathbb{R}^{d \times d}`$ based on its previous state 
 $\mathbf{S}_{t-1}$ is the very foundation of linear attention.  
 Starting from now on, it's easier to understand the subsequent variants cited here because they are **all** variations
-about how to compute and update this state matrix $\mathbf{S}_t$ and also aim to mitigate drawbacks of the original
+about how to compute/update this state matrix $\mathbf{S}_t$ and also aim to mitigate drawbacks of the original
 linear attention.
+
+
 
 ### Drawbacks
 
@@ -105,15 +103,17 @@ all the details (compression) from all previous informations is challenging and 
 compared to classic attention.
 
 As we can see in the boxed formula, the state $S_t$ at each timestep is formed by adding the new outer product 
-$\mathbf{v}_t \mathbf{k}_t^\mathsf{T}$ directly to the accumulated state of all previous steps $\mathbf{S}_{t-1}$.  
+$`\mathbf{v}_t \mathbf{k}_t^\mathsf{T}`$ directly to the accumulated state of all previous steps $\mathbf{S}_{t-1}$.  
 This accumulation of previous states without any regulation, (ie potentially accumulating unwanted
 noisy or now irrelevant informations) creates **memory overload**. This overload is the root cause of retrieval
 errors and poor performance
 
+&nbsp;
+
 ### Gated Linear variants
 
 To reduce that problem and control how much of the previous state $\mathbf{S}_{t-1}$ we want to keep/remember for the
-next state $\mathbf{S}_t$, they introduced a gating term, aka **forgetting mechanism**, to scale $\mathbf{S}_{t-1}$.
+next state $`\mathbf{S}_t`$, they introduced a gating term, aka **forgetting mechanism**, to scale $`\mathbf{S}_{t-1}`$.
 
 This gave birth to gated linear attention variants like [GLA](https://arxiv.org/abs/2312.06635),
 [Mamba](https://arxiv.org/abs/2312.00752). For our Qwen3-Next case, if we omit delta rule for now, the gate is the alpha
@@ -128,22 +128,22 @@ $$
 ### DeltaNet
 
 Now onto how we can also optimize the outer product addition.  
-For a given time step, instead of simply adding the outer product $\mathbf{v}_t \mathbf{k}_t^\mathsf{T}$ to the previous
-state $\mathbf{S}_{t-1}$, researchers did a smart adaptation of the [delta
+For a given time step, instead of simply adding the outer product $`\mathbf{v}_t \mathbf{k}_t^\mathsf{T}`$ to the
+previous state $\mathbf{S}_{t-1}$, researchers did a smart adaptation of the [delta
 ruled](https://proceedings.mlr.press/v139/schlag21a.html) for this purpose (hence the name [DeltaNet](https://proceedings.mlr.press/v139/schlag21a.html)):
 
 Instead of using the current value $\mathbf{v}_t$ directly for the outer product with $\mathbf{k}_t^\mathsf{T}$, they
 instead use an error adjusted value, let's call it  $\Delta \mathbf{v}_t$.  
 $\Delta \mathbf{v}_t$ is simply the difference between the current value $\mathbf{v}_t$ and the model's prediction of
-this value (retrieved by querying the previous state $\mathbf{S}_{t-1}$ with the current key $\mathbf{k}_t$):
+this value (retrieved by querying the previous state $`\mathbf{S}_{t-1}`$ with the current key $\mathbf{k}_t$):
 
 $$
 \Delta \mathbf{v}_t = \mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t
 $$
 
 > This is extremely similar to the residual error in classic ML (as in residual = target - prediction).  
->Here we could say we're using the value residual error, where $\mathbf{v}_t$ is the target and $\mathbf{S}_{t-1}
->\mathbf{k}_t$ is the prediction.
+> Here we could say we're using the value residual error, where $\mathbf{v}_t$ is the target and 
+> $\mathbf{S}_{t-1} \mathbf{k}_t$ is the prediction.
 
 &nbsp;
 
@@ -167,19 +167,42 @@ $$
 Now we're getting closer to the final Gated DeltaNet, which as the name suggests, is the combination of both
 optimizations we just saw, ie linear attention with a gate and using the delta rule.
 
+&nbsp;
+
 ### Gated DeltaNet
 
-Combining both optimizations, 
+Combining both optimizations, starting from the DeltaNet equation and the delta term $\Delta \mathbf{v}_t$ developed:
 
+$$
+\mathbf{S}_t = \mathbf{S}_{t-1} + \beta (\mathbf{v}_t - \mathbf{S}_{t-1} \mathbf{k}_t) \mathbf{k}_t^\mathsf{T}
+$$
 
-TODO
-TODO check github latex rendering!
+We now add the gate $\alpha_t$ to scale the previous state $\mathbf{S}_{t-1}$:
+
+$$
+\boxed{\mathbf{S}_t = \alpha_t \mathbf{S}_{t-1} + \beta (\mathbf{v}_t -  \alpha_t \mathbf{S}_{t-1} \mathbf{k}_t)
+\mathbf{k}_t^\mathsf{T}}
+$$
+
+&nbsp;
+
+Finally we got back the [Gated DeltaNet](https://arxiv.org/abs/2412.06464) equation that is mentioned and used in the
+Qwen3-Next `readme.md` and implementation.
+
+&nbsp;
+
+### Summary
+
+The evolution of linear attention, is that standard linear attention had problems with retrieval error (caused by memory
+overload), and the gating mechanism from gated variants (GLA, Mamba...) were an improvement in that direction. But these
+gated linear variants are still subpar with in-context learning/recall. They were in turn improved by integrating the
+delta rule.  
+We end up with Gated DeltaNet.
+
 
 &nbsp;
 
 # Acknowledgments
-
-TODO
 
 - Gated Linear Attention: https://arxiv.org/abs/2312.06635
 - Gated Attention: https://arxiv.org/abs/2505.06708
