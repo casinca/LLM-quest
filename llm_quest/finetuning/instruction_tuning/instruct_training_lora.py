@@ -31,21 +31,21 @@ if __name__ == "__main__":
     import tiktoken
 
     import config
-    from gpt_download import download_and_load_gpt2
+    from llm_quest.common.lora import LoRALinearLayer
     from llm_quest.dataset import InstructionDataset, collate_function
     from llm_quest.engine import training_eval_loop
     from llm_quest.gpt.gpt_attention import MultiHeadAttention
+    from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
     from llm_quest.gpt.gpt_model import GPTModel
-    from llm_quest.common.lora import LoRALinearLayer
-    from llm_quest.utils import load_weights_into_gpt
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- Loaders ---
     model_cfg = config.config_creator("gpt_m")  # using Medium sized gpt config
-    settings, params = download_and_load_gpt2(model_size="355M", models_dir=config.openai_pretrained_w_gpt2_m)
+
+    weights_path = download_gpt_model(gpt_size="gpt_m", save_dir=config.openai_pretrained_w_gpt2_m)
     model = GPTModel(model_cfg)
-    load_weights_into_gpt(model, params)
+    load_gpt_weights(model, weights_path)
 
     ############ LoRA changes from instruct_training.py ############
 

@@ -28,20 +28,19 @@ model_device = "cuda"
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
 
-    from gpt_download import download_and_load_gpt2
     from llm_quest.dataset import InstructionDataset, collate_function
     from llm_quest.engine import training_eval_loop
+    from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
     from llm_quest.gpt.gpt_model import GPTModel
-    from llm_quest.utils import load_weights_into_gpt
 
     torch.manual_seed(123)
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- Loaders ---
-    settings, params = download_and_load_gpt2(model_size="355M", models_dir=config.openai_pretrained_w_gpt2_m)
     model = GPTModel(model_cfg)
-    load_weights_into_gpt(model, params)
+    weights_path = download_gpt_model(gpt_size="gpt_m", save_dir=config.openai_pretrained_w_gpt2_m)
+    load_gpt_weights(model, weights_path)
 
     train_set = InstructionDataset(config.instruct_alpaca_train_path, tokenizer)
     val_set = InstructionDataset(config.instruct_alpaca_val_path, tokenizer)
@@ -94,11 +93,11 @@ if __name__ == "__main__":
         use_amp=use_amp,
     )
 
-    # save instruct finetuned model
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            # "optimizer_state_dict": optimizer.state_dict(),
-        },
-        config.ft_instruct_w_gpt2,
-    )
+    ## save instruct finetuned model
+    # torch.save(
+    #    {
+    #        "model_state_dict": model.state_dict(),
+    #        # "optimizer_state_dict": optimizer.state_dict(),
+    #    },
+    #    config.ft_instruct_w_gpt2,
+    # )

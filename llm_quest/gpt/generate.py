@@ -331,9 +331,9 @@ if __name__ == "__main__":
     import tiktoken
 
     import config
-    from gpt_download import download_and_load_gpt2
+    from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
     from llm_quest.gpt.gpt_model import GPTModel
-    from llm_quest.utils import ids_to_text, load_weights_into_gpt, text_to_ids
+    from llm_quest.utils import ids_to_text, text_to_ids
 
     # ---------------------------- PART A ------- Testing simple func generation without pretrained weights
 
@@ -390,7 +390,7 @@ if __name__ == "__main__":
 
     # ---------------------------- PART C ------- Testing generation with OpenAI's pretrained weights
 
-    settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s)
+    weights_path = download_gpt_model(gpt_size="gpt_s", save_dir=config.openai_pretrained_w_gpt2_s)
 
     tokenizer = tiktoken.get_encoding("gpt2")
     model_settings = config.config_creator("gpt_s")
@@ -400,7 +400,7 @@ if __name__ == "__main__":
     model = GPTModel(model_settings)
     model.eval()
 
-    load_weights_into_gpt(model, params)
+    load_gpt_weights(model, weights_path)
 
     model.to(device)  # we move the model to GPU *after* loading weights
 

@@ -4,11 +4,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 import config
-from gpt_download import download_and_load_gpt2
 from llm_quest.dataset import SpamDataset
 from llm_quest.finetuning.classifier_tuning.cl_engine import classifier_training_eval_loop
+from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
 from llm_quest.gpt.gpt_model import GPTModel
-from llm_quest.utils import load_weights_into_gpt
 
 # init params
 tokenizer = tiktoken.get_encoding("gpt2")
@@ -29,13 +28,14 @@ val_loader = DataLoader(val_set, batch_size=batch_size, drop_last=False, num_wor
 
 
 # pretrained model params
-settings, params = download_and_load_gpt2(model_size="124M", models_dir=config.openai_pretrained_w_gpt2_s)
+weights_path = download_gpt_model(gpt_size="gpt_s", save_dir=config.openai_pretrained_w_gpt2_s)
+
 # model config
 model_config = config.config_creator("gpt_s")
 model_config["drop_rate"] = 0.0
 
 model = GPTModel(model_config)
-load_weights_into_gpt(model, params)
+load_gpt_weights(model, weights_path)
 
 # freeze model - make all layers non-trainable
 for param in model.parameters():
