@@ -55,7 +55,10 @@ Similar to GLU types in FFNs, the gate here is a linear projection reduced to a 
 
 *Why doing this?*  
 Qwen mention it is to reduce low-rank issues from the attention (ie low expressive power/richness of context).  
-The activation function is a classic to introduce non-linearity, the gate will learn to dynamically modulate the attention output ie, dampen or not features, *controlling the flow of information* as they say.
+The activation function is a classic to introduce non-linearity, the gate will learn to dynamically modulate the
+attention output ie, dampen or not features, *controlling the flow of information* as they say (p.6 section 4.1).  
+On top of that, it has been effective at drastically reducing "attention sink" (p.8 section 4.3), ie
+behavior/bias that gives unreasonably high attention score directed towards the 1st token in the $QK^T$ matrix.
 
 ### Zero-Centered RMSNorm
 Zero-Centered RMSNorm is not what it seems/interpreted as doing:
