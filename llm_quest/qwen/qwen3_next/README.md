@@ -53,12 +53,44 @@ architecture which balances speed, efficiency and performance.
 They tested different scenarios (see Table 1, p.4 of the paper) but for their implementation, they ended up using a classic GQA (Grouped-Query Attention) where the SDPA output/context tensor is scaled down (or not) by an added gate.  
 Similar to GLU types in FFNs, the gate here is a linear projection reduced to a (0, 1) range with a sigmoid thus acting as a factor to modulate the attention output.  
 
-*Why doing this?*  
-Qwen mention it is to reduce low-rank issues from the attention (ie low expressive power/richness of context).  
-The activation function is a classic to introduce non-linearity, the gate will learn to dynamically modulate the
-attention output ie, dampen or not features, *controlling the flow of information* as they say (p.6 section 4.1).  
-On top of that, it has been effective at drastically reducing "attention sink" (p.8 section 4.3), ie
+<details>
+<summary><strong>Details: Why doing this? </strong></summary>
+
+Qwen mention it is to reduce low-rank issues from the attention output (ie low expressive power/richness of context). 
+
+To illustrate this, they decompose the final attention block output for a single token $i$ per head $k$ (paper eq. 6):
+
+$$o_i^k = \left(\sum_{j=0}^{i} S_{ij}^k \cdot X_j W_V^k\right) W_O^k = \sum_{j=0}^{i} S_{ij}^k \cdot X_j (W_V^k W_O^k)$$
+
+$S_{ij}^k$ is the attention score of token $j$ toward token $i$ in head $k$, $X_j$ input vector $j$ in $X$.  
+Concerning weights of a head from the values' projection $W_V^k$ (shape $d_{model} \times d_k$) and output projection
+$W_O^k$ (shape $d_k \times d_{model}$) if we were to combine both into a single matrix/linear layer $(W_V^k W_O^k)$ it
+would be low-rank (because rule: for a matmul $AB$, $rank(AB) \le \min(rank(A), rank(B))$.  
+It means here, the rank of that resulting matrix would
+be at most $d_k$, the head dimension, and $d_k \ll d_{model}$). This what creates that *"low-rank bottleneck"* and
+limits the model's expressiveness. 
+
+They cleverly emphasize that GQA also aggravates this problem since we have unique KV heads < Q heads.
+
+So to break that "redundant" linear relationship between ($W_VW_O$), the paper's solution is to introduce a non-linear
+function (sigmoid) between these two linear steps:
+
+$$o_i^k = \left( \left( \sum_{j=0}^{i} S_{ij}^k \cdot X_j W_V^k \right) \odot g_i^k \right) W_O^k$$
+
+with gate:
+$g_i^k = \sigma(X_i W_g^k)$
+
+The activation function is a classic to introduce non-linearity (eg, in deep FFNs) and this will raise the
+expressiveness of the final output matrix.  
+The gate will learn to dynamically modulate the attention output ie, dampen or not features, *controlling the flow of
+information* as they say (p.6 section 4.1).
+
+On top of that, it has been effective at drastically reducing *"attention sink"* (p.8 section 4.3), ie
 behavior/bias that gives unreasonably high attention score directed towards the 1st token in the $QK^T$ matrix.
+
+*Note 2:* In theory it looks intuitive to break the linear connections between rows of a matrix by introducing
+non-linearity to it, but in practice they showed that some different combinations of gating had contrasted results.
+</details>
 
 ### Zero-Centered RMSNorm
 Zero-Centered RMSNorm is not what it seems/interpreted as doing:
@@ -119,7 +151,7 @@ This is implemented in the helper function `compute_alpha_factor`.
 
 ### Making sense of the Gated Delta Rule equation and the code
 
-The GDN paper equation 10 is writtent as:
+The GDN paper equation 10 is written as:
 
 $$ S_t = S_{t-1}(\alpha_t(I - \beta_t k_t k_t^T)) + \beta_t v_t k_t^T $$
 

@@ -93,7 +93,8 @@ def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
     Gated Delta Rule following equation 10 from the paper: GATED DELTA NETWORKS: IMPROVING MAMBA2 WITH DELTA RULE
     which is slightly different in terms of calculation than Qwen3-Next (they are doing transposed S_t^T)
 
-    TODO link readme for the beta factorized equation step by step with the code
+    More details:
+    https://github.com/casinca/LLM-quest/blob/master/llm_quest/qwen/qwen3_next/README.md#making-sense-of-the-gated-delta-rule-equation-and-the-code
 
     args:
         queries: (b, num_heads, seq_len, qk_head_dim)
