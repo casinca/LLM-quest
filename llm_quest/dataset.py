@@ -250,7 +250,6 @@ class HFDataset(Dataset):
         return self.texts[index]
 
 
-# TODO for now we hardcode, HF dataset has different names for the labels keys + values for standardization
 class ImageDataset(Dataset):
     """
     Custom dataset class that converts PIL images from HF datasets to tensors and applies transforms.
@@ -258,11 +257,15 @@ class ImageDataset(Dataset):
     Args:
         hf_dataset_split (dict): Hugging Face dataset split, from the load_dataset(),
                                 ex: dataset["train"], dataset["test"]...
-        standardize(bool): Whether to standardize the images
+        standardize(bool): Whether to standardize the images (hardcoded for CIFAR-10 atm)
+        image_key (str): Key for image in the dataset dict (default: "img" from CIFAR-10)
+        label_key (str): Key for label in the dataset dict (default: "label" from CIFAR-10)
     """
 
-    def __init__(self, hf_dataset_split, standardize=False):
+    def __init__(self, hf_dataset_split, standardize=False, image_key="img", label_key="label"):
         self.dataset = hf_dataset_split
+        self.image_key = image_key
+        self.label_key = label_key
 
         if standardize:
             self.transform = transforms.Compose(
@@ -281,8 +284,8 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.dataset[idx]
-        image = item["img"]  # PIL Image
-        label = item["label"]  # hardcoded
+        image = item[self.image_key]  # PIL Image
+        label = item[self.label_key]
 
         image = self.transform(image)  # Convert and normalize the image to a tensor
 
