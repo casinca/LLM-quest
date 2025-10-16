@@ -289,6 +289,97 @@ class ImageDataset(Dataset):
         return image, label
 
 
+class MultimodalDataset(Dataset):
+    """
+    Custom dataset class for image-caption pairs (eg, Flickr8k).
+    Similar to ImageDataset, we keep things simple for educational purposes and only handling resizing
+
+    Args:
+        hf_dataset_split (dict): Hugging Face dataset split (ex, dataset["train"]), from load_dataset()
+        tokenizer: Tokenizer for text
+        image_size (int): Target image size. default: 224 (for 224x224) is widely used.
+        max_caption_len (int): Maximum caption length in tokens
+        image_key (str): Key for image in dataset item (default: "image")
+        caption_key (str): Key for caption/image description in dataset item (default: "caption_0" for Flickr8k)
+        standardize (bool): Whether to standardize images (ImageNet stats for ViT compatibility)
+
+    Returns:
+        dict[str, torch.Tensor]: A dictionary containing:
+            - "image" : The processed image tensor. shape (channels, height, width) = (3, image_size, image_size)
+            - "input_ids" : Tokenized caption input IDs. shape (max_caption_len)
+            - "attention_mask" : Attention mask for the tokenized caption. shape (max_caption_len)
+    """
+
+    def __init__(
+        self,
+        hf_dataset_split,
+        tokenizer,
+        image_size=224,
+        max_caption_len=128,
+        image_key="image",
+        caption_key="caption_0",
+        standardize=True,
+    ):
+        self.tokenizer = tokenizer
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        self.dataset = hf_dataset_split
+        self.image_size = image_size
+        self.max_caption_len = max_caption_len
+        self.image_key = image_key
+        self.caption_key = caption_key
+
+        # pipeline
+        if standardize:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((image_size, image_size)),
+                    transforms.ToTensor(),
+                    # ImageNet normalization hardcoded (standard for ViT models)
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                ]
+            )
+        else:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((image_size, image_size)),
+                    transforms.ToTensor(),
+                ]
+            )
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+
+        image = item[self.image_key]  # PIL Image
+        caption = item[self.caption_key]
+
+        # convert to RGB, in case for future datasets with non 3-channels images ex: Grayscale and avoid dim mismatch
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        # apply transforms
+        image = self.transform(image)
+
+        # text part - tokenize caption
+        tokens = self.tokenizer(
+            caption + self.tokenizer.eos_token,  # add EoS token
+            truncation=True,
+            max_length=self.max_caption_len,
+            padding="max_length",
+            return_tensors="pt",
+        )
+
+        return {
+            "image": image,
+            "input_ids": tokens["input_ids"].squeeze(0),
+            "attention_mask": tokens["attention_mask"].squeeze(0),
+            # "caption": caption,  # for reference/logging
+        }
+
+
 class PreferenceDataset(Dataset):
     """
     PreferenceDataset is a custom PyTorch Dataset for preparing preference tuning data, similar to InstructionDataset.
