@@ -98,6 +98,12 @@ class ViTModel(nn.Module):
 
     Args:
         cfg (dict): Config dictionary containing model hyperparameters
+
+    returns:
+        logits (torch.Tensor): Logits for each class, shape (b, num_classes)
+
+        if output_hidden_states = True:
+            hidden_states (torch.Tensor): final hidden, shape (b, num_patches + 1, emb_dim)
     """
 
     def __init__(self, cfg):
@@ -121,10 +127,11 @@ class ViTModel(nn.Module):
         # classification head (replaces vocab_size out projection from GPT)
         self.classifier = nn.Linear(cfg["emb_dim"], cfg["num_classes"])
 
-    def forward(self, x):
+    def forward(self, x, output_hidden_states=False):
         """
         Args:
             x: Input images of shape (b, num_channels, img_width, img_height)
+            output_hidden_states (bool): Whether to return final hidden states only (no logits)
 
         Returns:
             Logits of shape (b, num_classes)
@@ -139,12 +146,14 @@ class ViTModel(nn.Module):
 
         x = self.final_ln(x)
 
-        # retrieve cls token (first token) for classification
-        cls_token_output = x[:, 0]  # (b, emb_dim)
+        if output_hidden_states:
+            return x  # (b, num_patches + 1, emb_dim)
 
-        logits = self.classifier(cls_token_output)  # (b, num_classes)
-
-        return logits
+        else:
+            # retrieve cls token (first token) for classification
+            cls_token_output = x[:, 0]  # (b, emb_dim)
+            logits = self.classifier(cls_token_output)  # (b, num_classes)
+            return logits
 
 
 # Testing code
@@ -162,6 +171,7 @@ if __name__ == "__main__":
         num_channels=3,
         emb_dim=768,
     )
+
     patch_output = patch_emb(x)
     print(f"Patch embedding output shape: {patch_output.shape}")
     print(f"Number of patches: {patch_emb.num_patches}")
@@ -169,7 +179,7 @@ if __name__ == "__main__":
     # test ViT model
     vit = ViTModel(VIT_BASE_CONFIG)
 
-    logits = vit(x)
+    logits = vit(x, output_hidden_states=False)
     print(f"Input shape: {x.shape}")
     print(f"Output logits shape: {logits.shape}")
     print(logits)
