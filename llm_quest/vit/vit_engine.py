@@ -8,6 +8,47 @@ import torch
 # type of tasks (gen vs class (ViT+ causal class))
 
 
+# TODO We might want to add some norm and dropout if this goes bonkers for the ffn type
+class ViTAdapter(torch.nn.Module):
+    """
+    Adapter/connector for ViT to LLM:
+    - If the ViT projected dimension is different from the LLM embedding dimension, we need a gateway, ie a linear layer
+        that will reproject the ViT output to match the LLM embedding dimension.
+    - If the ViT projected dimension is the same as the LLM embedding dimension, we can still use the adapter to help
+        for domain adaption. Ie better alignment of the 2 multidimensional spaces (vision and text) rather than leaving
+        the LLM solo learn from the ViT output directly.
+
+    The weights of the adapter are trained during Multi-modal SFT/VQA.
+
+    Args:
+        vit_d_out (int): The output dimension of the ViT model.
+        llm_d_in (int): The input/embedding dimension of the LLM model.
+        adapter_type (str): The type of adapter to use.
+            - "simple": A simple linear layer.
+            - "ffn": 1 hidden layer feed-forward neural network.
+        hidden_size_factor (int): The expansion factor for the hidden layer of the FFN.
+    """
+
+    def __init__(self, vit_d_out, llm_d_in, adapter_type="simple", hidden_size_factor=4):
+        super().__init__()
+
+        if adapter_type == "simple":
+            self.adapter = torch.nn.Linear(vit_d_out, llm_d_in)
+
+        elif adapter_type == "ffn":
+            self.adapter = torch.nn.Sequential(
+                torch.nn.Linear(vit_d_out, vit_d_out * hidden_size_factor),
+                torch.nn.GELU(),
+                torch.nn.Linear(vit_d_out * hidden_size_factor, llm_d_in),
+            )
+
+        else:
+            raise ValueError(f"Invalid adapter type: {adapter_type}")
+
+    def forward(self, x):
+        return self.adapter(x)
+
+
 def vit_training_eval_loop(
     train_loader,
     val_loader,
