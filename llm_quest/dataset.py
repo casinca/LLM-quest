@@ -378,7 +378,7 @@ class MultimodalDataset(Dataset):
         return {
             "image": image,
             "input_ids": tokens["input_ids"].squeeze(0),
-            "attention_mask": tokens["attention_mask"].squeeze(0),
+            "attention_mask": tokens["attention_mask"].bool().squeeze(0),
             # "caption": caption,  # for reference/logging
         }
 
