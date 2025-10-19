@@ -27,19 +27,29 @@ class ViTAdapter(torch.nn.Module):
             - "simple": A simple linear layer.
             - "ffn": 1 hidden layer feed-forward neural network.
         hidden_size_factor (int): The expansion factor for the hidden layer of the FFN.
+        bias (bool, optional): Whether to use bias for the linear layers.
+        dtype (torch.dtype, optional): The data type for the adapter weights.
     """
 
-    def __init__(self, vit_d_out, llm_d_in, adapter_type="simple", hidden_size_factor=4):
+    def __init__(
+        self,
+        vit_d_out,
+        llm_d_in,
+        adapter_type="simple",
+        hidden_size_factor=4,
+        bias=False,
+        dtype=torch.float32,
+    ):
         super().__init__()
 
         if adapter_type == "simple":
-            self.adapter = torch.nn.Linear(vit_d_out, llm_d_in)
+            self.adapter = torch.nn.Linear(vit_d_out, llm_d_in, bias=bias, dtype=dtype)
 
         elif adapter_type == "ffn":
             self.adapter = torch.nn.Sequential(
-                torch.nn.Linear(vit_d_out, vit_d_out * hidden_size_factor),
+                torch.nn.Linear(vit_d_out, vit_d_out * hidden_size_factor, bias=bias, dtype=dtype),
                 torch.nn.GELU(),
-                torch.nn.Linear(vit_d_out * hidden_size_factor, llm_d_in),
+                torch.nn.Linear(vit_d_out * hidden_size_factor, llm_d_in, bias=bias, dtype=dtype),
             )
 
         else:
