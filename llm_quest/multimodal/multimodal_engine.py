@@ -49,6 +49,7 @@ def multimodal_training_loop_simple(
     optimizer,
     num_epochs,
     device,
+    hf_vit_model=True,
 ):
     """
     Training loop for multimodal ViT-GPT2 model.
@@ -61,6 +62,7 @@ def multimodal_training_loop_simple(
         optimizer (torch.optim.Optimizer): Optimizer for model parameter updates
         num_epochs (int): Number of epochs to train for
         device (torch.device): Device to run training on
+        hf_vit_model (bool): whether the ViT model is from huggingface or from scrach (different output signature)
     """
 
     # freezing ViT
@@ -71,7 +73,6 @@ def multimodal_training_loop_simple(
     multimodal_model.train()
     adapter.train()
 
-    # TODO might do it outside the loop
     vit_model.to(device)
     multimodal_model.to(device)
     adapter.to(device)
@@ -85,7 +86,10 @@ def multimodal_training_loop_simple(
             text_attention_mask = batch["attention_mask"].to(device)  # shape (batch, max_caption_len)
 
             # Vision
-            vit_hidden_states = vit_model(images, output_hidden_states=True)  # shape (b, n_patches+1, vit_h_dim)
+            if not hf_vit_model:
+                vit_hidden_states = vit_model(images, output_hidden_states=True)  # shape (b, n_patches+1, vit_h_dim)
+            else:
+                vit_hidden_states = vit_model(images).last_hidden_state
             # projecting/transforms to the LLM embedding dimension
             vision_embeddings = adapter(vit_hidden_states)  # shape: (b, num_patches+1, llm_d_in)
 
