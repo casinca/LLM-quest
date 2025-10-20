@@ -372,3 +372,6 @@ rlhf_rm_checkpoint_dir = root_dir / "checkpoints" / "rlhf_rm_checkpoints"
 rlvr_grpo_checkpoint_dir = root_dir / "checkpoints" / "rlvr_grpo_checkpoints"
 
 sft_reasoning_gpt2 = root_dir / "checkpoints" / "sft_reasoning_model_save_amp.pth"
+
+multimodal_adapter = root_dir / "checkpoints" / "multimodal" / "adapter.pth"
+multimodal_gpt = root_dir / "checkpoints" / "multimodal" / "mm_gpt.pth"
