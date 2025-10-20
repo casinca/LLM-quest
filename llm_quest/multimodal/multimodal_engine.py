@@ -63,6 +63,11 @@ def multimodal_training_loop_simple(
         num_epochs (int): Number of epochs to train for
         device (torch.device): Device to run training on
         hf_vit_model (bool): whether the ViT model is from huggingface or from scrach (different output signature)
+
+    Returns:
+        tuple: A tuple containing:
+            - multimodal_model (GPTModel): The trained GPT model
+            - adapter (ViTAdapter): The trained adapter
     """
 
     # freezing ViT
