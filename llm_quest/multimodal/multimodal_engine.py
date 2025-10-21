@@ -20,7 +20,7 @@ def get_embeddings(text_input, model):
     return token_embeddings + position_embeddings
 
 
-def multimodal_loss(logits, labels, text_attention_mask, num_vision_tokens):
+def vlm_loss(logits, labels, text_attention_mask, num_vision_tokens):
     """
     Classic NTP with a CE loss
     We want to predict the text tokens given the image + text context
@@ -41,32 +41,38 @@ def multimodal_loss(logits, labels, text_attention_mask, num_vision_tokens):
     return loss
 
 
-def multimodal_training_loop_simple(
+def vlm_training_loop_simple(
     vit_model,
-    multimodal_model,
+    vlm_model,
     adapter,
     train_loader,
     optimizer,
     num_epochs,
     device,
     hf_vit_model=True,
+    val_loader=None,
+    eval_freq=None,
+    eval_iter=None,
 ):
     """
     Training loop for multimodal ViT-GPT2 model.
 
     Args:
         vit_model (ViTModel): Vision Transformer model
-        multimodal_model (GPTModel): GPT2 model
+        vlm_model (GPTModel): GPT2 model
         adapter (ViTAdapter): Adapter to connect ViT to GPT2
         train_loader (DataLoader): DataLoader for training data
         optimizer (torch.optim.Optimizer): Optimizer for model parameter updates
         num_epochs (int): Number of epochs to train for
         device (torch.device): Device to run training on
         hf_vit_model (bool): whether the ViT model is from huggingface or from scrach (different output signature)
+        val_loader (DataLoader, optional): DataLoader for validation data. If None, no validation is performed
+        eval_freq (int, optional): Number of steps between evaluations. Required if val_loader is provided
+        eval_iter (int, optional): Number of batches to use during evaluation. Required if val_loader is provided
 
     Returns:
         tuple: A tuple containing:
-            - multimodal_model (GPTModel): The trained GPT model
+            - vlm_model (GPTModel): The trained GPT model
             - adapter (ViTAdapter): The trained adapter
     """
 
@@ -75,11 +81,11 @@ def multimodal_training_loop_simple(
     for param in vit_model.parameters():
         param.requires_grad = False
 
-    multimodal_model.train()
+    vlm_model.train()
     adapter.train()
 
     vit_model.to(device)
-    multimodal_model.to(device)
+    vlm_model.to(device)
     adapter.to(device)
 
     for epoch in range(1, num_epochs + 1):
@@ -99,7 +105,7 @@ def multimodal_training_loop_simple(
             vision_embeddings = adapter(vit_hidden_states)  # shape: (b, num_patches+1, llm_d_in)
 
             # Text
-            text_embeddings = get_embeddings(input_ids, multimodal_model)  # shape (batch, seq_len, llm_d_in)
+            text_embeddings = get_embeddings(input_ids, vlm_model)  # shape (batch, seq_len, llm_d_in)
 
             # Early Fusion: concat patches+text embeddings
             batch_size = images.shape[0]
@@ -113,25 +119,43 @@ def multimodal_training_loop_simple(
             combined_attention_mask = torch.cat([vision_mask, text_attention_mask], dim=1)  # (b, n_patches+1+seq_len)
 
             # Forward pass
-            logits = multimodal_model(  # shape (batch, num_patches+1 + seq_len, vocab_size)
+            logits = vlm_model(  # shape (batch, num_patches+1 + seq_len, vocab_size)
                 combined_embeddings,
                 attn_mask=combined_attention_mask,
                 input_embedded=True,
             )
 
-            loss = multimodal_loss(logits, input_ids, text_attention_mask, num_vision_tokens)
+            loss = vlm_loss(logits, input_ids, text_attention_mask, num_vision_tokens)
             loss.backward()
 
             total_loss += loss.item()
 
-            # Update weights (multimodal model + adapter)
-            torch.nn.utils.clip_grad_norm_(
-                list(multimodal_model.parameters()) + list(adapter.parameters()), max_norm=1.0
-            )
+            # Update weights (vlm model + adapter)
+            torch.nn.utils.clip_grad_norm_(list(vlm_model.parameters()) + list(adapter.parameters()), max_norm=1.0)
             optimizer.step()
             optimizer.zero_grad()
 
-            if (step + 1) % 10 == 0:
+            # --- Evaluation ---
+            if val_loader is not None and eval_freq is not None and (step + 1) % eval_freq == 0:
+                train_loss, val_loss = vlm_evaluation(
+                    train_loader,
+                    val_loader,
+                    vit_model,
+                    adapter,
+                    vlm_model,
+                    eval_iter,
+                    device,
+                    hf_vit_model,
+                )
+
+                print(
+                    f"Epoch: {epoch}, Step: {step+1}",
+                    f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
+                    f"Δ: {val_loss - train_loss:.3f} ({((val_loss - train_loss) / train_loss * 100):.2f}%)",
+                )
+
+            # regular training progress logging
+            if val_loader is None and (step + 1) % eval_freq == 0:
                 avg_loss = total_loss / (step + 1)
                 print(f"Epoch {epoch}, step {step+1}, Loss: {avg_loss:.4f}")
 
