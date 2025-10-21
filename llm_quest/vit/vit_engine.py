@@ -8,7 +8,6 @@ import torch
 # type of tasks (gen vs class (ViT+ causal class))
 
 
-# TODO We might want to add some norm and dropout if this goes bonkers for the ffn type
 class ViTAdapter(torch.nn.Module):
     """
     Adapter/connector for ViT to LLM:
@@ -28,6 +27,7 @@ class ViTAdapter(torch.nn.Module):
             - "ffn": 1 hidden layer feed-forward neural network.
         hidden_size_factor (int): The expansion factor for the hidden layer of the FFN.
         bias (bool, optional): Whether to use bias for the linear layers.
+        dropout (float, optional): The dropout rate for the FFN type.
         dtype (torch.dtype, optional): The data type for the adapter weights.
     """
 
@@ -38,6 +38,7 @@ class ViTAdapter(torch.nn.Module):
         adapter_type="simple",
         hidden_size_factor=4,
         bias=False,
+        dropout=0.0,
         dtype=torch.float32,
     ):
         super().__init__()
@@ -49,6 +50,7 @@ class ViTAdapter(torch.nn.Module):
             self.adapter = torch.nn.Sequential(
                 torch.nn.Linear(vit_d_out, vit_d_out * hidden_size_factor, bias=bias, dtype=dtype),
                 torch.nn.GELU(),
+                torch.nn.Dropout(dropout) if dropout > 0.0 else torch.nn.Identity(),
                 torch.nn.Linear(vit_d_out * hidden_size_factor, llm_d_in, bias=bias, dtype=dtype),
             )
 
