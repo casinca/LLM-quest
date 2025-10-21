@@ -4,8 +4,8 @@ from torch.utils.data import DataLoader
 
 from config import TINY_VIT_CONFIG
 from llm_quest.dataset import ImageDataset
-from llm_quest.vit.vit_engine import vit_training_eval_loop
-from llm_quest.vit.vit_model import ViTModel
+from llm_quest.vision_transformer.vit_engine import vit_training_eval_loop
+from llm_quest.vision_transformer.vit_model import ViTModel
 
 # --- Hyperparameters ---
 batch_size = 256

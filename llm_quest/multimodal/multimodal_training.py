@@ -8,7 +8,7 @@ from llm_quest.dataset import MultimodalDataset
 from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
 from llm_quest.gpt.gpt_model import GPTModel
 from llm_quest.multimodal.multimodal_engine import vlm_training_loop_simple
-from llm_quest.vit.vit_engine import ViTAdapter
+from llm_quest.vision_transformer.vit_engine import ViTAdapter
 
 # Hyperparameters
 torch.manual_seed(123)
