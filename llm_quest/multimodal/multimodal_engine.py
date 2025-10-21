@@ -137,4 +137,156 @@ def multimodal_training_loop_simple(
 
         print(f"Epoch {epoch} completed. Average Loss: {total_loss / len(train_loader):.4f}")
 
-    return multimodal_model, adapter
+    return vlm_model, adapter
+
+
+def _calc_loss_batch_vlm(
+    images,
+    input_ids,
+    text_attention_mask,
+    vit_model,
+    adapter,
+    vlm_model,
+    device,
+    hf_vit_model=True,
+):
+    """
+    Calculates the loss for a single batch of multimodal data (images + captions).
+    (Used for evaluation only)
+
+    Args:
+        images (torch.Tensor): The input image tensor. shape: (batch, 3, H, W)
+        input_ids (torch.Tensor): The tokenized caption input IDs. Shape: (batch, seq_len)
+        text_attention_mask (torch.Tensor): The attention mask for captions. Shape: (batch, seq_len)
+        vit_model (nn.Module): The Vision Transformer model
+        adapter (nn.Module): The adapter connecting ViT to GPT
+        vlm_model (nn.Module): The GPT model
+        device (torch.device): The device on which the model and tensors are located
+        hf_vit_model (bool): Whether the ViT model is from HuggingFace or from scratch
+
+    Returns:
+        torch.Tensor: The loss for the batch
+    """
+    images = images.to(device)
+    input_ids = input_ids.to(device)
+    text_attention_mask = text_attention_mask.to(device)
+
+    # Vision
+    if not hf_vit_model:
+        vit_hidden_states = vit_model(images, output_hidden_states=True)
+    else:
+        vit_hidden_states = vit_model(images).last_hidden_state
+    vision_embeddings = adapter(vit_hidden_states)
+
+    # Text
+    text_embeddings = get_embeddings(input_ids, vlm_model)
+
+    # Early Fusion
+    batch_size = images.shape[0]
+    num_vision_tokens = vision_embeddings.shape[1]
+    combined_embeddings = torch.cat([vision_embeddings, text_embeddings], dim=1)
+
+    # combine attention masks
+    vision_mask = torch.ones(batch_size, num_vision_tokens, dtype=torch.bool, device=device)
+    combined_attention_mask = torch.cat([vision_mask, text_attention_mask], dim=1)
+
+    logits = vlm_model(combined_embeddings, attn_mask=combined_attention_mask, input_embedded=True)
+    loss = vlm_loss(logits, input_ids, text_attention_mask, num_vision_tokens)
+
+    return loss
+
+
+def calc_loss_loader_vlm(
+    dataloader,
+    vit_model,
+    adapter,
+    vlm_model,
+    device,
+    num_batches=None,
+    hf_vit_model=True,
+):
+    """
+    Calculates the average loss across a custom number of batches for a multimodal dataloader.
+
+    Args:
+        dataloader (DataLoader): The DataLoader containing batches of multimodal data (images + captions)
+        vit_model (nn.Module): The Vision Transformer model
+        adapter (nn.Module): The adapter connecting ViT to GPT
+        vlm_model (nn.Module): The GPT model
+        device (torch.device): The device on which the model and tensors are located
+        num_batches (int, optional): The number of batches to evaluate. If None, evaluates all batches
+        hf_vit_model (bool): Whether the ViT model is from HuggingFace or from scratch
+
+    Returns:
+        (float): The average loss across the specified number of batches. Returns NaN if dataloader is empty
+    """
+    total_loss = 0
+
+    # Check for smaller num of batches in order to speed up evaluation
+    if len(dataloader) == 0:
+        return float("NaN")
+    elif num_batches is None:
+        num_batches = len(dataloader)
+    else:
+        num_batches = min(num_batches, len(dataloader))
+
+    for i, batch in enumerate(dataloader):
+        if i < num_batches:
+            images = batch["image"]
+            input_ids = batch["input_ids"]
+            text_attention_mask = batch["attention_mask"]
+
+            loss = _calc_loss_batch_vlm(
+                images, input_ids, text_attention_mask, vit_model, adapter, vlm_model, device, hf_vit_model
+            )
+            total_loss += loss.item()
+
+    # return mean loss
+    return total_loss / num_batches
+
+
+def vlm_evaluation(
+    train_loader,
+    val_loader,
+    vit_model,
+    adapter,
+    vlm_model,
+    eval_iter,
+    device,
+    hf_vit_model=True,
+):
+    """
+    Evaluates the vlm model's performance on training and validation datasets.
+
+    Args:
+        train_loader (DataLoader): DataLoader containing the training data batches
+        val_loader (DataLoader): DataLoader containing the validation data batches
+        vit_model (nn.Module): The Vision Transformer model
+        adapter (nn.Module): The adapter connecting ViT to GPT
+        vlm_model (nn.Module): The GPT model to evaluate
+        eval_iter (int): Number of batches to use/iterate for evaluation
+        device (torch.device): The device to run evaluation on
+        hf_vit_model (bool): Whether the ViT model is from HuggingFace or from scratch
+
+    Returns:
+        tuple: A tuple containing:
+            - train_loss (float): The average loss on the training dataset/num_batches
+            - val_loss (float): The average loss on the validation dataset/num_batches
+    """
+    vit_model.eval()
+    adapter.eval()
+    vlm_model.eval()
+
+    with torch.inference_mode():
+        train_loss = calc_loss_loader_vlm(
+            train_loader, vit_model, adapter, vlm_model, device, num_batches=eval_iter, hf_vit_model=hf_vit_model
+        )
+        val_loss = calc_loss_loader_vlm(
+            val_loader, vit_model, adapter, vlm_model, device, num_batches=eval_iter, hf_vit_model=hf_vit_model
+        )
+
+    # trainable models back to train mode
+    adapter.train()
+    vlm_model.train()
+
+    return train_loss, val_loss
