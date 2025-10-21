@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from config import VIT_BASE_CONFIG
-from llm_quest.vision_transformer.vit_transformer_block import LayerNorm, ViTTransformerBlock
+from llm_quest.multimodal.vision_transformer.vit_transformer_block import LayerNorm, ViTTransformerBlock
 
 # Some major differences between causal decoders and ViT here.
 # First, the preprocessing step for encoding tokens vs images.

@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     import config
     from llm_quest.gpt.gpt_model import GPTModel
-    from llm_quest.vision_transformer.vit_engine import ViTAdapter
+    from llm_quest.multimodal.vision_transformer.vit_engine import ViTAdapter
 
     torch.manual_seed(123)
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
