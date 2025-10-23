@@ -112,7 +112,7 @@ if __name__ == "__main__":
     # Load test image
     ds_test = load_dataset("jxie/flickr8k", split="test")
     image = ds_test[0]["image"]
-    image.show()  # 2 brownish dogs playing together in the snow
+    image.show()  # 2 dark brown dogs playing together in the snow
 
     # Initialize models and adapter
     vit_model = ViTModel.from_pretrained("google/vit-base-patch16-224")
