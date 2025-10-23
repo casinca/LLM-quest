@@ -80,25 +80,3 @@ From-scratch TinyViT (9.5M params) did "OK" on CIFAR-10 pre-training (20 epochs,
 of perf as regularization) or any optimization tricks. Pure GPT architecture conversion by following the paper.
 
 
-## Towards Multimodal LLMs
-
-
-Once the ViT is trained for classification, we can use it as an image encoder for the multimodal SFT/VQA training of our
-LLM. Alternatively we can still load a pre-trained battle-tested ViT from a CLIP model: https://github.com/openai/CLIP.
-
-There are multiple ways to inject our hidden states into the LLM aka "modality fusion", 2 known methods are:
-- Concatenating the ViT's image embeddings/hidden states with the LLM's text input embeddings, also known as Early
-  Fusion/Unified Embedding.
-
-- Using the ViT's hidden states as keys & values inside the attention mechanism directly, we'll get text queries
-  attending to image features, also known as Late Fusion/Cross Modality Attention.
-
-This is when `ViTAdapter` enters the room.  
-The ViT's embedding space is very likely not the same as the GPT's one even though they both share the
-same dimension (in my case), because they weren't trained together. Ie vectors are pointing to different directions in
-the space for the same thing. The Adapter/connector is used during the multimodal SFT/VQA training to align the 2 spaces.
-
-Note: The adapter is also used to down/up-project the ViT's hidden states to match the LLM's embedding dimension (in the case
-there is a dimension mismatch but here we're both in 768D).
-
-We will use the first method in TODO.

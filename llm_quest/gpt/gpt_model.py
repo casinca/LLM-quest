@@ -36,27 +36,30 @@ class GPTModel(nn.Module):
         # projecting output to vocab_size to get logits
         self.out = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
-    def forward(self, x, attn_mask=None, kv_cache=None, last_token_only=False):
-        b, seq_len = x.shape
+    def forward(self, x, attn_mask=None, kv_cache=None, last_token_only=False, input_embedded = False):
+        # Input for Multimodal Early fusion training is already embedded: (b, num_patches + 1 + seq_len, emb_dim)
+        # thus bypassing token and positional embedding
+        if not input_embedded:
+            b, seq_len = x.shape
+            # shape (b, s) → (b, s, emb_dim)
+            x = self.emb_dict(x)
 
-        # shape (b, s) → (b, s, emb_dim)
-        x = self.emb_dict(x)
+            # --- Modif for kv_cache ---
+            past_len = 0
+            if kv_cache is not None:
+                # need to add the length to correctly offset the positions for the current tokens
+                past_len = kv_cache.start_pos
 
-        # --- Modif for kv_cache ---
-        past_len = 0
-        if kv_cache is not None:
-            # need to add the length to correctly offset the positions for the current tokens
-            past_len = kv_cache.start_pos
+            positions = torch.arange(past_len, past_len + seq_len, device=x.device)
+            pos_emb = self.pos_emb_dict(positions)  # same device as input
 
-        positions = torch.arange(past_len, past_len + seq_len, device=x.device)
-        pos_emb = self.pos_emb_dict(positions)  # same device as input
+            # old way:
+            # pos tensor has the same length as the current batch seq len
+            # and not fixed ctx_len size, thus having a dynamic shape per batch
+            # pos_emb = self.pos_emb_dict(torch.arange(seq_len, device=x.device))  # same device as input
 
-        # old way:
-        # pos tensor has the same length as the current batch seq len
-        # and not fixed ctx_len size, thus having a dynamic shape per batch
-        # pos_emb = self.pos_emb_dict(torch.arange(seq_len, device=x.device))  # same device as input
+            x = x + pos_emb
 
-        x = x + pos_emb
         x = self.dropout(x)
 
         # Pass through each transformer block, providing both x, attn_mask, and kv_cache

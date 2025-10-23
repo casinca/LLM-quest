@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from config import VIT_BASE_CONFIG
-from llm_quest.vit.vit_transformer_block import LayerNorm, ViTTransformerBlock
+from llm_quest.multimodal.vision_transformer.vit_transformer_block import LayerNorm, ViTTransformerBlock
 
 # Some major differences between causal decoders and ViT here.
 # First, the preprocessing step for encoding tokens vs images.
@@ -15,47 +15,6 @@ from llm_quest.vit.vit_transformer_block import LayerNorm, ViTTransformerBlock
 # We also change the out projection to match our number of classes.
 # Since we don't have a masked attention, we can retrieve the first learned CLS token which will be imbued with
 # information of the entire image.
-
-
-# TODO We might want to add some norm and dropout if this goes bonkers for the ffn type
-class ViTAdapter(torch.nn.Module):
-    """
-    Adapter/connector for ViT to LLM:
-    - If the ViT projected dimension is different from the LLM embedding dimension, we need a gateway, ie a linear layer
-        that will reproject the ViT output to match the LLM embedding dimension.
-    - If the ViT projected dimension is the same as the LLM embedding dimension, we can still use the adapter to help
-        for domain adaption. Ie better alignment of the 2 multidimensional spaces (vision and text) rather than leaving
-        the LLM solo learn from the ViT output directly.
-
-    The weights of the adapter are trained during Multi-modal SFT/VQA.
-
-    Args:
-        vit_d_out (int): The output dimension of the ViT model.
-        llm_d_in (int): The input/embedding dimension of the LLM model.
-        adapter_type (str): The type of adapter to use.
-            - "simple": A simple linear layer.
-            - "ffn": 1 hidden layer feed-forward neural network.
-        expansion_factor (int): The expansion factor for the hidden layer of the FFN.
-    """
-
-    def __init__(self, vit_d_out, llm_d_in, adapter_type="simple", expansion_factor=4):
-        super().__init__()
-
-        if adapter_type == "simple":
-            self.adapter = torch.nn.Linear(vit_d_out, llm_d_in)
-
-        elif adapter_type == "ffn":
-            self.adapter = torch.nn.Sequential(
-                torch.nn.Linear(vit_d_out, vit_d_out * expansion_factor),
-                torch.nn.GELU(),
-                torch.nn.Linear(vit_d_out * expansion_factor, llm_d_in),
-            )
-
-        else:
-            raise ValueError(f"Invalid adapter type: {adapter_type}")
-
-    def forward(self, x):
-        return self.adapter(x)
 
 
 class PatchEmbedding(nn.Module):
@@ -139,6 +98,12 @@ class ViTModel(nn.Module):
 
     Args:
         cfg (dict): Config dictionary containing model hyperparameters
+
+    returns:
+        logits (torch.Tensor): Logits for each class, shape (b, num_classes)
+
+        if output_hidden_states = True:
+            hidden_states (torch.Tensor): final hidden, shape (b, num_patches + 1, emb_dim)
     """
 
     def __init__(self, cfg):
@@ -162,10 +127,11 @@ class ViTModel(nn.Module):
         # classification head (replaces vocab_size out projection from GPT)
         self.classifier = nn.Linear(cfg["emb_dim"], cfg["num_classes"])
 
-    def forward(self, x):
+    def forward(self, x, output_hidden_states=False):
         """
         Args:
             x: Input images of shape (b, num_channels, img_width, img_height)
+            output_hidden_states (bool): Whether to return final hidden states only (no logits)
 
         Returns:
             Logits of shape (b, num_classes)
@@ -180,12 +146,14 @@ class ViTModel(nn.Module):
 
         x = self.final_ln(x)
 
-        # retrieve cls token (first token) for classification
-        cls_token_output = x[:, 0]  # (b, emb_dim)
+        if output_hidden_states:
+            return x  # (b, num_patches + 1, emb_dim)
 
-        logits = self.classifier(cls_token_output)  # (b, num_classes)
-
-        return logits
+        else:
+            # retrieve cls token (first token) for classification
+            cls_token_output = x[:, 0]  # (b, emb_dim)
+            logits = self.classifier(cls_token_output)  # (b, num_classes)
+            return logits
 
 
 # Testing code
@@ -203,6 +171,7 @@ if __name__ == "__main__":
         num_channels=3,
         emb_dim=768,
     )
+
     patch_output = patch_emb(x)
     print(f"Patch embedding output shape: {patch_output.shape}")
     print(f"Number of patches: {patch_emb.num_patches}")
@@ -210,7 +179,7 @@ if __name__ == "__main__":
     # test ViT model
     vit = ViTModel(VIT_BASE_CONFIG)
 
-    logits = vit(x)
+    logits = vit(x, output_hidden_states=False)
     print(f"Input shape: {x.shape}")
     print(f"Output logits shape: {logits.shape}")
     print(logits)

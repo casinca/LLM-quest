@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 
-from llm_quest.vit.vit_attention import ViTMultiHeadAttention
+from llm_quest.multimodal.vision_transformer.vit_attention import ViTMultiHeadAttention
 
 # Nothing changes here, same as GPT's TransformerBlock, we just replace causal MHA with ViT's MHA attending to all
 # patches (no autoregression)
