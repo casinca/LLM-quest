@@ -22,12 +22,12 @@ def vlm_generate_loop(
     """
     Generates image captions/description using a trained VLM model (using ViT + Adapter + GPT2).
     The setup is similar to the classic generate_loop() function with some differences:
-    - We preprocess the image just like for training, to get it enriched/aligned and ready for the VLM
+    - We preprocess the image, the same way as we did for training, to get it enriched/aligned and ready for the VLM
     - We are working in embedding space (not token IDs)
 
     Args:
         image: PIL Image
-        vit_model: Vision Transformer for getting image embeddings hidden states
+        vit_model: Vision Transformer for getting image embeddings/hidden states
         adapter: ViT to GPT embedding adapter
         vlm_model: VLM model for text generation
         tokenizer: Tokenizer for text generation
