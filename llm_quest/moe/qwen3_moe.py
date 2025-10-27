@@ -57,19 +57,43 @@ class Qwen3MoE(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
+        self.top_k = cfg["top_k"]
+        self.num_experts = cfg["num_experts"]
+        self.load_coeff = cfg["aux_loss_coef"]
+        self.training = cfg["training"]
+
         self.experts = nn.ModuleList([Expert(cfg) for _ in range(cfg["num_experts"])])
         self.gate = nn.Linear(cfg["emb_dim"], cfg["num_experts"], bias=False, dtype=cfg["dtype"])
 
-        # Optional weighted shared expert for Qwen3-Next MoE
+        # For Qwen3-Next MoE: weighted shared expert + sigma-MoE init of router weights
         self.shared_expert_hidden_dim = cfg.get("shared_expert_hidden_dim", None)
         if self.shared_expert_hidden_dim is not None:
             self.shared_expert = Expert(cfg, hidden_dim=self.shared_expert_hidden_dim)
             self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
 
-        self.top_k = cfg["top_k"]
-        self.num_experts = cfg["num_experts"]
-        self.load_coeff = cfg["aux_loss_coef"]
-        self.training = cfg["training"]
+            if self.training:
+                self.router_weights_init(self.gate.weight)  # only relevant for Pretraining with Qwen3-Next
+
+    def router_weights_init(self, weights):
+        """
+        re-initizalize router/gate weights following sigma-MoE initialization used in Qwen3-Next
+        https://arxiv.org/abs/2310.10837
+
+        The goal is to have a better starting point for training where initial routing of experts is based on cosine
+        similarity of the dot product only (scaled by input ||x||) and not impacted by the magnitude of initialized
+        weights.
+
+        Args:
+            weights (torch.Tensor): router/gate weights
+        """
+        with torch.no_grad():
+
+            og_std = weights.std()  # saving original SD to scale back later
+
+            l2_norms = torch.linalg.vector_norm(weights, dim=-1, ord=2, keepdim=True)
+            weights *= l2_norms.reciprocal()
+
+            weights *= og_std / weights.std()  # rescale to original SD
 
     def forward(self, x):
         b, s, emb_dim = x.shape
