@@ -48,7 +48,7 @@ class ZeroCenteredRMSNorm(nn.Module):
 def l2_norm(x):
     """
     Reducing Q and K vectors magnitude to unit length, by dividing by their L2 norms.
-    Ie, we are only interested in vector's direction and remove the magnitude.
+    Ie, we focus on the direction of the vectors, by making the similarity measure invariant to their magnitudes.
     This is only done for GatedDeltaNet.
 
     args: x: (b, num_head, seq_len, head_dim) should be Q or K
