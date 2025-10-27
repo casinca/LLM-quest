@@ -29,7 +29,15 @@ architecture which balances speed, efficiency and performance.
 
 - They also added a weighted shared expert, combined with the routed ones, in their MoE block (not seen in the
   architecture picture). Same as DeepSeek MoE except they use a sigmoid to scale the shared expert output.  
-  Very similar to part c) of [my experimental weighting shared experts stuff](https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md) from earlier this year.
+  Very similar to part c) of [my experimental weighting shared experts
+  stuff](https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md)
+  from earlier this year.
+
+- Also related to MoE (but only relevant for pretraining), they initialize the router/gate weights following 
+  [$\sigma$-MoE initialization](https://arxiv.org/abs/2310.10837) in order to get a better starting point for training.  
+  The idea is to normalize rows (vectors) of the matrix to unit length, removing the initial random influence of their
+  magnitudes. Consequently, initial routings (dot products), will only be based on cosine
+  similarity/direction alignment.
 
 - Despite the "L2" block being the same color as Z-C RMSNorm in the Qwen picture, it has nothing to do with weight decay
   (L2 regularization) for RMSNorm. It is L2 normalization. They are just dividing Q and K vectors by their Euclidean Norm/reduce their magnitude to unit length to
@@ -246,6 +254,7 @@ All resources mentioned have already been at least hyperlinked through the readm
 - DeltaNet: https://proceedings.mlr.press/v139/schlag21a.html
 - Delta rule:
   https://direct.mit.edu/books/edited-volume/5431/chapter-abstract/3958517/1960-Bernard-Widrow-and-Marcian-E-Hoff-Adaptive
+- $\sigma$-MoE initialization: https://arxiv.org/abs/2310.10837
 - Mamba: https://arxiv.org/abs/2312.00752
 - Venn diagram source: https://www.nature.com/articles/s42256-025-01034-6
 
