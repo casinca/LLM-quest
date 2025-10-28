@@ -9,6 +9,29 @@ import torch.nn as nn
 # Added optional weighted shared expert in Qwen3MoE to make it compatible with Qwen3-Next MoE
 # This is actually part c) of my experimental "weighting shared experts" with a single expert:
 # https://github.com/casinca/LLM-quest/blob/master/llm_quest/experimental/weighting_shared_experts/Readme.md
+#
+# Added sigma-MoE initialization for the router/gate weights for Qwen3-Next MoE
+
+
+def router_weights_init(weights):
+    """
+    re-initizalize router/gate weights following sigma-MoE initialization used in Qwen3-Next
+    https://arxiv.org/abs/2310.10837
+
+    The goal is to have a better starting point for training where initial routing of experts is based on cosine
+    similarity of the dot product only (scaled by input ||x||) and not impacted by the magnitude of initialized
+    weights.
+
+    Args:
+        weights (torch.Tensor): router/gate weights
+    """
+    with torch.no_grad():
+        og_std = weights.std()  # saving original SD to scale back later
+
+        l2_norms = torch.linalg.vector_norm(weights, dim=-1, ord=2, keepdim=True)
+        weights *= l2_norms.reciprocal()
+
+        weights *= og_std / weights.std()  # rescale to original SD
 
 
 class Expert(nn.Module):
@@ -72,28 +95,7 @@ class Qwen3MoE(nn.Module):
             self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
 
             if self.training:
-                self.router_weights_init(self.gate.weight)  # only relevant for Pretraining with Qwen3-Next
-
-    def router_weights_init(self, weights):
-        """
-        re-initizalize router/gate weights following sigma-MoE initialization used in Qwen3-Next
-        https://arxiv.org/abs/2310.10837
-
-        The goal is to have a better starting point for training where initial routing of experts is based on cosine
-        similarity of the dot product only (scaled by input ||x||) and not impacted by the magnitude of initialized
-        weights.
-
-        Args:
-            weights (torch.Tensor): router/gate weights
-        """
-        with torch.no_grad():
-
-            og_std = weights.std()  # saving original SD to scale back later
-
-            l2_norms = torch.linalg.vector_norm(weights, dim=-1, ord=2, keepdim=True)
-            weights *= l2_norms.reciprocal()
-
-            weights *= og_std / weights.std()  # rescale to original SD
+                router_weights_init(self.gate.weight)  # only relevant for Pretraining with Qwen3-Next
 
     def forward(self, x):
         b, s, emb_dim = x.shape
