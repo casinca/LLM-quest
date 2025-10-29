@@ -367,7 +367,7 @@ class CheckpointEvaluator:
         return False
 
     # same as rlhf grpo logic but separate in case we need to change the logic
-    def is_rlvr_grpo_best(self, reward, kl_div):
+    def is_rlvr_grpo_best(self, kl_div, reward):
         if kl_div > self.kl_div_threshold or reward < self.min_reward_threshold:
             return False
 
