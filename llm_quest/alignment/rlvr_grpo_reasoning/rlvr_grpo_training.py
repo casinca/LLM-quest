@@ -36,6 +36,7 @@ eval_freq = 50
 eval_batches = 1
 eval_num_samples = 4
 kl_div_threshold = 0.3
+min_reward_threshold = 0.35
 # loader hparams
 num_workers = 0
 pin_memory = False
@@ -115,5 +116,6 @@ if __name__ == "__main__":
         eval_batches=eval_batches,
         eval_num_samples=eval_num_samples,
         kl_div_threshold=kl_div_threshold,
+        min_reward_threshold=min_reward_threshold,
         loss_variant=loss_variant,
     )

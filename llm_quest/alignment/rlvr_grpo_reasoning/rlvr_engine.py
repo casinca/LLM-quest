@@ -186,6 +186,7 @@ def rlvr_grpo_training_loop(
     eval_batches=None,
     eval_num_samples=1,
     kl_div_threshold=0.5,
+    min_reward_threshold=0.35,
     loss_variant="grpo",
     save_checkpoint=True,
 ):
@@ -215,6 +216,7 @@ def rlvr_grpo_training_loop(
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
+        min_reward_threshold (float, optional): minimum reward threshold for checkpoint saving. Defaults to 0.35.
         loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
         "gspo".
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
@@ -224,7 +226,9 @@ def rlvr_grpo_training_loop(
     """
     reference_model.eval()
 
-    chkp_eval = CheckpointEvaluator(kl_div_threshold=kl_div_threshold, min_reward_threshold=0.35, beta=beta)
+    chkp_eval = CheckpointEvaluator(
+        kl_div_threshold=kl_div_threshold, min_reward_threshold=min_reward_threshold, beta=beta
+    )
 
     step = 0
     for epoch in range(1, num_epoch + 1):
