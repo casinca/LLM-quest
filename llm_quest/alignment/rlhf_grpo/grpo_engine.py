@@ -346,6 +346,7 @@ def z_scores(rewards, num_samples, dr_grpo=None):
         rewards (torch.Tensor): Tensor of shape (B*,) containing the masked rewards.
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
         dr_grpo (str, optional): if "dr_grpo", compute the advantages per the Dr. GRPO loss method.
+                                (arg made as string and not a bool to match "loss_variant" string arg in training loop)
 
         *considering B as batch_size * num_samples.
 
@@ -369,7 +370,7 @@ def z_scores(rewards, num_samples, dr_grpo=None):
 
 # Removed intermediate masking of logprobs:
 # - see: /LLM-quest/llm_quest/alignment/rlhf_grpo/README.md#additional-details/intermediate-masking-of-logprobs
-# - changed in commit: insert commit
+# - changed in commit: https://github.com/casinca/LLM-quest/commit/25bf58ebd8f21f1acb2fe3112bbd0005109bd7ae
 def log_probs_per_token(logits, inputs):
     """
     Compute and retrieve the log probabilities assigned to each label in a sequence.
