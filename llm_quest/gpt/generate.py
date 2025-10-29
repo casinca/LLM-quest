@@ -348,9 +348,6 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
     Returns:
         torch.Tensor: Sampled token ID from the distribution, shape (b, 1)
     """
-    # TODO top_k and top_p doesn't work anymore with the new implementation
-    assert top_k is None or top_p is None, "top_k and top_p cannot be specified at the same time"
-
     if temp == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
@@ -510,7 +507,7 @@ if __name__ == "__main__":
         max_gen=20,
         context_length=model_settings["context_length"],
         top_k=25,
-        top_p=None,
+        top_p=0.95,
         temp=1.4,
     )
 
