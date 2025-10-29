@@ -115,7 +115,6 @@ if __name__ == "__main__":
         val_loader=val_loader,
         policy_model=policy_model,
         reference_model=reference_model,
-        tokenizer=tokenizer,
         optimizer=optimizer,
         num_epoch=num_epoch,
         num_samples=num_samples,
