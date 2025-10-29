@@ -370,12 +370,13 @@ if __name__ == "__main__":
         ),
         (
             "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?",
-            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>-72 </answer><|endoftext|>",
+            "<think>Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.</think>\n <answer>-72</answer><|endoftext|>",
         ),
     ]
     correct_answers = ["72.0", "-72 "]
 
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
+    tokenizer.pad_token = tokenizer.eos_token
 
     reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
 
