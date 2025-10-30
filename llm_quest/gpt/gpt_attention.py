@@ -110,12 +110,12 @@ class KVCache:
 
     Args:
         num_layers (int): Number of transformer layers
-        max_seq_len (int): Maximum sequence length (context_length)
+        context_len (int): Maximum context_length (max sequence length)
     """
 
-    def __init__(self, num_layers, max_seq_len):
+    def __init__(self, num_layers, context_len):
         self.num_layers = num_layers
-        self.max_seq_len = max_seq_len
+        self.context_len = context_len
 
         self.keys_cache = None
         self.values_cache = None
@@ -135,7 +135,7 @@ class KVCache:
                 torch.zeros(
                     batch_size,
                     num_heads,
-                    self.max_seq_len,
+                    self.context_len,
                     head_dim,
                     device=device,
                     dtype=dtype,
@@ -145,7 +145,7 @@ class KVCache:
                 torch.zeros(
                     batch_size,
                     num_heads,
-                    self.max_seq_len,
+                    self.context_len,
                     head_dim,
                     device=device,
                     dtype=dtype,

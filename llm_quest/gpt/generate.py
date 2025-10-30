@@ -101,7 +101,7 @@ def generate_loop_kv_cache(
     # Init KV cache
     kv_cache = KVCache(
         num_layers=num_layers,
-        max_seq_len=context_length,
+        context_len=context_length,
     )
 
     input_tensor = input_tensor.to(device)
@@ -287,7 +287,7 @@ def generate_batched_loop_kv_cache(
     num_layers = len(model.trf_blocks)
     kv_cache = KVCache(
         num_layers=num_layers,
-        max_seq_len=context_length,
+        context_len=context_length,
     )
 
     generated_tokens = []
