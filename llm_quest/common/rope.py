@@ -109,7 +109,7 @@ class RoPE:
         with Pytorch autocast (AMP). But if we ever do something dynamic and cos and sin are calculated during forward
         pass, we we will have to explicitly disable autocast, ex:
             with torch.autocast(device_type=device_type, enabled=False):  # Force float32
-        https://github.com/huggingface/transformers/blob/main/src/transformers/models/mixtral/modeling_mixtral.py#L366C1-L378C60
+        https://github.com/huggingface/transformers/blob/02c324f43fe0ef5d484e846417e5f3bf4484524c/src/transformers/models/mixtral/modeling_mixtral.py#L212-L217
 
         Computes the sine and cosine of the angles for RoPE, optionally smooth frequency scaling.
 
