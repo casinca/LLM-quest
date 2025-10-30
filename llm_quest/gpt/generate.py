@@ -394,6 +394,7 @@ def _top_p_sampling(probs, p, top_k=None):
 
     Args:
         probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
+                            or shape (b, draft_max_gen, v) if speculative decoding
         p (float): The cumulative probability threshold for top-p sampling, range [0.0, 1.0].
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
 
@@ -403,7 +404,10 @@ def _top_p_sampling(probs, p, top_k=None):
     # limiting top-p to top-k tokens if specified
     if top_k:
         top_k_probs, _ = torch.topk(probs, top_k)
-        last_top_k_probs = top_k_probs[:, -1].unsqueeze(1)  # getting last top-k as cutoff point to mask
+
+        # correctly slice: for 2D tensor (b, v) normal generation and 3D tensor (b, draft_max_gen, v) spec decoding
+        last_top_k_probs = top_k_probs[..., -1].unsqueeze(-1)  # getting last top-k as cutoff point to mask
+
         top_k_mask = probs < last_top_k_probs
         probs.masked_fill_(top_k_mask, 0.0)
 
@@ -412,8 +416,8 @@ def _top_p_sampling(probs, p, top_k=None):
 
     p_mask = cum_probs > p
     # trick (seen on HF) to keep the pivot/threshold token in the set (by shifting the mask by 1)
-    p_mask[:, 1:] = p_mask[:, :-1].clone()
-    p_mask[:, 0] = False  # putting back first token in the set (we'll always need the most probable token)
+    p_mask[..., 1:] = p_mask[..., :-1].clone()
+    p_mask[..., 0] = False  # putting back first token in the set (we'll always need the most probable token)
     sorted_probs.masked_fill_(p_mask, 0.0)
 
     # re-assigning the sorted masked probs to the original indices
