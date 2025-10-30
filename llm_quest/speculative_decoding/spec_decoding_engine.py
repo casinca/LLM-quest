@@ -10,12 +10,14 @@ def get_modified_distrib(logits, top_k, top_p, temp, return_logprobs=False):
     based on top_k/top_p if specified.
 
     args:
-        logits (torch.Tensor): The logits from the model, shape (b, v)
+        logits (torch.Tensor): The logits from the model, shape (b, s, v)
         top_k (int | None): limits sampling to top k most likely tokens. None to disable.
         top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
                                 None to disable.
         temp (float): The temperature for the distribution
         return_logprobs (bool): Whether to return the log probabilities instead of the probabilities
+
+        s = draft_max_gen
 
     returns:
         torch.Tensor: The probabilities or log probabilities of the generated tokens, shape (b, v)
@@ -51,6 +53,8 @@ def get_logprobs(logits, generated_tokens, top_k, top_p, temp=0.0):
         top_p (float | None): limits sampling to top p most likely tokens. Can be combined with top_k. range [0.0, 1.0].
                                 None to disable.
         temp (float): The temperature for the distribution
+
+        s = draft_max_gen
 
     Returns:
         torch.Tensor: The log probabilities of the generated tokens, shape (b, s)
@@ -100,10 +104,10 @@ def speculative_sampling_greedy(target_logits, generated_tokens, remaining_token
     don't need the draft model's distributions to compute acceptance/rejection.
 
     args:
-    target_logits (torch.Tensor): The logit distributions from the target model for each next-token prediction in the
-    draft sequence, shape (b, draft_max_gen+1, v)
-    generated_tokens (torch.Tensor): The generated tokens, shape (b, draft_max_gen)
-    remaining_tokens (int): The number of tokens left to generate
+        target_logits (torch.Tensor): The logit distributions from the target model for each next-token prediction in the
+        draft sequence, shape (b, draft_max_gen+1, v)
+        generated_tokens (torch.Tensor): The generated tokens, shape (b, draft_max_gen)
+        remaining_tokens (int): The number of tokens left to generate
 
     returns:
         torch.Tensor: The accepted tokens + last token, shape (b, num_accepted + 1)
