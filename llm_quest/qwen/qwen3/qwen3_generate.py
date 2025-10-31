@@ -6,6 +6,11 @@ from llm_quest.gpt.generate import generate_loop, generate_loop_kv_cache
 from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 
+# Sometimes No KVcache output differs from KVcache output.
+# This is expected, same thing happens when comparing to other baselines (HF + @rasbt)
+# Detailed explanations on causes, from a top HF engineer:
+# https://github.com/huggingface/transformers/issues/25420#issuecomment-1775317535
+
 torch.manual_seed(123)
 device = "cuda"
 qwen3_cfg = qwen3_config_creator("0.6B-Base")
