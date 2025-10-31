@@ -73,7 +73,7 @@ class TransformerBlock(nn.Module):
             - dtype (torch.dtype): Dtype of the weights, to change precision
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx):
         super().__init__()
         self.att = GroupedQueryAttention(
             d_in=cfg["emb_dim"],
@@ -81,16 +81,17 @@ class TransformerBlock(nn.Module):
             num_kv_groups=cfg["num_kv_groups"],
             head_dim=cfg["head_dim"],
             dtype=cfg["dtype"],
+            layer_idx=layer_idx,
         )
         self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, kv_cache=None):
         # Pre-norm arch
         residual = x
         x = self.norm1(x)
-        x = self.att(x, mask, cos, sin)
+        x = self.att(x, mask, cos, sin, kv_cache)
         x = x + residual
 
         residual = x
