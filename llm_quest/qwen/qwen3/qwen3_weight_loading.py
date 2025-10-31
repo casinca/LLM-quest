@@ -189,8 +189,8 @@ def _report_loading_status(model, load_result, converted_weights):
 
     if load_result.missing_keys:
         print(f"Missing keys: {load_result.missing_keys}")
-        print("→ lm_head/out_head expected to be missing with: tie_embeddings=True")
-        print("→ custom buffers expected to be missing, ex: mask, cos, sin\n")
+        print("-> lm_head/out_head expected to be missing with: tie_embeddings=True")
+        print("-> custom buffers expected to be missing, ex: mask, cos, sin\n")
 
     if load_result.unexpected_keys:
         print(f"Unexpected keys: {load_result.unexpected_keys}")
