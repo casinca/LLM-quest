@@ -51,11 +51,13 @@ class GroupedQueryAttention(nn.Module):
         num_kv_groups,
         head_dim,
         dtype=None,
+        layer_idx=None,
     ):
         super().__init__()
         # (since head_dim is now a specific hparam no need for assert d_in (or d_out if = d_in) % num_heads == 0)
         assert num_heads % num_kv_groups == 0, "num_heads must be divisible by num_kv_groups"
 
+        self.layer_idx = layer_idx
         self.num_heads = num_heads
         self.head_dim = head_dim
         # head dim is now a specific hparam in Qwen3 config (not inferred from d_out)
@@ -76,7 +78,7 @@ class GroupedQueryAttention(nn.Module):
         self.q_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
         self.k_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, kv_cache=None):
         queries = self.w_queries(x)  # shape (b, s, d_out)
         keys = self.w_keys(x)  # K and V shapes (b, s, num_kv_groups * head_dim)
         values = self.w_values(x)
@@ -99,19 +101,32 @@ class GroupedQueryAttention(nn.Module):
         queries = self.q_norm(queries)
         keys = self.k_norm(keys)
 
+        # for KVCache position tracking
+        start_pos = 0
+        if kv_cache is not None:
+            start_pos = kv_cache.start_pos
+
         # rotating features for positional information, with RoPE, after QK normalization
-        queries = RoPE.apply(queries, cos, sin)
-        keys = RoPE.apply(keys, cos, sin)
+        queries = RoPE.apply(queries, cos, sin, start_pos)
+        keys = RoPE.apply(keys, cos, sin, start_pos)
+
+        if kv_cache is not None:
+            keys, values = kv_cache.get_updated_cache(keys, values, self.layer_idx)
 
         # need to duplicate "num_repeat" time K and V n_heads to match Q n_heads for matmul
-        # ex: Q 2,10,6,5 !@ (2,2,6,5).T →  (*5 num_repeat=10/2) → Q @ (2,10,6,5).T
-        # in our ex, since we are duping K heads (1st head 5 times, 2nd 5 times), each group of 5 query heads will
-        # attend to the same duped keys (Q1@K1, ..., Q5@K1, Q6@K2,... Q10@K2), effectively grouping the attention
         keys = keys.repeat_interleave(self.num_repeat, dim=1)
         values = values.repeat_interleave(self.num_repeat, dim=1)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
 
-        current_mask = mask[:seq_len, :seq_len]
+        q_seq_len = queries.shape[2]
+        k_seq_len = keys.shape[2]
+
+        if k_seq_len > q_seq_len:  # imply KVCache is used
+            q_start_pos = k_seq_len - q_seq_len  # should be 1 for classic NTP KVCache inference
+            current_mask = mask[q_start_pos:k_seq_len, :k_seq_len]
+        else:
+            current_mask = mask[:q_seq_len, :k_seq_len]
+
         scaled_att_scores = att_scores * self.att_scaling
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)
         att_weights = F.softmax(scaled_att_scores, dim=-1)

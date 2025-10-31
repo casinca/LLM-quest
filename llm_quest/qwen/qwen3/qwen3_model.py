@@ -32,7 +32,7 @@ class Qwen3Model(nn.Module):
             )
         else:  # dense
             self.trf_blocks = nn.ModuleList(
-                [TransformerBlock(cfg) for layer in range(cfg["n_layers"])],
+                [TransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])],
             )
 
         self.final_norm = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
@@ -58,12 +58,12 @@ class Qwen3Model(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x, attn_mask=None):  # NOTE attention mask Placeholder
+    def forward(self, x, attn_mask=None, kv_cache=None):  # NOTE attention mask Placeholder
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin)
+            x = block(x, self.mask, self.cos, self.sin, kv_cache)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
