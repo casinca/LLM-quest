@@ -238,7 +238,7 @@ class MultiHeadAttention(nn.Module):
         """
         args:
             x: (b, seq_len, d_in)
-            attn_mask (optional): (b, seq_len) used for padding tokens
+            attn_mask (optional): (b, seq_len) used for padding tokens, passed as True = real tokens
             kv_cache (optional): KVCache instance/object
         """
         queries = self.w_queries(x)  # shape (b, s, d_out) aka augmented emb dim if d_out > d_in
