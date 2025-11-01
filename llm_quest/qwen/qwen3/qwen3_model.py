@@ -28,7 +28,7 @@ class Qwen3Model(nn.Module):
         # Choose transformer block type based on model configuration
         if cfg["model_type"] == "moe":
             self.trf_blocks = nn.ModuleList(
-                [MoETransformerBlock(cfg) for layer in range(cfg["n_layers"])],
+                [MoETransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])],
             )
         else:  # dense
             self.trf_blocks = nn.ModuleList(

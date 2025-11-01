@@ -71,6 +71,7 @@ class TransformerBlock(nn.Module):
             - num_kv_groups (int): Number of key-value groups for GQA
             - head_dim (int): Head dimension for GQA
             - dtype (torch.dtype): Dtype of the weights, to change precision
+        layer_idx (int): Layer index (used here for the KV cache)
     """
 
     def __init__(self, cfg, layer_idx):
@@ -108,7 +109,7 @@ class MoETransformerBlock(nn.Module):
     Same as Dense transformer block, but with MoE instead of FFN.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx):
         super().__init__()
         self.att = GroupedQueryAttention(
             d_in=cfg["emb_dim"],
@@ -116,16 +117,17 @@ class MoETransformerBlock(nn.Module):
             num_kv_groups=cfg["num_kv_groups"],
             head_dim=cfg["head_dim"],
             dtype=cfg["dtype"],
+            layer_idx=layer_idx,
         )
         self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, kv_cache=None):
         # Pre-normalization architecture
         residual = x
         x = self.norm1(x)
-        x = self.att(x, mask, cos, sin)
+        x = self.att(x, mask, cos, sin, kv_cache)
         x = x + residual
 
         residual = x
