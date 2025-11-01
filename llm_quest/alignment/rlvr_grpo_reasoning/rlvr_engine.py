@@ -12,7 +12,7 @@ from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     log_probs_per_token,
     z_scores,
 )
-from llm_quest.gpt.generate import generate_batched_loop
+from llm_quest.gpt.generate import generate_batched_loop_kv_cache
 from llm_quest.utils import CheckpointEvaluator, ResponseExtractor
 
 
@@ -247,7 +247,7 @@ def rlvr_grpo_training_loop(
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
             correct_answers = [ans for ans in batch["answers"] for _ in range(num_samples)]
 
-            responses = generate_batched_loop(
+            responses = generate_batched_loop_kv_cache(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
