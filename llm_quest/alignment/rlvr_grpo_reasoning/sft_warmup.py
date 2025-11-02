@@ -36,7 +36,7 @@ if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- Loaders ---
-    model_cfg = config.config_creator("gpt_m")
+    model_cfg = config.gpt2_config_creator("gpt_m")
 
     model = GPTModel(model_cfg)
     checkpoint = torch.load(config.ft_instruct_w_gpt2, weights_only=True, map_location="cpu")

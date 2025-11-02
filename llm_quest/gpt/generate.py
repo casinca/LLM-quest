@@ -494,7 +494,7 @@ if __name__ == "__main__":
     weights_path = download_gpt_model(gpt_size="gpt_s", save_dir=config.openai_pretrained_w_gpt2_s)
 
     tokenizer = tiktoken.get_encoding("gpt2")
-    model_settings = config.config_creator("gpt_s")
+    model_settings = config.gpt2_config_creator("gpt_s")
     torch.manual_seed(123)
 
     device = "cuda"

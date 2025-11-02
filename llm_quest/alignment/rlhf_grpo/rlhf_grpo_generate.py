@@ -36,7 +36,7 @@ if __name__ == "__main__":
         test_data = json.load(f)[55:58]  # same samples that were used in llm-from-scratch repo for DPO comparison
 
     # --- Model Config and Loading ---
-    model_cfg = config.config_creator("gpt_m")
+    model_cfg = config.gpt2_config_creator("gpt_m")
 
     policy_model = GPTModel(model_cfg)
     policy_checkpoint = torch.load(

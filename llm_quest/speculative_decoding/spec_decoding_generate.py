@@ -25,8 +25,8 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    target_model_config = config.config_creator("gpt_l")  # needs a larger model to make speculative decoding worth
-    draft_model_config = config.config_creator("gpt_s")
+    target_model_config = config.gpt2_config_creator("gpt_l")  # needs a larger model to make speculative decoding worth
+    draft_model_config = config.gpt2_config_creator("gpt_s")
 
     device = "cuda"
 

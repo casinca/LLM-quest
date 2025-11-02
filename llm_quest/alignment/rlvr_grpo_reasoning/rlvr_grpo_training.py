@@ -14,7 +14,7 @@ from llm_quest.dataset import ReasoningDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
 # --- hyperparameters ---
-gpt_config = config.config_creator("gpt_m")
+gpt_config = config.gpt2_config_creator("gpt_m")
 model_device = "cuda"
 # optimizer hparams
 lr = 5e-5

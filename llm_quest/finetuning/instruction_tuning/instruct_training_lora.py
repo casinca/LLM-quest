@@ -41,7 +41,7 @@ if __name__ == "__main__":
     tokenizer = tiktoken.get_encoding("gpt2")
 
     # --- Loaders ---
-    model_cfg = config.config_creator("gpt_m")  # using Medium sized gpt config
+    model_cfg = config.gpt2_config_creator("gpt_m")  # using Medium sized gpt config
 
     weights_path = download_gpt_model(gpt_size="gpt_m", save_dir=config.openai_pretrained_w_gpt2_m)
     model = GPTModel(model_cfg)

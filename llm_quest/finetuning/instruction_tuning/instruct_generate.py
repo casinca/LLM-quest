@@ -22,7 +22,7 @@ model_device = "cuda"
 with open(config.instruct_alpaca_test_path, "r") as f:
     test_txt = json.load(f)
 
-model_cfg = config.config_creator("gpt_m")
+model_cfg = config.gpt2_config_creator("gpt_m")
 model = GPTModel(model_cfg)
 # loading our finetuned model params
 ft_checkpoint = torch.load(config.ft_instruct_w_gpt2, weights_only=True)

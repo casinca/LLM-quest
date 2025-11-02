@@ -142,7 +142,7 @@ TINY_VIT_CONFIG = {
 }
 
 
-def config_creator(gpt_size):
+def gpt2_config_creator(gpt_size):
     """
     This function creates a config dictionary for a GPT model based on the size provided.
 

@@ -18,7 +18,7 @@ with open("../../../data/processed_data/gsm8k_processed/gsm8k_test.jsonl", "r") 
     for line in f:
         test_txt.append(json.loads(line))
 
-model_cfg = config.config_creator("gpt_m")
+model_cfg = config.gpt2_config_creator("gpt_m")
 model = GPTModel(model_cfg)
 
 # loading our SFT model params

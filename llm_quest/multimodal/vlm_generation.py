@@ -118,7 +118,7 @@ if __name__ == "__main__":
     vit_model = ViTModel.from_pretrained("google/vit-base-patch16-224")
     vit_model = vit_model.eval()
 
-    gpt_config = config.config_creator("gpt_s")
+    gpt_config = config.gpt2_config_creator("gpt_s")
     vlm_model = GPTModel(gpt_config)
     vlm_model.load_state_dict(torch.load(config.vlm_gpt, map_location="cpu"))
 

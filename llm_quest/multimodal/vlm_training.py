@@ -7,8 +7,8 @@ import config
 from llm_quest.dataset import MultimodalDataset
 from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
 from llm_quest.gpt.gpt_model import GPTModel
-from llm_quest.multimodal.vlm_engine import vlm_training_loop_simple
 from llm_quest.multimodal.vision_transformer.vit_engine import ViTAdapter
+from llm_quest.multimodal.vlm_engine import vlm_training_loop_simple
 
 # Hyperparameters
 torch.manual_seed(123)
@@ -40,7 +40,7 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 # Initialize models and adapter
 vit_model = ViTModel.from_pretrained("google/vit-base-patch16-224")
 
-gpt_config = config.config_creator(gpt_size)
+gpt_config = config.gpt2_config_creator(gpt_size)
 gpt_config["drop_rate"] = vlm_drop_rate
 vlm_model = GPTModel(gpt_config)
 weights_path = download_gpt_model(gpt_size=gpt_size, save_dir=config.openai_pretrained_w_gpt2_s)

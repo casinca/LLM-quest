@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    model_config = config.config_creator("gpt_s")
+    model_config = config.gpt2_config_creator("gpt_s")
     model_config["drop_rate"] = 0.0
     model = GPTModel(model_config)
 

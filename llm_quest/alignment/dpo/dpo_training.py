@@ -16,7 +16,7 @@ batch_size = 8
 data_device = "cpu"
 model_device = "cuda"
 
-model_cfg = config.config_creator("gpt_m")
+model_cfg = config.gpt2_config_creator("gpt_m")
 # the ref model was SFT on a pretrained GPT2 with OpenAI weights, can't use 50304.
 model_cfg["vocab_size"] = 50257
 

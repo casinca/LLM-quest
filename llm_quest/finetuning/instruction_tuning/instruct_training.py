@@ -20,7 +20,7 @@ accumulation_steps = 2
 num_workers = 0
 pin_memory = False
 use_amp = False
-model_cfg = config.config_creator("gpt_m")
+model_cfg = config.gpt2_config_creator("gpt_m")
 
 data_device = "cpu"
 model_device = "cuda"
