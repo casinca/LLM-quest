@@ -78,7 +78,14 @@ class GroupedQueryAttention(nn.Module):
         self.q_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
         self.k_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
 
-    def forward(self, x, mask, cos, sin, kv_cache=None):
+    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None):
+        """
+        args:
+            x: (b, seq_len, d_in)
+            mask: (b, seq_len) Causal mask (passed as True = future tokens/upper right triangle)
+            attn_mask: (b, seq_len) Attention mask (passed as True = real tokens)
+            kv_cache: KVCache instance/object
+        """
         queries = self.w_queries(x)  # shape (b, s, d_out)
         keys = self.w_keys(x)  # K and V shapes (b, s, num_kv_groups * head_dim)
         values = self.w_values(x)
@@ -121,11 +128,15 @@ class GroupedQueryAttention(nn.Module):
         q_seq_len = queries.shape[2]
         k_seq_len = keys.shape[2]
 
+        # masking: causal mask and attn_mask
         if k_seq_len > q_seq_len:  # imply KVCache is used
-            q_start_pos = k_seq_len - q_seq_len  # should be 1 for classic NTP KVCache inference
+            q_start_pos = k_seq_len - q_seq_len  # q_seq_len should be 1 for classic NTP KVCache inference
             current_mask = mask[q_start_pos:k_seq_len, :k_seq_len]
         else:
             current_mask = mask[:q_seq_len, :k_seq_len]
+        if attn_mask is not None:
+            # causal shape (s, s) → (1, 1, q_seq_len, k_seq_len), attn_mask shape (b, s) → (b, 1, 1, k_seq_len)
+            current_mask = current_mask.unsqueeze(0).unsqueeze(0) | ~attn_mask.unsqueeze(1).unsqueeze(1)
 
         scaled_att_scores = att_scores * self.att_scaling
         scaled_att_scores.masked_fill_(current_mask, -torch.inf)

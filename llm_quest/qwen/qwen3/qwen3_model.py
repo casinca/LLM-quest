@@ -58,12 +58,18 @@ class Qwen3Model(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x, attn_mask=None, kv_cache=None):  # NOTE attention mask Placeholder
+    def forward(self, x, attn_mask=None, kv_cache=None):
+        """
+        args:
+            x: (b, s)
+            attn_mask: (b, s) Attention mask (passed as True = real tokens)
+            kv_cache: KVCache instance/object
+        """
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin, kv_cache)
+            x = block(x, self.mask, self.cos, self.sin, attn_mask, kv_cache)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
