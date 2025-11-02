@@ -271,7 +271,7 @@ class MultiHeadAttention(nn.Module):
         k_seq_len = keys.shape[2]
         # mask fix for KV cache (sequence length Q and K mismatch)
         if k_seq_len > q_seq_len:
-            q_start_pos = k_seq_len - q_seq_len  # should be 1 for classic NTP KVCache inference
+            q_start_pos = k_seq_len - q_seq_len  # q_seq_len should be 1 for classic NTP KVCache inference
             curr_mask = self.mask[q_start_pos:k_seq_len, :k_seq_len]
         else:
             curr_mask = self.mask[:q_seq_len, :k_seq_len]
