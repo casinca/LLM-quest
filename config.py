@@ -170,24 +170,25 @@ def config_creator(gpt_size):
     return new_config
 
 
-# TODO needs to check for other models than -BASE to avoid redundant configs
-def qwen3_config_creator(model_size="0.6B-Base"):
+def qwen3_config_creator(model_size="0.6B", base_model=True):
     """
     Get Qwen3 model configuration for different model sizes.
 
     Args:
-        model_size (str): Model size identifier ("0.6B-Base", "0.6B", "1.7B", "4B", "30B-A3B")
+        model_size (str): Model size identifier ("0.6B", "1.7B", "4B", "30B-A3B")
+        base_model (bool): Whether to use the base model (True) or the instruct/reasoning hybrid model (False)
 
     Returns:
         dict: Configuration dictionary for the specified model size
     """
+
     # common hparams
     base_config = {
         "vocab_size": 151_936,
         "rope_base": 1_000_000,
         "head_dim": 128,
         "dtype": torch.bfloat16,
-        "model_path": f"Qwen/Qwen3-{model_size}",
+        "model_path": f"Qwen/Qwen3-{model_size}{'-Base' if base_model else ''}",
         "training": False,
         # "rms_norm_eps": 1e-06,
         # "device": ""
@@ -205,9 +206,10 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "context_length": 512,
             "tie_embeddings": True,
         },
-        ### Dense configs ###
-        #  matching: # https://huggingface.co/Qwen/Qwen3-0.6B-Base/blob/main/config.json
-        "0.6B-Base": {
+        ############  Dense configs  ############
+        #  base matching: https://huggingface.co/Qwen/Qwen3-0.6B-Base/blob/main/config.json
+        # instruct/reasoning: https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/config.json
+        "0.6B": {
             **base_config,
             "model_type": "dense",
             "emb_dim": 1024,  # (also called hidden_size)
@@ -216,18 +218,6 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "num_kv_groups": 8,
             "hidden_dim": 3072,  # (also called intermediate_size)
             "context_length": 40_960,  # (also called max_position_embeddings)
-            "tie_embeddings": True,
-        },
-        # https://huggingface.co/Qwen/Qwen3-0.6B/blob/main/config.json
-        "0.6B": {
-            **base_config,
-            "model_type": "dense",
-            "emb_dim": 1024,
-            "n_layers": 28,
-            "n_heads": 16,
-            "num_kv_groups": 8,
-            "hidden_dim": 3072,
-            "context_length": 40_960,
             "tie_embeddings": True,
         },
         "1.7B": {
@@ -252,7 +242,7 @@ def qwen3_config_creator(model_size="0.6B-Base"):
             "context_length": 40_960,
             "tie_embeddings": True,
         },
-        ### MoE config ###
+        ############  MoE configs  ############
         "temp_moe": {
             **base_config,
             "model_type": "moe",
