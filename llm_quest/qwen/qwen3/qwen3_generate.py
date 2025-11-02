@@ -13,7 +13,7 @@ from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 
 torch.manual_seed(123)
 device = "cuda"
-qwen3_cfg = qwen3_config_creator("0.6B-Base")
+qwen3_cfg = qwen3_config_creator("0.6B", base_model=True)
 
 tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"])
 qwen3_model = Qwen3Model(qwen3_cfg)
