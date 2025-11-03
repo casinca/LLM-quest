@@ -67,33 +67,33 @@ def get_remapping_rules(model_cfg):
 
 
 def _convert_weights(hf_state_dict, our_state_dict, remapping_rules):
+    """
+    Convert Hugging Face weights to our implementation weights.
 
-        ### Dense vs MoE ###
-        if model_type == "moe":
-            moe_weights = {
-                # Router/gate weight
-                f"{layer_prefix_hf}.mlp.gate.weight": f"{layer_prefix_ours}.moe.gate.weight",
-            }
+    Args:
+        hf_state_dict (dict): Hugging Face state dictionary
+        our_state_dict (dict): Our implementation state dictionary
+        remapping_rules (list): Remapping rules
+    """
+    converted_weights = {}
+    for hf_name, hf_weight in hf_state_dict.items():
+        our_name = hf_name
 
-            # Expert weights
-            for expert_idx in range(model_cfg["num_experts"]):
-                expert_weights = {
-                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.gate_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin_gate.weight",
-                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.up_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin1.weight",
-                    f"{layer_prefix_hf}.mlp.experts.{expert_idx}.down_proj.weight": f"{layer_prefix_ours}.moe.experts.{expert_idx}.lin2.weight",
-                }
-                moe_weights.update(expert_weights)
-            weight_mapping.update(moe_weights)
+        for pattern, replacement in remapping_rules:
+            if pattern in our_name:
+                our_name = our_name.replace(pattern, replacement)
+                if pattern == hf_name:
+                    break
 
-        else:  # Dense FFN
-            ffn_weights = {
-                f"{layer_prefix_hf}.mlp.gate_proj.weight": f"{layer_prefix_ours}.ffn.lin_gate.weight",
-                f"{layer_prefix_hf}.mlp.up_proj.weight": f"{layer_prefix_ours}.ffn.lin1.weight",
-                f"{layer_prefix_hf}.mlp.down_proj.weight": f"{layer_prefix_ours}.ffn.lin2.weight",
-            }
-            weight_mapping.update(ffn_weights)
+        if our_name in our_state_dict:
+            if hf_weight.shape == our_state_dict[our_name].shape:
+                converted_weights[our_name] = hf_weight.clone()
+            else:
+                print(
+                    f"WARNING: Shape mismatch:{our_name}: HF {hf_weight.shape} vs Ours {our_state_dict[our_name].shape}"
+                )
 
-    return weight_mapping
+    return converted_weights
 
 
 def load_qwen3_weights(model, model_cfg):
@@ -147,19 +147,7 @@ def load_qwen3_weights(model, model_cfg):
     ########################
     ### Convert weights ###
     print("\nConverting weights...")
-    converted_weights = {}
-
-    for hf_name, hf_weight in hf_state_dict.items():
-        if hf_name in weight_mapping:
-            our_name = weight_mapping[hf_name]
-
-            if our_name in our_state_dict:
-                if hf_weight.shape == our_state_dict[our_name].shape:
-                    converted_weights[our_name] = hf_weight.clone()
-                else:
-                    print(
-                        f"WARNING: Shape mismatch:{our_name}: HF {hf_weight.shape} vs Ours {our_state_dict[our_name].shape}"
-                    )
+    converted_weights = _convert_weights(hf_state_dict, our_state_dict, remapping_rules)
 
     #####################
     ### Load weights ###
