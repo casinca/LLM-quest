@@ -15,47 +15,58 @@ from config import qwen3_config_creator
 from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 
 
-# TODO we could refactor some of these or simplify
-def get_weight_mapping(model_cfg):
+def get_remapping_rules(model_cfg):
     """
-    Get the mapping between Hugging Face weight names and our implementation weight names.
-    Supports both dense and MoE models based on model_cfg["model_type"].
-
-    Returns:
-        Dict mapping HF weight names to our weight names
+    Get the remapping rules for converting Hugging Face weight names to our implementation names.
+    Supports both dense and MoE models.
     """
-    model_type = model_cfg["model_type"]
+    rules = [
+        # Exact matches for outside transformer block weights:
+        ("model.embed_tokens.weight", "emb_dict.weight"),
+        ("model.norm.weight", "final_norm.weight"),
+        ("model.layers.", "trf_blocks."),
+        # Inside transformer block:
+        # attention blocks
+        (".self_attn.q_proj.weight", ".att.w_queries.weight"),
+        (".self_attn.k_proj.weight", ".att.w_keys.weight"),
+        (".self_attn.v_proj.weight", ".att.w_values.weight"),
+        (".self_attn.o_proj.weight", ".att.out_proj.weight"),
+        (".self_attn.q_norm.weight", ".att.q_norm.weight"),
+        (".self_attn.k_norm.weight", ".att.k_norm.weight"),
+        # norms
+        (".input_layernorm.weight", ".norm1.weight"),
+        (".post_attention_layernorm.weight", ".norm2.weight"),
+    ]
 
-    ### Outer blocks weights (not in transformer blocks) ###
-    weight_mapping = {
-        # Embeddings
-        "model.embed_tokens.weight": "emb_dict.weight",
-        # Final norm
-        "model.norm.weight": "final_norm.weight",
-    }
-    # Only add lm_head mapping if embeddings are not tied
+    # weight tying
     if not model_cfg["tie_embeddings"]:
-        weight_mapping["lm_head.weight"] = "out_head.weight"
+        rules.append(("lm_head.weight", "out_head.weight"))
 
-    ### Transformer block + Attention weights ###
-    for i in range(model_cfg["n_layers"]):
-        layer_prefix_hf = f"model.layers.{i}"
-        layer_prefix_ours = f"trf_blocks.{i}"
+    # MoE vs Dense
+    if model_cfg["model_type"] == "moe":
+        moe_rules = [
+            # MoE router/gate
+            (".mlp.gate.weight", ".moe.gate.weight"),
+            # expert MLP layers
+            (".mlp.experts.", ".moe.experts."),
+            (".gate_proj.weight", ".lin_gate.weight"),
+            (".up_proj.weight", ".lin1.weight"),
+            (".down_proj.weight", ".lin2.weight"),
+        ]
+        rules.extend(moe_rules)
+    else:
+        dense_rules = [
+            # dense MLP layers
+            (".mlp.gate_proj.weight", ".ffn.lin_gate.weight"),
+            (".mlp.up_proj.weight", ".ffn.lin1.weight"),
+            (".mlp.down_proj.weight", ".ffn.lin2.weight"),
+        ]
+        rules.extend(dense_rules)
 
-        # Attention weights (same for both dense and MoE)
-        attention_weights = {
-            f"{layer_prefix_hf}.self_attn.q_proj.weight": f"{layer_prefix_ours}.att.w_queries.weight",
-            f"{layer_prefix_hf}.self_attn.k_proj.weight": f"{layer_prefix_ours}.att.w_keys.weight",
-            f"{layer_prefix_hf}.self_attn.v_proj.weight": f"{layer_prefix_ours}.att.w_values.weight",
-            f"{layer_prefix_hf}.self_attn.o_proj.weight": f"{layer_prefix_ours}.att.out_proj.weight",
-            # QK norm weights
-            f"{layer_prefix_hf}.self_attn.q_norm.weight": f"{layer_prefix_ours}.att.q_norm.weight",
-            f"{layer_prefix_hf}.self_attn.k_norm.weight": f"{layer_prefix_ours}.att.k_norm.weight",
-            # Norm weights
-            f"{layer_prefix_hf}.input_layernorm.weight": f"{layer_prefix_ours}.norm1.weight",
-            f"{layer_prefix_hf}.post_attention_layernorm.weight": f"{layer_prefix_ours}.norm2.weight",
-        }
-        weight_mapping.update(attention_weights)
+    return rules
+
+
+def _convert_weights(hf_state_dict, our_state_dict, remapping_rules):
 
         ### Dense vs MoE ###
         if model_type == "moe":
@@ -129,8 +140,8 @@ def load_qwen3_weights(model, model_cfg):
         print(f"Error loading model: {e}")
         raise
 
-    # Get weight mapping and our model state dict
-    weight_mapping = get_weight_mapping(model_cfg=model_cfg)
+    # Get remapping rules and our model state dict
+    remapping_rules = get_remapping_rules(model_cfg=model_cfg)
     our_state_dict = model.state_dict()
 
     ########################
