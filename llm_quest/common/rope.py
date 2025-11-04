@@ -169,7 +169,7 @@ class RoPE:
         return cos, sin
 
     @staticmethod
-    def _apply_partial_rope(x, cos, sin, start_pos=0):
+    def _apply_partial_rope(x, cos, sin, start_pos=0, position_ids=None):
         """
         Applies partial RoPE to the input tensor x.
         Separate path in order to avoid repetitive useless splits and concatenations if unused/full RoPE.
@@ -185,10 +185,17 @@ class RoPE:
 
         # preparing 2nd coordinates/dimensions matrix for calc optimization
         rotated = torch.concat((-h2, h1), dim=-1)
+
         # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-        end_pos = start_pos + seq_length
-        cos = cos[start_pos:end_pos, :].to(x.dtype)
-        sin = sin[start_pos:end_pos, :].to(x.dtype)
+        if position_ids is not None:
+            # cos/sin shape: (ctx_len, head_dim)
+            # position_ids shape: (b, s) → gathered cos/sin: (b, s, head_dim) → unsqueezed: (b, 1, s, head_dim)
+            cos = cos[position_ids].unsqueeze(1).to(x.dtype)
+            sin = sin[position_ids].unsqueeze(1).to(x.dtype)
+        else:
+            end_pos = start_pos + seq_length
+            cos = cos[start_pos:end_pos, :].to(x.dtype)
+            sin = sin[start_pos:end_pos, :].to(x.dtype)
 
         # apply RoPE efficiently (vectorized vs classic sparse paper)
         roped = cos * x_rot + sin * rotated
@@ -199,7 +206,7 @@ class RoPE:
         return res
 
     @staticmethod
-    def apply(x, cos, sin, start_pos=0):
+    def apply(x, cos, sin, start_pos=0, position_ids=None):
         """
         The goal here is to reshape x (input) to apply RoPE efficiently
 
@@ -230,7 +237,8 @@ class RoPE:
             cos (torch.Tensor): The cosine of the angles, shape (ctx_len, head_dim)
             sin (torch.Tensor): The sine of the angles, shape (ctx_len, head_dim)
             start_pos (int, optional): The starting position to apply RoPE to: in case of KVCache position tracking
-
+            position_ids (torch.LongTensor, optional): Tensor of shape (batch_size, seq_len or 1 if KVcache) containing
+                                                        the positions of each token.
         Returns:
             torch.Tensor: The input tensor with RoPE applied/rotated, shape (b, num_heads, seq_length, head_dim)
         """
@@ -239,7 +247,7 @@ class RoPE:
 
         # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
         if head_dim != cos.shape[-1]:
-            return RoPE._apply_partial_rope(x, cos, sin, start_pos)
+            return RoPE._apply_partial_rope(x, cos, sin, start_pos, position_ids)
 
         # Full RoPE
         # splitting dimensions/features in half (paper splits by pairs instead)
@@ -248,10 +256,17 @@ class RoPE:
 
         # preparing 2nd coordinates/dimensions matrix for calc optimization
         rotated = torch.concat((-h2, h1), dim=-1)
-        # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-        end_pos = start_pos + seq_length
-        cos = cos[start_pos:end_pos, :].to(x.dtype)
-        sin = sin[start_pos:end_pos, :].to(x.dtype)
+
+        if position_ids is not None:
+            # cos/sin shape: (ctx_len, head_dim)
+            # position_ids shape: (b, s) → gathered cos/sin: (b, s, head_dim) → unsqueezed: (b, 1, s, head_dim)
+            cos = cos[position_ids].unsqueeze(1).to(x.dtype)
+            sin = sin[position_ids].unsqueeze(1).to(x.dtype)
+        else:
+            # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
+            end_pos = start_pos + seq_length
+            cos = cos[start_pos:end_pos, :].to(x.dtype)
+            sin = sin[start_pos:end_pos, :].to(x.dtype)
 
         # apply RoPE efficiently (vectorized vs classic sparse paper)
         res = cos * x + sin * rotated
@@ -261,7 +276,7 @@ class RoPE:
 
 if __name__ == "__main__":
 
-    batch_size = 1
+    batch_size = 2
     context_len = 5
     num_heads = 2
     head_dim = 6
@@ -274,7 +289,7 @@ if __name__ == "__main__":
         base=10000,
         head_dim=head_dim,
         ctx_len=context_len,
-        rotation_factor=0.7,  # if res is odd, will floor head_dim
+        rotation_factor=0.7,  # if partial rotation head_dim is odd, will floor to head_dim
         dtype=torch.float32,
     )
     print(queries)
