@@ -2,7 +2,7 @@ import torch
 from transformers import AutoTokenizer
 
 from config import qwen3_config_creator
-from llm_quest.gpt.generate import generate_loop, generate_loop_kv_cache
+from llm_quest.gpt.generate import generate_batched_loop_kv_cache_left_pad, generate_loop, generate_loop_kv_cache
 from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 
@@ -13,26 +13,92 @@ from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 
 torch.manual_seed(123)
 device = "cuda"
-qwen3_cfg = qwen3_config_creator("0.6B", base_model=True)
+
+base_model = True
+enable_thinking = False
+add_generation_prompt = False  # more suited for base_model=False: adds the assistant token at the end of the prompt
+
+max_gen = 80
+topk = 25
+topp = 0.95
+temp = 0.0
+
+qwen3_cfg = qwen3_config_creator("0.6B", base_model=base_model)
 
 tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"])
 qwen3_model = Qwen3Model(qwen3_cfg)
 qwen3_model = load_qwen3_weights(qwen3_model, qwen3_cfg)
-
 qwen3_model.to(device).eval()
 
 prompt = "Give me a short introduction to large language models."
-input_tensor = torch.tensor([tokenizer.encode(prompt)]).to(device)
+
+# Apply the ChatML template to format the conversation properly
+if not base_model:
+    messages = [{"role": "user", "content": prompt}]
+    formatted_prompt = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+        enable_thinking=enable_thinking,
+    )
+else:
+    formatted_prompt = prompt
+
+input_tensor = torch.tensor([tokenizer.encode(formatted_prompt)]).to(device)
 
 output = generate_loop_kv_cache(
     input_tensor=input_tensor,
     model=qwen3_model,
-    max_gen=50,
+    max_gen=max_gen,
     context_length=qwen3_cfg["context_length"],
-    top_k=25,
-    top_p=0.95,
-    temp=1.4,
+    top_k=topk,
+    top_p=topp,
+    temp=temp,
     eos_id=tokenizer.eos_token_id,
 )
 
 print(tokenizer.decode(output[0].tolist(), skip_special_tokens=False))
+
+
+# Testing batch generation with left padding
+print("\n\n ######## Testing batch generation with left padding ######## \n\n")
+
+batch_prompts = [
+    "The quick brown fox jumps over the lazy dog and then goes to the park to play with",
+    "The capital of France is",
+]
+
+tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"], padding_side="left")
+batch_encoded = tokenizer.batch_encode_plus(
+    batch_prompts,
+    return_tensors="pt",
+    add_special_tokens=True,
+    max_length=qwen3_cfg["context_length"],
+    truncation=True,
+    padding=True,
+)
+
+print("Batch encoded input IDs:")
+print(batch_encoded.input_ids)
+print("Batch encoded attention mask:")
+print(batch_encoded.attention_mask)
+
+batched_input_ids = batch_encoded.input_ids.to(device)
+batched_attention_mask = batch_encoded.attention_mask.to(device)
+
+batched_output = generate_batched_loop_kv_cache_left_pad(
+    input_tensor=batched_input_ids,
+    model=qwen3_model,
+    max_gen=max_gen,
+    context_length=qwen3_cfg["context_length"],
+    top_k=topk,
+    top_p=topp,
+    temp=temp,
+    eos_id=tokenizer.eos_token_id,
+    device=device,
+    attention_mask=batched_attention_mask,
+)
+
+for i, output in enumerate(batched_output):
+    print(f"\nPrompt {i+1}:\n")
+    print(tokenizer.decode(output.tolist(), skip_special_tokens=False))
