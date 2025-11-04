@@ -78,13 +78,14 @@ class GroupedQueryAttention(nn.Module):
         self.q_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
         self.k_norm = PytorchRMSNorm(self.head_dim, dtype=dtype)
 
-    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None):
+    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
         """
         args:
             x: (b, seq_len, d_in)
             mask: (b, seq_len) Causal mask (passed as True = future tokens/upper right triangle)
             attn_mask: (b, seq_len) Attention mask (passed as True = real tokens)
             kv_cache: KVCache instance/object
+            position_ids: (b, s/1) (long tensor), containing the position of each token in the sequence
         """
         queries = self.w_queries(x)  # shape (b, s, d_out)
         keys = self.w_keys(x)  # K and V shapes (b, s, num_kv_groups * head_dim)
@@ -114,8 +115,8 @@ class GroupedQueryAttention(nn.Module):
             start_pos = kv_cache.start_pos
 
         # rotating features for positional information, with RoPE, after QK normalization
-        queries = RoPE.apply(queries, cos, sin, start_pos)
-        keys = RoPE.apply(keys, cos, sin, start_pos)
+        queries = RoPE.apply(queries, cos, sin, start_pos, position_ids)
+        keys = RoPE.apply(keys, cos, sin, start_pos, position_ids)
 
         if kv_cache is not None:
             keys, values = kv_cache.get_updated_cache(keys, values, self.layer_idx)
@@ -125,9 +126,9 @@ class GroupedQueryAttention(nn.Module):
         values = values.repeat_interleave(self.num_repeat, dim=1)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
 
+        # before retrieving K from the KVCache, k_seq_len = q_seq_len = 1. After retrieving K, k_seq_len = seq_len
         q_seq_len = queries.shape[2]
         k_seq_len = keys.shape[2]
-
         # masking: causal mask and attn_mask
         if k_seq_len > q_seq_len:  # imply KVCache is used
             q_start_pos = k_seq_len - q_seq_len  # q_seq_len should be 1 for classic NTP KVCache inference

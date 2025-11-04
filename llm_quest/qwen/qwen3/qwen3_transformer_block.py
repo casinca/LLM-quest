@@ -88,11 +88,11 @@ class TransformerBlock(nn.Module):
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None):
+    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
         # Pre-norm arch
         residual = x
         x = self.norm1(x)
-        x = self.att(x, mask, cos, sin, attn_mask, kv_cache)
+        x = self.att(x, mask, cos, sin, attn_mask, kv_cache, position_ids)
         x = x + residual
 
         residual = x
@@ -123,11 +123,11 @@ class MoETransformerBlock(nn.Module):
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)
 
-    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None):
+    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
         # Pre-normalization architecture
         residual = x
         x = self.norm1(x)
-        x = self.att(x, mask, cos, sin, attn_mask, kv_cache)
+        x = self.att(x, mask, cos, sin, attn_mask, kv_cache, position_ids)
         x = x + residual
 
         residual = x
