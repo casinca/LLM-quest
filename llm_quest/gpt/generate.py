@@ -219,7 +219,7 @@ def generate_batched_loop(
         full_next_toks = torch.full((batch_size, 1), eos_id, device=device, dtype=torch.long)
         full_next_toks[unfinished] = next_toks
 
-        # append to running tensors
+        # append to running tensors and extend attention mask with True for the newly generated token
         input_tensor = torch.cat([input_tensor, full_next_toks], dim=-1)
         if attention_mask is not None:
             new_mask = torch.ones_like(full_next_toks, dtype=torch.bool)
@@ -312,6 +312,7 @@ def generate_batched_loop_kv_cache(
             break
 
         if attention_mask is not None:
+            # extend attention mask with True for the newly generated token
             new_mask = torch.ones_like(next_token, dtype=torch.bool)
             attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
@@ -320,7 +321,110 @@ def generate_batched_loop_kv_cache(
 
         sampled_tokens = sampling(logits, top_k, top_p, temp)
 
-        # For finished sequences, we keep appending EoS. Unfinished sequences, we append the new token.
+        # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
+        next_token = torch.where(
+            finished.unsqueeze(-1), torch.tensor(eos_id, device=device, dtype=torch.long), sampled_tokens
+        )
+        generated_tokens.append(next_token)
+        finished |= next_token.squeeze(1) == eos_id
+
+    all_generated = torch.cat(generated_tokens, dim=1)
+    return torch.cat([input_tensor, all_generated], dim=1)
+
+
+def generate_batched_loop_kv_cache_left_pad(
+    input_tensor,
+    model,
+    max_gen,
+    context_length,
+    top_k=None,
+    top_p=None,
+    temp=0.0,
+    eos_id=50256,
+    device="cuda",
+    attention_mask=None,
+):
+    """
+    Generates text from batched prompts with left padding, using KV cache.
+
+    Args:
+        input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
+        IDs with left padding.
+        model (nn.Module): The model used for generation.
+        max_gen (int): The maximum number of new tokens to generate for each sequence.
+        context_length (int): The maximum sequence length (context window) the model can handle.
+        top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
+        top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
+                                Defaults to None.
+        temp (float, optional): Sampling temperature. A higher value makes the output more random.
+                                if 1, untempered distribution.
+                                Defaults to 0.0 (greedy sampling).
+        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to 50256 (GPT-2 EOS token).
+        device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
+        attention_mask (torch.Tensor, optional): tensor of shape (batch_size, sequence_length) indicating
+                                                which tokens are real (True) and which are padding (False).
+                                                Used for Attention calc + token positions tracking
+    Returns:
+        torch.Tensor: A tensor of shape (batch_size, prompt_length + generated_length) containing the original prompts
+                        concatenated with the generated token IDs.
+    """
+    input_tensor = input_tensor.to(device)
+
+    if attention_mask is not None:
+        attention_mask = attention_mask.bool().to(device)
+        # creating position_ids for first forward pass RoPE + left padding, ex: attn [0,0,1,1,1] → pos [0,0,0,1,2]
+        position_ids = attention_mask.cumsum(dim=-1)
+        position_ids.masked_fill_(~attention_mask, 0)  # shape: (batch_size, seq_len)
+        # for subsequent forward passes, we only need to track the position of the next token to generate, ex [3]
+        curr_pos = attention_mask.sum(dim=-1, keepdim=True)  # shape: (batch_size, 1)
+    else:
+        position_ids = None
+
+    batch_size = input_tensor.shape[0]
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+    num_layers = len(model.trf_blocks)
+    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
+
+    generated_tokens = []
+
+    # --- first generation to build the kv cache ---
+    with torch.inference_mode():
+        logits = model(input_tensor, attn_mask=attention_mask, kv_cache=kv_cache, position_ids=position_ids)
+
+    # with left padding, all sequences end at position -1 (no need to track last real token like right padding)
+    logits = logits[:, -1, :]
+
+    next_token = sampling(logits, top_k, top_p, temp)
+    generated_tokens.append(next_token)
+    finished |= next_token.squeeze(1) == eos_id
+
+    # --- continuing generations with kv cache ---
+    for _ in range(max_gen - 1):
+        if finished.all():
+            break
+
+        if attention_mask is not None:
+            # extend attention mask with True for the newly generated token
+            new_mask = torch.ones_like(next_token, dtype=torch.bool)
+            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
+            new_positions = curr_pos
+            curr_pos += 1  # increment for next iteration
+        else:
+            new_positions = None
+
+        with torch.inference_mode():
+            logits = model(
+                next_token,
+                attn_mask=attention_mask,
+                kv_cache=kv_cache,
+                position_ids=new_positions,
+            ).squeeze(1)
+
+        sampled_tokens = sampling(logits, top_k, top_p, temp)
+
+        # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
         next_token = torch.where(
             finished.unsqueeze(-1), torch.tensor(eos_id, device=device, dtype=torch.long), sampled_tokens
         )
