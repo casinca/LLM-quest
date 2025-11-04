@@ -139,7 +139,8 @@ class GroupedQueryAttention(nn.Module):
             current_mask = current_mask.unsqueeze(0).unsqueeze(0) | ~attn_mask.unsqueeze(1).unsqueeze(1)
 
         scaled_att_scores = att_scores * self.att_scaling
-        scaled_att_scores.masked_fill_(current_mask, -torch.inf)
+        mask_value = torch.finfo(scaled_att_scores.dtype).min / 2
+        scaled_att_scores.masked_fill_(current_mask, mask_value)
         att_weights = F.softmax(scaled_att_scores, dim=-1)
 
         ctx_tensor = att_weights @ values
