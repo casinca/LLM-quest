@@ -247,13 +247,14 @@ def generate_batched_loop_kv_cache(
     temp=0.0,
     eos_id=50256,
     device="cuda",
-    attention_mask=None,
     last_real=None,
+    rope_model=True,
+    *,
+    attention_mask,  # emphasizing that now is a required argument even for single batch
 ):
     """
-    Generates text from batched prompts using KV cache, handling dynamic attention masks and right padding.
+    Generates text from batched prompts using KV cache, handling dynamic attention masks for right padding.
     This is a simplified version of generate_batched_loop() using KVcache from generate_loop_kv_cache().
-
 
     Args:
         input_tensor (torch.Tensor): A tensor of shape (batch_size, sequence_length) containing the initial prompt token
@@ -270,20 +271,23 @@ def generate_batched_loop_kv_cache(
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
         device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
-        attention_mask (torch.Tensor, optional): A boolean tensor of shape (batch_size, sequence_length) indicating
+        attention_mask (torch.Tensor ): A boolean tensor of shape (batch_size, sequence_length) indicating
                                                 which tokens are real (True) and which are padding (False).
-                                                Used during attention calculation. Defaults to None.
+                                                Used for attention masking + position_ids for RoPE.
         last_real (torch.Tensor, optional): A tensor of shape (batch_size,) indicating the index of the last real token
-                                            in each prompt of `input_tensor`. Used in the first generation step to
-                                            correctly extract logits for right-padded inputs. Defaults to None.
+                                            in each prompt of `input_tensor`. Used for backwards compatibility with
+                                            position_ids calculation. Defaults to None.
+        rope_model (bool, optional): Backward compatibility for GPT2.
+                                    Whether the model is a RoPE model. Defaults to True.
+                                    If False, positional information with padding is handled differently.
 
     Returns:
         torch.Tensor: A tensor of shape (batch_size, prompt_length + generated_length) containing the original prompts
                         concatenated with the generated token IDs.
     """
     input_tensor = input_tensor.to(device)
-    if attention_mask is not None:
-        attention_mask = attention_mask.to(device)
+    attention_mask = attention_mask.bool().to(device)
+
     if last_real is not None:
         last_real = last_real.to(device)
 
@@ -291,39 +295,55 @@ def generate_batched_loop_kv_cache(
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
     num_layers = len(model.trf_blocks)
-    kv_cache = KVCache(
-        num_layers=num_layers,
-        context_len=context_length,
-    )
+    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
 
     generated_tokens = []
 
-    # --- first generation to build the kv cache ---
+    # --- Position IDs handling for right padding ---
+    # (use last_real if provided for backwards compatibility)
+    if last_real is not None:
+        next_pos_ids = last_real.unsqueeze(-1) + 1  # (batch_size, 1)
+    else:
+        next_pos_ids = attention_mask.sum(dim=-1, keepdim=True)  # (batch_size, 1)
+        last_real = next_pos_ids.clone().squeeze(-1) - 1  # (batch_size,)
+
+    # --- First generation to build the kv cache ---
     with torch.inference_mode():
+        # whether RoPE model or not, we don't need specific position_ids for the first generation, in right padding
         logits = model(input_tensor, attn_mask=attention_mask, kv_cache=kv_cache)
 
-    if last_real is not None:
-        seq_pos = torch.arange(batch_size, device=device)
-        logits = logits[seq_pos, last_real, :]
-    else:
-        logits = logits[:, -1, :]
+    # extract logits from the last real token position for right padding
+    seq_pos = torch.arange(batch_size, device=device)
+    logits = logits[seq_pos, last_real, :]
 
     next_token = sampling(logits, top_k, top_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
 
-    # --- continuing generations with kv cache ---
+    # --- Continuing generations with kv cache ---
     for _ in range(max_gen - 1):
         if finished.all():
             break
 
-        if attention_mask is not None:
-            # extend attention mask with True for the newly generated token
-            new_mask = torch.ones_like(next_token, dtype=torch.bool)
-            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
+        # extend attention mask with True for the newly generated token
+        new_mask = torch.ones_like(next_token, dtype=torch.bool)
+        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
         with torch.inference_mode():
-            logits = model(next_token, attn_mask=attention_mask, kv_cache=kv_cache).squeeze(1)
+            if rope_model:
+                logits = model(
+                    next_token,
+                    attn_mask=attention_mask,
+                    kv_cache=kv_cache,
+                    position_ids=next_pos_ids,
+                ).squeeze(1)
+                next_pos_ids += 1
+            else:
+                logits = model(
+                    next_token,
+                    attn_mask=attention_mask,
+                    kv_cache=kv_cache,
+                ).squeeze(1)
 
         sampled_tokens = sampling(logits, top_k, top_p, temp)
 
