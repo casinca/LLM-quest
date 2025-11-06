@@ -368,7 +368,9 @@ def generate_batched_loop_kv_cache_left_pad(
     temp=0.0,
     eos_id=50256,
     device="cuda",
-    attention_mask=None,
+    rope_model=True,  # placeholder for API
+    *,
+    attention_mask,
 ):
     """
     Generates text from batched prompts with left padding, using KV cache.
@@ -388,7 +390,7 @@ def generate_batched_loop_kv_cache_left_pad(
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
         device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
-        attention_mask (torch.Tensor, optional): tensor of shape (batch_size, sequence_length) indicating
+        attention_mask (torch.Tensor): tensor of shape (batch_size, sequence_length) indicating
                                                 which tokens are real (True) and which are padding (False).
                                                 Used for Attention calc + token positions tracking
     Returns:
@@ -396,16 +398,7 @@ def generate_batched_loop_kv_cache_left_pad(
                         concatenated with the generated token IDs.
     """
     input_tensor = input_tensor.to(device)
-
-    if attention_mask is not None:
-        attention_mask = attention_mask.bool().to(device)
-        # creating position_ids for first forward pass RoPE + left padding, ex: attn [0,0,1,1,1] → pos [0,0,0,1,2]
-        position_ids = attention_mask.cumsum(dim=-1)
-        position_ids.masked_fill_(~attention_mask, 0)  # shape: (batch_size, seq_len)
-        # for subsequent forward passes, we only need to track the position of the next token to generate, ex [3]
-        curr_pos = attention_mask.sum(dim=-1, keepdim=True)  # shape: (batch_size, 1)
-    else:
-        position_ids = None
+    attention_mask = attention_mask.bool().to(device)
 
     batch_size = input_tensor.shape[0]
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
@@ -413,9 +406,16 @@ def generate_batched_loop_kv_cache_left_pad(
     num_layers = len(model.trf_blocks)
     kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
 
+    # --- Position IDs handling for left padding ---
+    # creating position_ids for first forward pass RoPE + left padding, ex: attn [0,0,1,1,1] → pos [0,0,0,1,2]
+    position_ids = attention_mask.cumsum(dim=-1) - 1
+    position_ids.masked_fill_(~attention_mask, 0)  # (batch_size, seq_len)
+    # for subsequent forward passes, we only need to track the position of the next token to generate, ex [3]
+    next_pos_id = attention_mask.sum(dim=-1, keepdim=True)  # (batch_size, 1)
+
     generated_tokens = []
 
-    # --- first generation to build the kv cache ---
+    # --- First generation to build the kv cache ---
     with torch.inference_mode():
         logits = model(input_tensor, attn_mask=attention_mask, kv_cache=kv_cache, position_ids=position_ids)
 
@@ -426,27 +426,23 @@ def generate_batched_loop_kv_cache_left_pad(
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
 
-    # --- continuing generations with kv cache ---
+    # --- Continuing generations with kv cache ---
     for _ in range(max_gen - 1):
         if finished.all():
             break
 
-        if attention_mask is not None:
-            # extend attention mask with True for the newly generated token
-            new_mask = torch.ones_like(next_token, dtype=torch.bool)
-            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
-            new_positions = curr_pos
-            curr_pos += 1  # increment for next iteration
-        else:
-            new_positions = None
+        # extend attention mask with True for the newly generated token
+        new_mask = torch.ones_like(next_token, dtype=torch.bool)
+        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
         with torch.inference_mode():
             logits = model(
                 next_token,
                 attn_mask=attention_mask,
                 kv_cache=kv_cache,
-                position_ids=new_positions,
+                position_ids=next_pos_id,
             ).squeeze(1)
+        next_pos_id += 1
 
         sampled_tokens = sampling(logits, top_k, top_p, temp)
 
