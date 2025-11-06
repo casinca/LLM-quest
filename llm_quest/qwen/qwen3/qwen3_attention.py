@@ -109,14 +109,9 @@ class GroupedQueryAttention(nn.Module):
         queries = self.q_norm(queries)
         keys = self.k_norm(keys)
 
-        # for KVCache position tracking
-        start_pos = 0
-        if kv_cache is not None:
-            start_pos = kv_cache.start_pos
-
         # rotating features for positional information, with RoPE, after QK normalization
-        queries = RoPE.apply(queries, cos, sin, start_pos, position_ids)
-        keys = RoPE.apply(keys, cos, sin, start_pos, position_ids)
+        queries = RoPE.apply(queries, cos, sin, position_ids)
+        keys = RoPE.apply(keys, cos, sin, position_ids)
 
         if kv_cache is not None:
             keys, values = kv_cache.get_updated_cache(keys, values, self.layer_idx)

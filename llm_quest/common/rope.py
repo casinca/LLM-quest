@@ -169,7 +169,7 @@ class RoPE:
         return cos, sin
 
     @staticmethod
-    def _apply_partial_rope(x, cos, sin, start_pos=0, position_ids=None):
+    def _apply_partial_rope(x, cos, sin, position_ids=None):
         """
         Applies partial RoPE to the input tensor x.
         Separate path in order to avoid repetitive useless splits and concatenations if unused/full RoPE.
@@ -193,9 +193,9 @@ class RoPE:
             cos = cos[position_ids].unsqueeze(1).to(x.dtype)
             sin = sin[position_ids].unsqueeze(1).to(x.dtype)
         else:
-            end_pos = start_pos + seq_length
-            cos = cos[start_pos:end_pos, :].to(x.dtype)
-            sin = sin[start_pos:end_pos, :].to(x.dtype)
+            # For non-KV cache case, slice from the beginning
+            cos = cos[:seq_length, :].to(x.dtype)
+            sin = sin[:seq_length, :].to(x.dtype)
 
         # apply RoPE efficiently (vectorized vs classic sparse paper)
         roped = cos * x_rot + sin * rotated
@@ -206,7 +206,7 @@ class RoPE:
         return res
 
     @staticmethod
-    def apply(x, cos, sin, start_pos=0, position_ids=None):
+    def apply(x, cos, sin, position_ids=None):
         """
         The goal here is to reshape x (input) to apply RoPE efficiently
 
@@ -236,9 +236,9 @@ class RoPE:
             x (torch.Tensor): The input tensor to apply RoPE to, shape (b, num_heads, seq_length, head_dim)
             cos (torch.Tensor): The cosine of the angles, shape (ctx_len, head_dim)
             sin (torch.Tensor): The sine of the angles, shape (ctx_len, head_dim)
-            start_pos (int, optional): The starting position to apply RoPE to: in case of KVCache position tracking
             position_ids (torch.LongTensor, optional): Tensor of shape (batch_size, seq_len or 1 if KVcache) containing
-                                                        the positions of each token.
+                                                        the positions of each token. If None, applies RoPE to the first
+                                                        seq_length positions (non-KV cache case).
         Returns:
             torch.Tensor: The input tensor with RoPE applied/rotated, shape (b, num_heads, seq_length, head_dim)
         """
@@ -247,7 +247,7 @@ class RoPE:
 
         # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
         if head_dim != cos.shape[-1]:
-            return RoPE._apply_partial_rope(x, cos, sin, start_pos, position_ids)
+            return RoPE._apply_partial_rope(x, cos, sin, position_ids)
 
         # Full RoPE
         # splitting dimensions/features in half (paper splits by pairs instead)
@@ -263,10 +263,9 @@ class RoPE:
             cos = cos[position_ids].unsqueeze(1).to(x.dtype)
             sin = sin[position_ids].unsqueeze(1).to(x.dtype)
         else:
-            # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-            end_pos = start_pos + seq_length
-            cos = cos[start_pos:end_pos, :].to(x.dtype)
-            sin = sin[start_pos:end_pos, :].to(x.dtype)
+            # For non-KV cache case, slice from the beginning
+            cos = cos[:seq_length, :].to(x.dtype)
+            sin = sin[:seq_length, :].to(x.dtype)
 
         # apply RoPE efficiently (vectorized vs classic sparse paper)
         res = cos * x + sin * rotated
