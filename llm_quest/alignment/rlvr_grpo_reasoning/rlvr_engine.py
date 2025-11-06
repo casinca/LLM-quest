@@ -256,6 +256,7 @@ def rlvr_grpo_training_loop(
                 top_k=20,
                 temp=1,
                 last_real=last_real_pos,
+                rope_model=False,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
