@@ -91,28 +91,32 @@ def generate_loop_kv_cache(
     temp=0.0,
     eos_id=None,
     device="cuda",
+    rope_model=False,
 ):
-    """Standalone function, same as generate_loop() but with KV cache."""
+    """Standalone function, same as generate_loop() but with KV cache.
+
+    Args:
+        rope_model (bool, optional): Whether the model is a RoPE model. Defaults to False.
+                                    If True, position_ids are handled differently for RoPE models.
+    """
 
     token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
 
     num_layers = len(model.trf_blocks)
-
     # Init KV cache
-    kv_cache = KVCache(
-        num_layers=num_layers,
-        context_len=context_length,
-    )
+    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
 
     input_tensor = input_tensor.to(device)
     # truncate input to compatible context size, shape (b, ctx_len)
     trunc_input = input_tensor[:, -context_length:]
+    # For RoPE models when using KVCache and incrementing position_id, shape (batch_size(1), 1)
+    next_position_id = torch.tensor([[trunc_input.shape[-1]]], dtype=torch.long, device=device)
 
-    # --- first generation to build the kv cache ---
+    # --- First generation to build the kv cache ---
     with torch.inference_mode():
         logits = model(trunc_input, kv_cache=kv_cache)[:, -1, :]
 
-        # --- continuing generations with kv cache ---
+        # --- Continuing generations with kv cache ---
         for _ in range(max_gen):
             next_token = sampling(logits, top_k, top_p, temp)
 
@@ -122,7 +126,11 @@ def generate_loop_kv_cache(
             token_ids.append(next_token)
 
             # since 1 token/seq, we can also squeeze now (b, 1, v) → (b, v) same as logits[:, -1, :]
-            logits = model(next_token, kv_cache=kv_cache).squeeze(1)
+            if rope_model:
+                logits = model(next_token, kv_cache=kv_cache, position_ids=next_position_id).squeeze(1)
+                next_position_id += 1
+            else:
+                logits = model(next_token, kv_cache=kv_cache).squeeze(1)
 
     # final "input" is actually initial input+all predicted words
     return torch.cat([input_tensor] + token_ids, dim=-1)
