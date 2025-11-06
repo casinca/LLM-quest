@@ -128,15 +128,13 @@ def generate_loop_kv_cache(
     return torch.cat([input_tensor] + token_ids, dim=-1)
 
 
-# It is a necessary more robust generate_loop() function for batching prompts in the case of RLHF/RLVR:
-# NOTE: this is still a bit dirty and done to make proper right padding works, it won't work with left padding atm.
-# This is also to avoid having to implement KVCache solely for a single function.
+# Early version for batching prompts without KVCache and right padding only
 #
 # dynamic attention_mask: Avoid padding tokens from shorter prompts while generating
 # dynamic generation:
 #   - only generating for unfinished prompts (more efficient vs continue useless generations after EoS)
 #   - early finished generations are out of the loop and padded with eos_id
-# retrieving the last real token's prediction for the first step in the right padding case
+# retrieving the last real token's prediction for the first step (because of right padding)
 def generate_batched_loop(
     input_tensor,
     model,
