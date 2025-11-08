@@ -345,7 +345,8 @@ class GatedDeltaNet(nn.Module):
             queries = queries.repeat_interleave(self.num_repeat, dim=1)
             keys = keys.repeat_interleave(self.num_repeat, dim=1)
 
-        beta = self.w_beta(x).transpose(1, 2).contiguous()  # shape (b, num_v_heads, seq_len) for beta and alpha
+        # shape (b, num_v_heads, seq_len) for beta and alpha
+        beta = torch.sigmoid(self.w_beta(x).transpose(1, 2).contiguous())
         token_projs = self.w_alpha(x)
         alpha = compute_alpha_factor(self.log_A, token_projs, self.dt).transpose(1, 2).contiguous()
 
