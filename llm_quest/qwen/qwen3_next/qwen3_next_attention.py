@@ -68,9 +68,11 @@ def compute_alpha_factor(log_A, a, dt_bias):
     alpha = e^(-A * Δt) (can be seen as e^(-Rate * Time)) where A > 0 and Δt > 0:
     - A is learned as log_A and then exponentiated (e^log_A) to ensure positivity.
     - Δt is passed through a softplus to ensure positivity.
-    both positivity ensures that alpha via e^ is always in (0, 1) as a final decay factor.
+    The positivity of both terms ensure that alpha, via the neg exponent e^-, is always in (0, 1) as a final decay
+    factor.
 
-    Δt is the result of the affine function Wx + dt with "a" as Wx (this makes Δt dynamic per token and thus the decay)
+    Δt is the result of the affine function Wx + dt_bias with "a" as Wx (this makes Δt dynamic per token and thus the
+    decay)
     Δt represents how much duration to apply the decay (time step).
 
     args:
