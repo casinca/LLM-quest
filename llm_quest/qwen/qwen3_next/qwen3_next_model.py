@@ -60,7 +60,7 @@ if __name__ == "__main__":
     import config
 
     torch.manual_seed(123)
-    model = Qwen3NextModel(config.SMALL_QWEN3_NEXT_CONFIG)
+    model = Qwen3NextModel(config.QWEN3_NEXT_SMALL_CONFIG)
 
     sample_input = torch.randint(0, 1000, (2, 10))  # b=2, seq_len=10
     output = model(sample_input)

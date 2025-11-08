@@ -281,35 +281,35 @@ def qwen3_config_creator(model_size="0.6B", base_model=True):
     return configs[model_size]
 
 
-SMALL_QWEN3_NEXT_CONFIG = {
+QWEN3_NEXT_SMALL_CONFIG = {
     "vocab_size": 151_936,
-    "rope_base": 1_000_000,
+    "rope_base": 10_000,
     "partial_rope_factor": 0.25,
-    "n_layers": 12,
+    "n_layers": 8,
     "linear_sdpa_ratio": 4,  # cycle length for hybrid attention. GatedAttention used every 4 blocks, (3:1 ratio)
     "dtype": torch.bfloat16,
     "tie_embeddings": False,
     "emb_dim": 896,
     # gated attention
-    "head_dim": 128,
+    "head_dim": 64,
     "n_heads": 8,
     "num_kv_groups": 4,
     "context_length": 512,
     # gated deltanet
     "linear_num_qk_heads": 4,
-    "linear_qk_head_dim": 128,
+    "linear_qk_head_dim": 64,
     "linear_num_value_heads": 8,
-    "linear_value_head_dim": 128,
+    "linear_value_head_dim": 64,
     "linear_conv_kernel_size": 4,
     # moe
     "moe_hidden_dim": 4 * 896,
     "shared_expert_hidden_dim": 4 * 896,
-    "num_experts": 16,
-    "top_k": 4,
+    "num_experts": 8,
+    "top_k": 2,
     "aux_loss_coef": 0.001,
     # training
     "training": False,
-    "p_dropout": 0.5,
+    "p_dropout": 0.1,
 }
 
 
