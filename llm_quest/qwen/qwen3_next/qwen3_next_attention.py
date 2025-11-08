@@ -274,7 +274,6 @@ class GatedDeltaNet(nn.Module):
         # projection to num_v_heads: this what enables dynamicity of the factors (ie per token) for each value head
         self.w_beta = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
         self.w_alpha = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
-        self.prev_state = None  # no prev_state at the beginning, will be init/updated in the gated delta rule forward
 
         # alpha components, to calc alpha decay factor following Qwen3-Next here, see compute_alpha_factor()
         A_init = torch.empty(self.num_v_heads, dtype=self.dtype).uniform_(0, 16)
@@ -350,7 +349,8 @@ class GatedDeltaNet(nn.Module):
         token_projs = self.w_alpha(x)
         alpha = compute_alpha_factor(self.log_A, token_projs, self.dt).transpose(1, 2).contiguous()
 
-        ctx_tensor, self.prev_state = gated_delta_rule(queries, keys, values, beta, alpha, self.prev_state)
+        # state isn't needed for training unlike inference
+        ctx_tensor, prev_state = gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None)
 
         # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
         ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
