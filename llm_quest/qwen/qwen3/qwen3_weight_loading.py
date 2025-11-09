@@ -201,7 +201,7 @@ def test_generation_with_weights(device="cuda"):
     """
     print("\n=== Testing Generation ===")
 
-    model_cfg = qwen3_config_creator("0.6B-Base")
+    model_cfg = qwen3_config_creator("0.6B", base_model=True)
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["model_path"])
 
     model = Qwen3Model(model_cfg)
