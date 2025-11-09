@@ -2,7 +2,7 @@ import tiktoken
 import torch
 
 import config
-from llm_quest.gpt.generate import generate_loop_kv_cache
+from llm_quest.generate import generate_loop_kv_cache
 from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
 from llm_quest.gpt.gpt_model import GPTModel
 from llm_quest.speculative_decoding.spec_decoding_engine import speculative_generate

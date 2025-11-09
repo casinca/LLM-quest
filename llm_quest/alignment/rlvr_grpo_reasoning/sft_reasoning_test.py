@@ -4,7 +4,7 @@ import tiktoken
 import torch
 
 import config
-from llm_quest.gpt.generate import generate_loop
+from llm_quest.generate import generate_loop
 from llm_quest.gpt.gpt_model import GPTModel
 from llm_quest.utils import alpaca_deepseek_format, ids_to_text, text_to_ids
 

@@ -12,7 +12,7 @@ from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     log_probs_per_token,
     z_scores,
 )
-from llm_quest.gpt.generate import generate_batched_loop_kv_cache
+from llm_quest.generate import generate_batched_loop_kv_cache
 from llm_quest.utils import CheckpointEvaluator, ResponseExtractor
 
 

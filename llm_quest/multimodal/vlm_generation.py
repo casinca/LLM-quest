@@ -1,7 +1,7 @@
 import torch
 from torchvision.transforms import functional as F
 
-from llm_quest.gpt.generate import sampling
+from llm_quest.generate import sampling
 
 
 def vlm_generate_loop(

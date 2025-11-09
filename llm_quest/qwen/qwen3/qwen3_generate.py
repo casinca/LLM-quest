@@ -2,7 +2,7 @@ import torch
 from transformers import AutoTokenizer
 
 from config import qwen3_config_creator
-from llm_quest.gpt.generate import (
+from llm_quest.generate import (
     generate_batched_loop_kv_cache,
     generate_batched_loop_kv_cache_left_pad,
     generate_loop,

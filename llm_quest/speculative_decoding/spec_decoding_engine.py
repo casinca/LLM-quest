@@ -1,6 +1,6 @@
 import torch
 
-from llm_quest.gpt.generate import _top_k_sampling, _top_p_sampling, sampling
+from llm_quest.generate import _top_k_sampling, _top_p_sampling, sampling
 from llm_quest.gpt.gpt_attention import KVCache
 
 

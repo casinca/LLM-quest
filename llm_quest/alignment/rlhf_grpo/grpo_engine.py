@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import config
 from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
-from llm_quest.gpt.generate import generate_batched_loop, generate_loop
+from llm_quest.generate import generate_batched_loop, generate_loop
 from llm_quest.utils import CheckpointEvaluator
 
 
