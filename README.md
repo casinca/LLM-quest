@@ -10,6 +10,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 ## Latest
 
+- Multimodal Part 2: Vision Language Model (VLM) from scratch
 - Qwen3-Next from scratch
 - Qwen3 (dense and MoE) from scratch
 - Speculative Decoding from scratch
@@ -17,7 +18,7 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 - Qwen GSPO (Group Sequence Policy Optimization)
 - Moonshot.ai's standalone QK-Clip technique (from MuonClip) and own Magnitude-QK-Clip variant
 - RLVR Reasoning with GRPO from scratch
-- Vision Transformer (ViT) from scratch
+- Multimodal Part 1: Vision Transformer (ViT) from scratch
 - RLHF with GRPO from scratch
 - Gemma 3 architecture from scratch
 - DeepSeek V3, R1 architecture from scratch
@@ -79,11 +80,15 @@ papers. Put simply, LLM stuff that piques my interest for experiments and learni
 
 &nbsp;
 
- - GPT to Vision Transformer (ViT) from scratch:
+ - Multimodal Part 1: GPT to Vision Transformer (ViT) from scratch:
     - Image encoding: Image patches + learnable CLS token + positional encoding
     - Full Attention
     - Image Classification head
-    - ViT↔LLM adapter for multimodal alignment/fine-tuning
+    
+
+ - Multimodal Part 2: Vision Language Model (VLM) from scratch:
+    - ViT↔LLM adapter: multimodal alignment/fine-tuning
+    - Early fusion: image embeddings + text embeddings
 
 &nbsp;
     
@@ -135,7 +140,6 @@ original GPT-2.
 &nbsp;
 
 ## potential TODOs
-- non hardcoded cuda devices
 - reorganize activation and normalization functions in dedicated modules
 - nested TODOs
 - Confusing names: model attn_mask arg (padding tokens only) and attention_mask used as loss mask for alignment
