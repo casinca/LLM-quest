@@ -58,7 +58,7 @@ if __name__ == "__main__":
     num_epoch = 5
     peak_lr = 5e-4
 
-    device = "cuda"
+    device = config.auto_device
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=0.1)
 

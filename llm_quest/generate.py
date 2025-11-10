@@ -33,7 +33,7 @@ def generate_loop(
     top_p=None,
     temp=0.0,
     eos_id=None,
-    device="cuda",
+    device=torch.device("cuda"),
 ):
     """
     Generates text using a GPT model with optional top-k sampling, temperature scaling, and early stopping.
@@ -52,9 +52,10 @@ def generate_loop(
                                 - if <1, decreases entropy (more deterministic)
                                 - if 1, untempered distribution
                                 - if 0, uses greedy sampling. Defaults to 0.0.
+
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to None.
-        device (str, optional): Device to move the input tensor to. Defaults to "cuda".
+        device (torch.device or str, optional): Device to move the input tensor to. Defaults to "cuda".
 
     Returns:
         torch.Tensor: Input tensor concatenated with generated token IDs
@@ -90,7 +91,7 @@ def generate_loop_kv_cache(
     top_p=None,
     temp=0.0,
     eos_id=None,
-    device="cuda",
+    device=torch.device("cuda"),
     rope_model=False,
 ):
     """Standalone function, same as generate_loop() but with KV cache.
@@ -152,7 +153,7 @@ def generate_batched_loop(
     top_p=None,
     temp=0.0,
     eos_id=50256,
-    device="cuda",
+    device=torch.device("cuda"),
     attention_mask=None,
     last_real=None,
 ):
@@ -174,7 +175,7 @@ def generate_batched_loop(
                                 Defaults to 0.0 (greedy sampling).
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
-        device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
+        device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor, optional): A boolean tensor of shape (batch_size, sequence_length) indicating
                                                 which tokens are real (True) and which are padding (False).
                                                 Used during attention calculation. Defaults to None.
@@ -246,7 +247,7 @@ def generate_batched_loop_kv_cache(
     top_p=None,
     temp=0.0,
     eos_id=50256,
-    device="cuda",
+    device=torch.device("cuda"),
     last_real=None,
     rope_model=True,
     *,
@@ -270,7 +271,7 @@ def generate_batched_loop_kv_cache(
                                 Defaults to 0.0 (greedy sampling).
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
-        device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
+        device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor ): A boolean tensor of shape (batch_size, sequence_length) indicating
                                                 which tokens are real (True) and which are padding (False).
                                                 Used for attention masking + position_ids for RoPE.
@@ -367,7 +368,7 @@ def generate_batched_loop_kv_cache_left_pad(
     top_p=None,
     temp=0.0,
     eos_id=50256,
-    device="cuda",
+    device=torch.device("cuda"),
     rope_model=True,  # placeholder for API
     *,
     attention_mask,
@@ -389,7 +390,7 @@ def generate_batched_loop_kv_cache_left_pad(
                                 Defaults to 0.0 (greedy sampling).
         eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
                                 Defaults to 50256 (GPT-2 EOS token).
-        device (str, optional): The device to perform computations on (e.g., "cuda" or "cpu"). Defaults to "cuda".
+        device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor): tensor of shape (batch_size, sequence_length) indicating
                                                 which tokens are real (True) and which are padding (False).
                                                 Used for Attention calc + token positions tracking
@@ -616,6 +617,7 @@ if __name__ == "__main__":
     # print(f"OUTPUT2: {ids_to_text(output2, tokenizer)}")
 
     # ---------------------------- PART C ------- Testing generation with OpenAI's pretrained weights
+    device = config.auto_device
 
     weights_path = download_gpt_model(gpt_size="gpt_s", save_dir=config.openai_pretrained_w_gpt2_s)
 
@@ -623,7 +625,6 @@ if __name__ == "__main__":
     model_settings = config.gpt2_config_creator("gpt_s")
     torch.manual_seed(123)
 
-    device = "cuda"
     model = GPTModel(model_settings)
     model.eval()
 

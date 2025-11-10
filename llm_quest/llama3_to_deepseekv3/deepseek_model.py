@@ -169,7 +169,7 @@ if __name__ == "__main__":
         [12, 50256, -100, -100, -100],
     ]
 
-    device = "cuda"
+    device = config.auto_device
 
     tensor_input = torch.tensor(inputs).to(device)
     tensor_target = torch.tensor(targets).to(device)

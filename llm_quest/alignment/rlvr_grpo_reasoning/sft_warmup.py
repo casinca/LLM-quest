@@ -22,7 +22,7 @@ pin_memory = False
 use_amp = True
 
 data_device = "cpu"
-model_device = "cuda"
+model_device = None  # set in __main_
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
@@ -32,6 +32,7 @@ if __name__ == "__main__":
     from llm_quest.gpt.gpt_model import GPTModel
     from llm_quest.utils import alpaca_deepseek_format
 
+    model_device = config.auto_device
     # torch.set_float32_matmul_precision("high")
     tokenizer = tiktoken.get_encoding("gpt2")
 

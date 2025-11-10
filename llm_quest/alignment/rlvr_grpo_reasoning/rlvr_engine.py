@@ -109,7 +109,7 @@ class VerifiableRewardCalculator:
         return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
 
 
-def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device="cpu"):
+def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device=torch.device("cpu")):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
     sample generations. It also passes through the answers kept as strings.
@@ -120,7 +120,7 @@ def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None,
         pad_token_id (int, optional): Token ID to use for padding sequences. Defaults to 50256.
         custom_max_length (int, optional): Maximum length of the padded sequences. If None, the maximum length
                 is determined by the longest prompt in the batch.
-        device (str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
+        device (torch.device or str, optional): Device where the resulting tensors will be placed. Defaults to "cpu".
 
     Returns:
         Dict[str, torch.Tensor or list]: A dictionary containing:

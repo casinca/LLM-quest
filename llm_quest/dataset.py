@@ -837,7 +837,13 @@ def collate_function_eos(batch, custom_max_len=None, device="cpu"):
     )
 
 
-def dpo_collate(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_tokens=True, device="cpu"):
+def dpo_collate(
+    batch,
+    pad_token_id=50256,
+    allowed_max_length=None,
+    mask_prompt_tokens=True,
+    device=torch.device("cpu"),
+):
     """
     Custom collate function for Direct Preference Optimization (DPO) training.
 
@@ -914,7 +920,7 @@ def dpo_collate(batch, pad_token_id=50256, allowed_max_length=None, mask_prompt_
 
 
 # similar to dpo_collate, with additional attn masks and more efficient
-def pref_reward_collate(batch, pad_token_id=50256, allowed_max_length=None, device="cpu"):
+def pref_reward_collate(batch, pad_token_id=50256, allowed_max_length=None, device=torch.device("cpu")):
     """
     Custom collate function for the Reward Model training with preference data.
     It prepares chosen and rejected sequences, along with their loss and attention masks.

@@ -12,7 +12,7 @@ from llm_quest.reinforcement_pretraining.rpt_engine import PrefixMatchingReward
 
 # --- hyperparameters ---
 gpt_config = config.gpt2_config_creator("gpt_m")
-model_device = "cuda"
+model_device = config.auto_device
 # optimizer hparams
 lr = 5e-5
 weight_decay = 0.1

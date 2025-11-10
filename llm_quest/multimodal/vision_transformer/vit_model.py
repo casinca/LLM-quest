@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from config import VIT_BASE_CONFIG
 from llm_quest.multimodal.vision_transformer.vit_transformer_block import LayerNorm, ViTTransformerBlock
 
 # Some major differences between causal decoders and ViT here.
@@ -158,6 +157,8 @@ class ViTModel(nn.Module):
 
 # Testing code
 if __name__ == "__main__":
+    from config import VIT_BASE_CONFIG
+
     torch.manual_seed(123)
 
     # Ex input: batch of 2 RGB images of size 224x224

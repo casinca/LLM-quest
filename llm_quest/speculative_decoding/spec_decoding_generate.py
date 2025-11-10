@@ -28,7 +28,7 @@ if __name__ == "__main__":
     target_model_config = config.gpt2_config_creator("gpt_l")  # needs a larger model to make speculative decoding worth
     draft_model_config = config.gpt2_config_creator("gpt_s")
 
-    device = "cuda"
+    device = config.auto_device
 
     target_model = GPTModel(target_model_config)
     draft_model = GPTModel(draft_model_config)

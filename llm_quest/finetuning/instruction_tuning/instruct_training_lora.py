@@ -24,7 +24,7 @@ rank = 4
 alpha = 16
 
 data_device = "cpu"
-model_device = "cuda"
+model_device = None  # set in __main__
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
@@ -39,6 +39,7 @@ if __name__ == "__main__":
     from llm_quest.gpt.gpt_model import GPTModel
 
     tokenizer = tiktoken.get_encoding("gpt2")
+    model_device = config.auto_device
 
     # --- Loaders ---
     model_cfg = config.gpt2_config_creator("gpt_m")  # using Medium sized gpt config

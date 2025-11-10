@@ -2,6 +2,20 @@ from pathlib import Path
 
 import torch
 
+
+def _get_device():
+    """helper to select the best available device"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
+auto_device = _get_device()
+
+
 # ----------- OG CONFIGS -----------
 
 

@@ -11,7 +11,7 @@ from llm_quest.utils import alpaca_deepseek_format, ids_to_text, text_to_ids
 torch.manual_seed(123)
 tokenizer = tiktoken.get_encoding("gpt2")
 data_device = "cpu"
-model_device = "cuda"
+model_device = config.auto_device
 
 test_txt = []
 with open("../../../data/processed_data/gsm8k_processed/gsm8k_test.jsonl", "r") as f:

@@ -5,7 +5,6 @@ import torch
 from torch.utils.data import DataLoader
 
 import config
-from config import DEEPSEEK_SMALL_CONFIG
 from llm_quest.dataset import HFDataset
 from llm_quest.llama3_to_deepseekv3.custom_collate_mtp import collate_function_mtp
 from llm_quest.llama3_to_deepseekv3.deepseek_engine import training_eval_loop_mtp
@@ -23,13 +22,15 @@ eval_iter = 5
 warmup_percent = 0.2
 weight_decay = 0.1
 batch_size = 16
+device = config.auto_device
+deepseek_small_cfg = config.DEEPSEEK_SMALL_CONFIG
 
 tokenizer = tiktoken.get_encoding("gpt2")
 
 train_hf = HFDataset(config.fineweb_train, tokenizer=tokenizer, max_samples=3_200)
 val_hf = HFDataset(config.fineweb_val, tokenizer=tokenizer, max_samples=3_200 * 0.1)
 
-custom_collate = partial(collate_function_mtp, custom_max_len=DEEPSEEK_SMALL_CONFIG["context_length"], device="cpu")
+custom_collate = partial(collate_function_mtp, custom_max_len=deepseek_small_cfg["context_length"], device="cpu")
 
 train_loader = DataLoader(
     train_hf,
@@ -52,8 +53,7 @@ val_loader = DataLoader(
 )
 
 torch.set_float32_matmul_precision("high")
-device = torch.device("cuda")
-model = DeepSeekV3Model(DEEPSEEK_SMALL_CONFIG)
+model = DeepSeekV3Model(deepseek_small_cfg)
 model.bfloat16().to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay, fused=True)

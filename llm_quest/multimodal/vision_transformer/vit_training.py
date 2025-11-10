@@ -1,12 +1,3 @@
-import torch
-from datasets import load_dataset
-from torch.utils.data import DataLoader
-
-from config import TINY_VIT_CONFIG
-from llm_quest.dataset import ImageDataset
-from llm_quest.multimodal.vision_transformer.vit_engine import vit_training_eval_loop
-from llm_quest.multimodal.vision_transformer.vit_model import ViTModel
-
 # --- Hyperparameters ---
 batch_size = 256
 num_epochs = 20
@@ -23,8 +14,18 @@ persistent_workers = False
 amp = True
 
 if __name__ == "__main__":
+    import torch
+    from datasets import load_dataset
+    from torch.utils.data import DataLoader
+
+    from config import TINY_VIT_CONFIG, auto_device
+    from llm_quest.dataset import ImageDataset
+    from llm_quest.multimodal.vision_transformer.vit_engine import vit_training_eval_loop
+    from llm_quest.multimodal.vision_transformer.vit_model import ViTModel
+
     torch.manual_seed(123)
 
+    print(f"\nUsing DEVICE: {auto_device.type}\n")
     # --- Loaders ---
     print("Loading dataset...")
     dataset = load_dataset("uoft-cs/cifar10")
@@ -55,12 +56,9 @@ if __name__ == "__main__":
     print(f"Validation dataset size: {len(val_dataset)}")
 
     # --- Model & Optimizer ---
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
     torch.set_float32_matmul_precision("high")
     model = ViTModel(TINY_VIT_CONFIG)
-    model.to(device)
+    model.to(auto_device)
 
     # model info
     total_params = sum(p.numel() for p in model.parameters())
@@ -84,26 +82,26 @@ if __name__ == "__main__":
         min_lr=min_lr,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
-        device=device,
+        device=auto_device,
         use_amp=amp,
     )
 
     print(f"Final training accuracy: {train_accus[-1]*100:.2f}%")
     print(f"Final validation accuracy: {val_accus[-1]*100:.2f}%")
 
-    # --- Save model ---
-    checkpoint_path = "vit_cifar10_model.pth"
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            # "optimizer_state_dict": optimizer.state_dict(),
-            "config": TINY_VIT_CONFIG,
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "train_accuracies": train_accus,
-            "val_accuracies": val_accus,
-        },
-        checkpoint_path,
-    )
-
-    print(f"Model saved to {checkpoint_path}")
+    ## --- Save model ---
+    # checkpoint_path = "vit_cifar10_model.pth"
+    # torch.save(
+    #    {
+    #        "model_state_dict": model.state_dict(),
+    #        # "optimizer_state_dict": optimizer.state_dict(),
+    #        "config": TINY_VIT_CONFIG,
+    #        "train_losses": train_losses,
+    #        "val_losses": val_losses,
+    #        "train_accuracies": train_accus,
+    #        "val_accuracies": val_accus,
+    #    },
+    #    checkpoint_path,
+    # )
+#
+# print(f"Model saved to {checkpoint_path}")

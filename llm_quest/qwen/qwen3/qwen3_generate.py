@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoTokenizer
 
-from config import qwen3_config_creator
+from config import auto_device, qwen3_config_creator
 from llm_quest.generate import (
     generate_batched_loop_kv_cache,
     generate_batched_loop_kv_cache_left_pad,
@@ -20,7 +20,6 @@ from llm_quest.qwen.qwen3.qwen3_weight_loading import load_qwen3_weights
 ###########
 # Hparams #
 ###########
-device = "cuda"
 
 base_model = True
 enable_thinking = False
@@ -33,6 +32,8 @@ temp = 0.0
 seed = 123
 pad_side = "right"
 qwen3_cfg = qwen3_config_creator("0.6B", base_model=base_model)
+device = auto_device
+print(f"\nUsing DEVICE: {device.type}\n")
 
 prompt = "The capital of France is"
 batch_prompts = [

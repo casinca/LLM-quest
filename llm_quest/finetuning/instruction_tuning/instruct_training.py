@@ -23,7 +23,7 @@ use_amp = False
 model_cfg = config.gpt2_config_creator("gpt_m")
 
 data_device = "cpu"
-model_device = "cuda"
+model_device = None  # set in __main__
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
@@ -36,6 +36,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     tokenizer = tiktoken.get_encoding("gpt2")
+    model_device = config.auto_device
 
     # --- Loaders ---
     model = GPTModel(model_cfg)

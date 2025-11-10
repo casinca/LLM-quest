@@ -8,7 +8,7 @@ from llm_quest.generate import generate_loop
 from llm_quest.gpt.gpt_model import GPTModel
 from llm_quest.utils import alpaca_prompt_format, ids_to_text, text_to_ids
 
-model_device = "cuda" if torch.cuda.is_available() else "cpu"
+model_device = config.auto_device
 EOS_ID = 50256
 
 
@@ -40,7 +40,7 @@ if __name__ == "__main__":
 
     policy_model = GPTModel(model_cfg)
     policy_checkpoint = torch.load(
-        config.rlhf_grpo_checkpoint_dir / "best_checkpoint_150_score_6.370.pt",
+        config.rlhf_grpo_checkpoint_dir / "best_checkpoint_150_score_6.370_gpro_loss_fix.pt",
         map_location=model_device,
         weights_only=True,
     )

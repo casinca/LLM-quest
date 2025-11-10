@@ -303,7 +303,7 @@ def speculative_generate(
     top_p=None,
     temp=0.0,
     eos_id=None,
-    device="cuda",
+    device=torch.device("cuda"),
 ):
     """
     Full speculative decoding generation loop.
@@ -320,7 +320,7 @@ def speculative_generate(
                                 None to disable.
         temp (float): The temperature for the distribution, needs to be > 0.0
         eos_id (int): End of sequence token ID
-        device (str): Device to run on
+        device (torch.device or str): Device to run on
 
     Returns:
         torch.Tensor: Generated sequence including prompt, shape (1, prompt_len + generated length/max_gen)

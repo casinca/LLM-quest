@@ -248,7 +248,7 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     return avg_loss, avg_acc
 
 
-def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device="cpu"):
+def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=None, device=torch.device("cpu")):
     """
     Collate function to pad prompts of different lengths into a single tensor, preparing them for the policy model
     sample generations.

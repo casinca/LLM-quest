@@ -1,8 +1,3 @@
-import tiktoken
-import torch
-
-torch.manual_seed(123)
-
 # --- Hyperparameters ---
 batch_size = 2
 num_epoch = 10
@@ -18,14 +13,18 @@ pin_memory = False
 use_amp = False
 train_ratio = 0.9
 
-device = torch.device("cuda")
-
 if __name__ == "__main__":
-    # heavy imports inside if __name__ == "__main__" for num_workers
-    from config import GPT_SMALL_CONFIG, the_verdict_path
+
+    import tiktoken
+    import torch
+
+    from config import GPT_SMALL_CONFIG, auto_device, the_verdict_path
     from llm_quest.dataset import create_dataloader
     from llm_quest.engine import training_eval_loop
     from llm_quest.gpt.gpt_model import GPTModel
+
+    torch.manual_seed(123)
+    print(f"\nUsing DEVICE: {auto_device.type}\n")
 
     # --- Data preparation ---
     with open(the_verdict_path, "r") as file:
@@ -65,7 +64,7 @@ if __name__ == "__main__":
 
     # --- Training ---
     model = GPTModel(GPT_SMALL_CONFIG)
-    model.to(device)
+    model.to(auto_device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay)
 
@@ -81,7 +80,7 @@ if __name__ == "__main__":
         min_lr=min_lr,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
-        device=device,
+        device=auto_device,
         use_amp=use_amp,
     )
     ## saving final model and optimizer parameters

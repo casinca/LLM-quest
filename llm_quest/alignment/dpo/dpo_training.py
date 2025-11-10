@@ -14,7 +14,7 @@ tokenizer = tiktoken.get_encoding("gpt2")
 batch_size = 8
 
 data_device = "cpu"
-model_device = "cuda"
+model_device = config.auto_device
 
 model_cfg = config.gpt2_config_creator("gpt_m")
 # the ref model was SFT on a pretrained GPT2 with OpenAI weights, can't use 50304.
