@@ -322,7 +322,7 @@ def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_i
     pad_mask = responses == pad_token_id
 
     first_eos_mask = pad_mask.clone()
-    first_eos_mask[:, :len_prompt] = False
+    first_eos_mask[:, :len_prompt] = False  # exclude pad tokens from the prompt part
     first_eos_mask = first_eos_mask.cumsum(dim=1) == 1  # trick to retrieve the first EoS/pad in the response part
 
     attn_masks = ~pad_mask | first_eos_mask  # True for: real tokens + 1st EoS/pad in the response part
