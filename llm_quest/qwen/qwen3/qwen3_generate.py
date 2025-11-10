@@ -53,17 +53,23 @@ qwen3_model = Qwen3Model(qwen3_cfg)
 qwen3_model = load_qwen3_weights(qwen3_model, qwen3_cfg)
 qwen3_model.to(device).eval()
 
-# Apply the ChatML template to format the conversation properly if needed
+# Apply the ChatML template to format the conversation properly, if needed
 if not base_model:
-    messages = [{"role": "user", "content": prompt}]
+    message = [{"role": "user", "content": prompt}]
+    batch_messages = [[{"role": "user", "content": prompt}] for prompt in batch_prompts]
+
     formatted_prompt = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=add_generation_prompt,
-        enable_thinking=enable_thinking,
+        message, tokenize=False, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking
     )
+    formatted_batch_prompts = [
+        tokenizer.apply_chat_template(
+            message, tokenize=False, add_generation_prompt=add_generation_prompt, enable_thinking=enable_thinking
+        )
+        for message in batch_messages
+    ]
 else:
     formatted_prompt = prompt
+    formatted_batch_prompts = batch_prompts
 
 input_tensor = torch.tensor([tokenizer.encode(formatted_prompt)]).to(device)
 
@@ -96,7 +102,7 @@ print("\n\n ######## Testing batch generation with left padding or right padding
 
 tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"], padding_side=pad_side)
 batch_encoded = tokenizer.batch_encode_plus(
-    batch_prompts,
+    formatted_batch_prompts,
     return_tensors="pt",
     add_special_tokens=True,
     max_length=qwen3_cfg["context_length"],
