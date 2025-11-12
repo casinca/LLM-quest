@@ -320,15 +320,12 @@ def generate_batched_loop_kv_cache(
     next_token = sampling(logits, top_k, top_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
+    attention_mask = torch.cat([attention_mask, (~finished).unsqueeze(-1)], dim=-1)
 
     # --- Continuing generations with kv cache ---
     for _ in range(max_gen - 1):
         if finished.all():
             break
-
-        # extend attention mask with True for the newly generated token
-        new_mask = torch.ones_like(next_token, dtype=torch.bool)
-        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
         with torch.inference_mode():
             if rope_model:
@@ -354,6 +351,10 @@ def generate_batched_loop_kv_cache(
         )
         generated_tokens.append(next_token)
         finished |= next_token.squeeze(1) == eos_id
+
+        # extend attention mask: True for unfinished sequences
+        new_mask = (~finished).unsqueeze(-1)
+        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
     all_generated = torch.cat(generated_tokens, dim=1)
     return torch.cat([input_tensor, all_generated], dim=1)
