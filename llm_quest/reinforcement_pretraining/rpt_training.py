@@ -12,32 +12,34 @@ from llm_quest.reinforcement_pretraining.rpt_engine import PrefixMatchingReward
 
 # --- hyperparameters ---
 gpt_config = config.gpt2_config_creator("gpt_m")
+batch_size = 2
+labels_length = 10
 model_device = config.auto_device
 # optimizer hparams
 lr = 5e-5
 weight_decay = 0.1
-# training hparams
-batch_size = 2
-num_samples = 2
-num_epoch = 1
-num_grad_updates = 2
-max_gen = 250
-labels_length = 10
-# GRPO hparams
-min_clip_eps = 0.2
-max_clip_eps = 0.2
-beta = 0.45
-# evaluation hparams
-evaluation = True
-eval_freq = 10
-eval_batches = 1
-eval_num_samples = 4
-kl_div_threshold = 0.3
-min_reward_threshold = 0.35
 # loader hparams
 num_workers = 0
 pin_memory = False
 persistent_workers = False
+rpt_training_hparams = {
+    # training
+    "num_samples": 2,
+    "num_epoch": 1,
+    "num_grad_updates": 2,
+    "max_gen": 250,
+    # GRPO
+    "min_clip_eps": 0.2,
+    "max_clip_eps": 0.2,
+    "beta": 0.45,
+    # eval
+    "evaluation": True,
+    "eval_freq": 10,
+    "eval_batches": 1,
+    "eval_num_samples": 4,
+    "kl_div_threshold": 0.3,
+    "min_reward_threshold": 0.35,
+}
 
 
 if __name__ == "__main__":
@@ -116,20 +118,8 @@ if __name__ == "__main__":
         policy_model=policy_model,
         reference_model=reference_model,
         optimizer=optimizer,
-        num_epoch=num_epoch,
-        num_samples=num_samples,
-        num_grad_updates=num_grad_updates,
+        reward_calculator=reward_calculator,
         policy_config=gpt_config,
         device=model_device,
-        reward_calculator=reward_calculator,
-        max_gen=max_gen,
-        min_clip_eps=min_clip_eps,
-        max_clip_eps=max_clip_eps,
-        beta=beta,
-        evaluation=evaluation,
-        eval_freq=eval_freq,
-        eval_batches=eval_batches,
-        eval_num_samples=eval_num_samples,
-        kl_div_threshold=kl_div_threshold,
-        min_reward_threshold=min_reward_threshold,
+        **rpt_training_hparams,
     )
