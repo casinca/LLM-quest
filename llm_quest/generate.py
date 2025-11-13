@@ -458,7 +458,7 @@ def generate_batched_loop_kv_cache_left_pad(
     return torch.cat([input_tensor, all_generated], dim=1)
 
 
-def sampling(logits, top_k=None, top_p=None, temp=0.0):
+def sampling(logits, top_k=None, top_p=None, min_p=None, temp=0.0):
     """
     Performs sampling on the logits.
 
@@ -467,6 +467,9 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None, range [0.0, 1.0].
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float): Temperature for softmax sampling (temperature sampling (Ackley et al., 1985)):
                         - if >1, increases entropy (randomness)
                         - if <1, decreases entropy (more deterministic)
@@ -475,13 +478,20 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
     Returns:
         torch.Tensor: Sampled token ID from the distribution, shape (b, 1)
     """
+    assert top_p is None or min_p is None, "Cannot use top_p and min_p together"
+
     if temp == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
     logits = logits / temp  # inplace update to inference tensor outside InferenceMode is not allowed
     probs = torch.softmax(logits, dim=-1)
 
-    if top_p:
+    # Optional sampling methods
+    if min_p:
+        min_tokens_to_keep = 1 if top_k is None else top_k
+        probs = _min_p_sampling(probs, min_p, min_tokens_to_keep)
+
+    elif top_p:
         probs = _top_p_sampling(probs, top_p, top_k)
 
     elif top_k:
