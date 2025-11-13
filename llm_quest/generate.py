@@ -31,6 +31,7 @@ def generate_loop(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=None,
     device=torch.device("cuda"),
@@ -47,6 +48,9 @@ def generate_loop(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Temperature sampling:
                                 - if >1, increases entropy (randomness)
                                 - if <1, decreases entropy (more deterministic)
@@ -69,7 +73,7 @@ def generate_loop(
         with torch.inference_mode():  # no need for grads as we're generating
             logits = model(trunc_input)[:, -1, :]  # taking last vector (next word prediction)
 
-        next_token = sampling(logits, top_k, top_p, temp)
+        next_token = sampling(logits, top_k, top_p, min_p, temp)
 
         if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
             break
@@ -89,6 +93,7 @@ def generate_loop_kv_cache(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=None,
     device=torch.device("cuda"),
@@ -119,7 +124,7 @@ def generate_loop_kv_cache(
 
         # --- Continuing generations with kv cache ---
         for _ in range(max_gen):
-            next_token = sampling(logits, top_k, top_p, temp)
+            next_token = sampling(logits, top_k, top_p, min_p, temp)
 
             if eos_id is not None and next_token == eos_id:
                 break
@@ -245,6 +250,7 @@ def generate_batched_loop_kv_cache(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=50256,
     device=torch.device("cuda"),
@@ -266,6 +272,9 @@ def generate_batched_loop_kv_cache(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
@@ -317,7 +326,7 @@ def generate_batched_loop_kv_cache(
     seq_pos = torch.arange(batch_size, device=device)
     logits = logits[seq_pos, last_real, :]
 
-    next_token = sampling(logits, top_k, top_p, temp)
+    next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
 
@@ -346,7 +355,7 @@ def generate_batched_loop_kv_cache(
                     kv_cache=kv_cache,
                 ).squeeze(1)
 
-        sampled_tokens = sampling(logits, top_k, top_p, temp)
+        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
         # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
         next_token = torch.where(
@@ -366,6 +375,7 @@ def generate_batched_loop_kv_cache_left_pad(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=50256,
     device=torch.device("cuda"),
@@ -385,6 +395,9 @@ def generate_batched_loop_kv_cache_left_pad(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
@@ -423,7 +436,7 @@ def generate_batched_loop_kv_cache_left_pad(
     # with left padding, all sequences end at position -1 (no need to track last real token like right padding)
     logits = logits[:, -1, :]
 
-    next_token = sampling(logits, top_k, top_p, temp)
+    next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
 
@@ -445,7 +458,7 @@ def generate_batched_loop_kv_cache_left_pad(
             ).squeeze(1)
         next_pos_id += 1
 
-        sampled_tokens = sampling(logits, top_k, top_p, temp)
+        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
         # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
         next_token = torch.where(
@@ -683,6 +696,7 @@ if __name__ == "__main__":
         context_length=model_settings["context_length"],
         top_k=25,
         top_p=0.95,
+        min_p=None,
         temp=1.4,
     )
 
