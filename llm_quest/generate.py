@@ -467,7 +467,7 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None, range [0.0, 1.0].
-        temp (float): Temperature for softmax sampling:
+        temp (float): Temperature for softmax sampling (temperature sampling (Ackley et al., 1985)):
                         - if >1, increases entropy (randomness)
                         - if <1, decreases entropy (more deterministic)
                         - if 1, untempered distribution
