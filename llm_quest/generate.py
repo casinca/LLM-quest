@@ -554,6 +554,39 @@ def _top_p_sampling(probs, p, top_k=None):
     return probs
 
 
+def _min_p_sampling(probs, min_p, min_tokens_to_keep=1):
+    """
+    Performs min-p sampling on the probabilities.
+    The goal is to select tokens dynamically based on a minimum threshold that is proportional to the probability of the
+    most likely token (p_max).
+    https://arxiv.org/abs/2407.01082
+
+    Note: Not mentioned in the base description, but they use a `min_tokens_to_keep` arg to guarantee at least this
+    number of tokens in the distribution, in case the scaled_min_p filters too many tokens.
+
+    args:
+        probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
+                            or shape (b, draft_max_gen, v) if speculative decoding
+        min_p (float): base probability threshold (p_base in the paper) range (0,1]
+        min_tokens_to_keep (int): minimum number of tokens to keep in the distribution, in case the scaled_min_p filters
+                                too many tokens. Defaults to 1.
+    """
+    # get the highest probability for each distrib in the batch
+    p_max = torch.amax(probs, dim=-1, keepdim=True)
+    # scale the base threshold by p_max
+    scaled_min_p = min_p * p_max
+
+    tokens_to_remove = probs < scaled_min_p
+    # keep at least `min_tokens_to_keep` tokens regardless of the scaled_min_p
+    top_k_idx = torch.topk(probs, min_tokens_to_keep, dim=-1).indices
+    tokens_to_remove.scatter_(-1, top_k_idx, False)
+
+    # adjust/truncate the distribs with tokens which have a p >= scaled_min_p
+    probs.masked_fill_(tokens_to_remove, 0.0)
+
+    return probs
+
+
 # test code
 if __name__ == "__main__":
 
