@@ -496,6 +496,7 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
 def _top_k_sampling(probs, k):
     """
     Performs top-k sampling on the probabilities by keeping only the k highest probability tokens.
+    https://arxiv.org/abs/1805.04833 section 5.4
 
     Args:
         probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
