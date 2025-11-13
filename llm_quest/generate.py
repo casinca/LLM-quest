@@ -564,7 +564,7 @@ def _top_p_sampling(probs, p, top_k=None):
     return probs
 
 
-def _min_p_sampling(probs, min_p, min_tokens_to_keep=1):
+def _min_p_sampling(probs, min_p=0.1, min_tokens_to_keep=1):
     """
     Performs min-p sampling on the probabilities.
     The goal is to select tokens dynamically based on a minimum threshold that is proportional to the probability of the
@@ -577,7 +577,7 @@ def _min_p_sampling(probs, min_p, min_tokens_to_keep=1):
     args:
         probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
                             or shape (b, draft_max_gen, v) if speculative decoding
-        min_p (float): base probability threshold (p_base in the paper) range (0,1]
+        min_p (float): base probability threshold (p_base in the paper) range (0,1]. Defaults to 0.1.
         min_tokens_to_keep (int): minimum number of tokens to keep in the distribution, in case the scaled_min_p filters
                                 too many tokens. Defaults to 1.
     """
