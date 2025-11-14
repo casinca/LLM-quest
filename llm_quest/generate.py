@@ -31,6 +31,7 @@ def generate_loop(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=None,
     device=torch.device("cuda"),
@@ -47,6 +48,9 @@ def generate_loop(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Temperature sampling:
                                 - if >1, increases entropy (randomness)
                                 - if <1, decreases entropy (more deterministic)
@@ -69,7 +73,7 @@ def generate_loop(
         with torch.inference_mode():  # no need for grads as we're generating
             logits = model(trunc_input)[:, -1, :]  # taking last vector (next word prediction)
 
-        next_token = sampling(logits, top_k, top_p, temp)
+        next_token = sampling(logits, top_k, top_p, min_p, temp)
 
         if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
             break
@@ -89,6 +93,7 @@ def generate_loop_kv_cache(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=None,
     device=torch.device("cuda"),
@@ -119,7 +124,7 @@ def generate_loop_kv_cache(
 
         # --- Continuing generations with kv cache ---
         for _ in range(max_gen):
-            next_token = sampling(logits, top_k, top_p, temp)
+            next_token = sampling(logits, top_k, top_p, min_p, temp)
 
             if eos_id is not None and next_token == eos_id:
                 break
@@ -245,6 +250,7 @@ def generate_batched_loop_kv_cache(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=50256,
     device=torch.device("cuda"),
@@ -266,6 +272,9 @@ def generate_batched_loop_kv_cache(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
@@ -317,7 +326,7 @@ def generate_batched_loop_kv_cache(
     seq_pos = torch.arange(batch_size, device=device)
     logits = logits[seq_pos, last_real, :]
 
-    next_token = sampling(logits, top_k, top_p, temp)
+    next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
     attention_mask = torch.cat([attention_mask, (~finished).unsqueeze(-1)], dim=-1)
@@ -343,7 +352,7 @@ def generate_batched_loop_kv_cache(
                     kv_cache=kv_cache,
                 ).squeeze(1)
 
-        sampled_tokens = sampling(logits, top_k, top_p, temp)
+        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
         # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
         next_token = torch.where(
@@ -367,6 +376,7 @@ def generate_batched_loop_kv_cache_left_pad(
     context_length,
     top_k=None,
     top_p=None,
+    min_p=None,
     temp=0.0,
     eos_id=50256,
     device=torch.device("cuda"),
@@ -386,6 +396,9 @@ def generate_batched_loop_kv_cache_left_pad(
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None.
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
@@ -424,7 +437,7 @@ def generate_batched_loop_kv_cache_left_pad(
     # with left padding, all sequences end at position -1 (no need to track last real token like right padding)
     logits = logits[:, -1, :]
 
-    next_token = sampling(logits, top_k, top_p, temp)
+    next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
     finished |= next_token.squeeze(1) == eos_id
 
@@ -446,7 +459,7 @@ def generate_batched_loop_kv_cache_left_pad(
             ).squeeze(1)
         next_pos_id += 1
 
-        sampled_tokens = sampling(logits, top_k, top_p, temp)
+        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
         # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
         next_token = torch.where(
@@ -459,7 +472,7 @@ def generate_batched_loop_kv_cache_left_pad(
     return torch.cat([input_tensor, all_generated], dim=1)
 
 
-def sampling(logits, top_k=None, top_p=None, temp=0.0):
+def sampling(logits, top_k=None, top_p=None, min_p=None, temp=0.0):
     """
     Performs sampling on the logits.
 
@@ -468,7 +481,10 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
         top_k (int, optional): If specified, limits sampling to top k most likely tokens. Defaults to None.
         top_p (float, optional): If specified, limits sampling to top p most likely tokens. Can be combined with top_k.
                                 Defaults to None, range [0.0, 1.0].
-        temp (float): Temperature for softmax sampling:
+        min_p (float, optional): If specified, limits sampling to tokens based on a dynamic threshold (scaled by the
+        probability of the most likely token.)
+                                Defaults to None
+        temp (float): Temperature for softmax sampling (temperature sampling (Ackley et al., 1985)):
                         - if >1, increases entropy (randomness)
                         - if <1, decreases entropy (more deterministic)
                         - if 1, untempered distribution
@@ -476,13 +492,20 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
     Returns:
         torch.Tensor: Sampled token ID from the distribution, shape (b, 1)
     """
+    assert top_p is None or min_p is None, "Cannot use top_p and min_p together"
+
     if temp == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)  # keepdim as it is to concat (needs same dim)
 
     logits = logits / temp  # inplace update to inference tensor outside InferenceMode is not allowed
     probs = torch.softmax(logits, dim=-1)
 
-    if top_p:
+    # Optional sampling methods
+    if min_p:
+        min_tokens_to_keep = 1 if top_k is None else top_k
+        probs = _min_p_sampling(probs, min_p, min_tokens_to_keep)
+
+    elif top_p:
         probs = _top_p_sampling(probs, top_p, top_k)
 
     elif top_k:
@@ -497,6 +520,7 @@ def sampling(logits, top_k=None, top_p=None, temp=0.0):
 def _top_k_sampling(probs, k):
     """
     Performs top-k sampling on the probabilities by keeping only the k highest probability tokens.
+    https://arxiv.org/abs/1805.04833 section 5.4
 
     Args:
         probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
@@ -550,6 +574,39 @@ def _top_p_sampling(probs, p, top_k=None):
 
     # re-assigning the sorted masked probs to the original indices
     probs.scatter_(-1, og_idx, sorted_probs)
+
+    return probs
+
+
+def _min_p_sampling(probs, min_p=0.1, min_tokens_to_keep=1):
+    """
+    Performs min-p sampling on the probabilities.
+    The goal is to select tokens dynamically based on a minimum threshold that is proportional to the probability of the
+    most likely token (p_max).
+    https://arxiv.org/abs/2407.01082
+
+    Note: Not mentioned in the base description, but they use a `min_tokens_to_keep` arg to guarantee at least this
+    number of tokens in the distribution, in case the scaled_min_p filters too many tokens.
+
+    args:
+        probs (torch.Tensor): Input distribution tensor representing token probabilities, shape (b, v)
+                            or shape (b, draft_max_gen, v) if speculative decoding
+        min_p (float): base probability threshold (p_base in the paper) range (0,1]. Defaults to 0.1.
+        min_tokens_to_keep (int): minimum number of tokens to keep in the distribution, in case the scaled_min_p filters
+                                too many tokens. Defaults to 1.
+    """
+    # get the highest probability for each distrib in the batch
+    p_max = torch.amax(probs, dim=-1, keepdim=True)
+    # scale the base threshold by p_max
+    scaled_min_p = min_p * p_max
+
+    tokens_to_remove = probs < scaled_min_p
+    # keep at least `min_tokens_to_keep` tokens regardless of the scaled_min_p
+    top_k_idx = torch.topk(probs, min_tokens_to_keep, dim=-1).indices
+    tokens_to_remove.scatter_(-1, top_k_idx, False)
+
+    # adjust/truncate the distribs with tokens which have a p >= scaled_min_p
+    probs.masked_fill_(tokens_to_remove, 0.0)
 
     return probs
 
@@ -640,6 +697,7 @@ if __name__ == "__main__":
         context_length=model_settings["context_length"],
         top_k=25,
         top_p=0.95,
+        min_p=None,
         temp=1.4,
     )
 

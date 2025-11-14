@@ -28,6 +28,7 @@ add_generation_prompt = False  # more suited for base_model=False: adds the assi
 max_gen = 80
 topk = 25
 topp = 0.95
+min_p = None  # Qwen recommends disabled but it's there
 temp = 0.0
 seed = 123
 pad_side = "right"
@@ -122,13 +123,14 @@ batched_input_ids = batch_encoded.input_ids.to(device)
 batched_attention_mask = batch_encoded.attention_mask.to(device)
 
 torch.manual_seed(seed)
-batched_output = batched_generation_func(
+batched_output = generate_batched_loop_kv_cache(
     input_tensor=batched_input_ids,
     model=qwen3_model,
     max_gen=max_gen,
     context_length=qwen3_cfg["context_length"],
     top_k=topk,
     top_p=topp,
+    min_p=min_p,
     temp=temp,
     eos_id=tokenizer.eos_token_id,
     device=device,
