@@ -94,8 +94,10 @@ class Qwen3MoE(nn.Module):
             self.shared_expert = Expert(cfg, hidden_dim=self.shared_expert_hidden_dim)
             self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
 
+            # only relevant for Pretraining with Qwen3-Next.
             if self.training:
-                router_weights_init(self.gate.weight)  # only relevant for Pretraining with Qwen3-Next
+                print("# WARNING: Training flag, router weights are being re-initialized, shouldn't be used for SFT! ")
+                router_weights_init(self.gate.weight)
 
     def forward(self, x):
         b, s, emb_dim = x.shape
