@@ -189,6 +189,7 @@ def rlvr_grpo_training_loop(
     min_reward_threshold=0.35,
     loss_variant="grpo",
     save_checkpoint=True,
+    rope_model=False,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -220,6 +221,7 @@ def rlvr_grpo_training_loop(
         loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
         "gspo".
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
+        rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
     Returns:
         None: The function modifies the `policy_model` in place.
 
@@ -256,7 +258,7 @@ def rlvr_grpo_training_loop(
                 top_k=20,
                 temp=1,
                 last_real=last_real_pos,
-                rope_model=False,
+                rope_model=rope_model,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
