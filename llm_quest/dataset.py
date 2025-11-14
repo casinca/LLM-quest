@@ -545,9 +545,19 @@ class RPTStructuredDataset(Dataset):
                                         (accounting for labels_length) in a sample are used.
     """
 
-    def __init__(self, file, tokenizer, max_context_length, labels_length=25, instruction=None, valid_indices=None):
+    def __init__(
+        self,
+        file,
+        tokenizer,
+        max_context_length,
+        labels_length=25,
+        instruction=None,
+        valid_indices=None,
+        apply_chat_template=False,
+    ):
         super().__init__()
         self.tokenizer = tokenizer
+        self.apply_chat_template = apply_chat_template
 
         if instruction is None:
             instruction = (
@@ -558,7 +568,12 @@ class RPTStructuredDataset(Dataset):
                 "(note: the token may begin with a space, e.g., '<answer> para</answer>' or '<answer> =</answer>'.\n\n"
                 "### Context\n"
             )
-        self.instruction_ids = tokenizer.encode(instruction)
+
+        # keep instruction as string when using chat template for applying chat template to the final prompt later
+        if self.apply_chat_template:
+            self.instruction = instruction
+        else:
+            self.instruction_ids = tokenizer.encode(instruction)
 
         self.max_context_length = max_context_length
         self.labels_length = labels_length
@@ -626,7 +641,25 @@ class RPTStructuredDataset(Dataset):
         start_context_idx = max(0, token_idx - self.max_context_length)  # context can't be greater than model's ctx len
         context_ids = self.samples[sample_idx][start_context_idx:token_idx]
 
-        input_ids = self.instruction_ids + context_ids  # inject the instruction at the beginning of the context
+        if self.apply_chat_template:
+            # Decode context back to string (not super clean to decode and encode back)
+            context_string = self.tokenizer.decode(context_ids)
+
+            # combine instruction + context
+            full_prompt = self.instruction + context_string
+
+            # apply chat template to the complete prompt
+            full_prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": full_prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=True,
+            )
+
+            input_ids = self.tokenizer.encode(full_prompt)
+        else:
+            # Original logic: inject the instruction at the beginning of the context
+            input_ids = self.instruction_ids + context_ids
 
         labels_ids = self.samples[sample_idx][token_idx : token_idx + self.labels_length]
         labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
