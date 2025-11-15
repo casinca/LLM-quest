@@ -178,6 +178,7 @@ def rlvr_grpo_training_loop(
     device,
     reward_calculator,
     max_gen=70,
+    eos_id=50256,
     min_clip_eps=0.2,
     max_clip_eps=0.2,
     beta=1.0,
@@ -208,6 +209,7 @@ def rlvr_grpo_training_loop(
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         reward_calculator (Callable): A callable object that calculates the rewards for a batch of responses.
         max_gen (int): Maximum number of tokens to generate for each response.
+        eos_id (int): The token id to use for the end of sequence.
         min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
@@ -260,6 +262,7 @@ def rlvr_grpo_training_loop(
                 last_real=last_real_pos,
                 rope_model=rope_model,
                 device=device,
+                eos_id=eos_id,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
