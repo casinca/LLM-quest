@@ -347,6 +347,8 @@ def rlvr_grpo_training_loop(
                     max_gen=max_gen,
                     eval_num_samples=eval_num_samples,
                     eval_num_batches=eval_batches,
+                    rope_model=rope_model,
+                    eos_id=eos_id,
                 )
                 print(
                     f"Step {step} | "
