@@ -542,7 +542,12 @@ class RPTStructuredDataset(Dataset):
                                         If None, use default.
         valid_indices (list[tuple[int, int]], optional): A pre-computed (entropy filtered) list of (sample_idx, token_idx)
                                         tuples from the dataset to sample from. If None, all valid token positions
-                                        (accounting for labels_length) in a sample are used.
+                                        (accounting for labels_length) for a sample are used.
+        truncate_sample (tuple[int, int], optional): A tuple (start, end) specifying the slice indices for truncating
+                                        the full sample text. If None, no truncation is applied.
+        min_context_tokens (int, optional): Minimum number of tokens required in the context before creating a training
+        example. This is done to avoid creating training examples with too meaningless context.
+                                        If None (default 1 token), no minimum requirement.
     """
 
     def __init__(
@@ -554,10 +559,13 @@ class RPTStructuredDataset(Dataset):
         instruction=None,
         valid_indices=None,
         apply_chat_template=False,
+        truncate_sample=None,
+        min_context_tokens=None,
     ):
         super().__init__()
         self.tokenizer = tokenizer
         self.apply_chat_template = apply_chat_template
+        self.min_context_tokens = min_context_tokens
 
         if instruction is None:
             instruction = (
@@ -569,13 +577,9 @@ class RPTStructuredDataset(Dataset):
                 "### Context\n"
             )
 
-        # keep instruction as string when using chat template for applying chat template to the final prompt later
-        if self.apply_chat_template:
-            self.instruction = instruction
-        else:
-            self.instruction_ids = tokenizer.encode(instruction)
-
+        self.instruction, self.instruct_len = self._process_instruction(instruction)
         self.max_context_length = max_context_length
+        self.available_context_len = self.max_context_length - self.instruct_len
         self.labels_length = labels_length
 
         # --- Tokenizing the samples ---
@@ -583,25 +587,77 @@ class RPTStructuredDataset(Dataset):
         with open(file, "r", encoding="utf-8") as f:
             for line in f:
                 data = json.loads(line)
-                # reformatting the answer part of the solution to fit DeepSeek format (TODO not sure, experimental)
+
+                # NOTE: reformatting the answer part of the solution to fit DeepSeek format <think> and <answer> tags
                 solution_part, _, answer_part = data["answer"].rpartition("\n#### ")
                 formatted_full_solution = f"{solution_part} So the answer is <answer>{answer_part}</answer>"
                 full_sample = data["question"] + "\n\n" + formatted_full_solution
+
+                if truncate_sample is not None:
+                    start, end = truncate_sample
+                    start, end = max(0, start), min(len(full_sample), end)  # bound checking
+                    full_sample = full_sample[start:end]
+
                 self.samples.append(self.tokenizer.encode(full_sample))
 
-        # --- List of valid tokens for: entropy filtering (or not) and labels length check ---
+        # --- Build valid indices list ---
+        # entropy filtering: use pre-computed valid indices
         if valid_indices is not None:
             self.allowed_indices = [
                 (sample_idx, token_idx)
                 for sample_idx, token_idx in valid_indices
                 if token_idx < len(self.samples[sample_idx]) - self.labels_length
             ]
+        # no entropy filtering: build valid indices list from the dataset
         else:
             self.allowed_indices = []
+
             for sample_idx, sample_tokens in enumerate(self.samples):
                 last_valid_idx = len(sample_tokens) - self.labels_length
+
+                if last_valid_idx < 1:
+                    print(
+                        f"Skipping sample {sample_idx} not enough tokens as context to satisfy labels length {self.labels_length}"
+                    )
+                    continue
+
                 for token_idx in range(last_valid_idx):
+                    token_idx_plus_1 = token_idx + 1
+                    start_context_idx = max(0, token_idx_plus_1 - self.max_context_length)
+
+                    # Min context length check, will skip if context is too short
+                    if self.min_context_tokens is not None:
+                        context_token_count = token_idx_plus_1 - start_context_idx
+                        if context_token_count < self.min_context_tokens:
+                            continue
+
                     self.allowed_indices.append((sample_idx, token_idx))
+
+    def _process_instruction(self, instruction):
+        """
+        helper function to return instruction:
+        - kept as string when using chat template, in order to apply chat template to the final prompt later
+        - tokenized when not using chat template, inject instructions at the beginning of the context tokens
+
+        We also return the length of the instruction (tokenized), this will be used to correctly slice for context when
+        taken into account with the model's context length.
+        """
+
+        if self.apply_chat_template:
+            self.instruction = instruction
+            self.instruct_len = len(
+                self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": instruction}],
+                    tokenize=True,
+                    add_generation_prompt=True,
+                    enable_thinking=True,
+                )
+            )
+        else:
+            self.instruction = self.tokenizer.encode(instruction)
+            self.instruct_len = len(self.instruction)
+
+        return self.instruction, self.instruct_len
 
     def __len__(self):
         """
@@ -626,20 +682,22 @@ class RPTStructuredDataset(Dataset):
             list
 
         Returns:
-            tuple: A tuple containing:
-                - input_tensor (torch.Tensor): The tokenized input sequence (instruction + context).
-                - labels_string (str): The decoded string representation of the target labels for the reward calc.
+            dict: A dictionary containing:
+                - "prompt" (list[int]): The tokenized input sequence (instruction + context).
+                - "labels" (str): The decoded string representation of the target labels for the reward calc.
         """
 
         # retrieving the (sample, token) indexes in the allowed indices list
         sample_idx, token_idx = self.allowed_indices[index]
 
         # --- Slicing for context and labels ---
-        # context: from the start of the sample to the token index (excluded)
+        # context: from the start of the sample to the token index (included)
         # labels: from the token index up to labels length/margin
-        token_idx += 1  # +1 to include in the context the token itself when slicing
-        start_context_idx = max(0, token_idx - self.max_context_length)  # context can't be greater than model's ctx len
-        context_ids = self.samples[sample_idx][start_context_idx:token_idx]
+        end_context_idx = token_idx + 1
+        # keep context within model's ctx len
+        # ex: end_context_idx = 500, available_context_len = 200 -> start_context_idx = 300, slice [300:500]
+        start_context_idx = max(0, end_context_idx - self.available_context_len)
+        context_ids = self.samples[sample_idx][start_context_idx:end_context_idx]
 
         if self.apply_chat_template:
             # Decode context back to string (not super clean to decode and encode back)
@@ -658,10 +716,10 @@ class RPTStructuredDataset(Dataset):
 
             input_ids = self.tokenizer.encode(full_prompt)
         else:
-            # Original logic: inject the instruction at the beginning of the context
-            input_ids = self.instruction_ids + context_ids
+            # Original logic: inject the instruction (tokenized) at the beginning of the context
+            input_ids = self.instruction + context_ids
 
-        labels_ids = self.samples[sample_idx][token_idx : token_idx + self.labels_length]
+        labels_ids = self.samples[sample_idx][end_context_idx : end_context_idx + self.labels_length]
         labels_string = self.tokenizer.decode(labels_ids)  # decode back labels to a string for the reward calc
 
         # (return dict instead of a tuple, to be consistent with the other datasets and collate functions signature)
