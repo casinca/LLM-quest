@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import config
 from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
-from llm_quest.generate import generate_batched_loop, generate_loop
+from llm_quest.generate import generate_batched_loop, generate_batched_loop_kv_cache, generate_loop
 from llm_quest.utils import CheckpointEvaluator
 
 
@@ -775,7 +775,7 @@ def rlhf_grpo_training_loop(
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
 
-            responses = generate_batched_loop(
+            responses = generate_batched_loop_kv_cache(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
@@ -784,6 +784,8 @@ def rlhf_grpo_training_loop(
                 top_k=20,
                 temp=1,
                 last_real=last_real_pos,
+                device=device,
+                rope_model=False,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
@@ -888,6 +890,11 @@ def rlhf_grpo_training_loop(
                     torch.save(policy_model.state_dict(), save_path)
 
 
+# NOTE: GPT2 RLHF written tests on preference tuning was done with the old `generate_batched_loop()` function that has
+# been replaced here with `generate_batched_loop_kv_cache()` function.
+# If want to re-use the old `generate_batched_loop()` function, we need to change it in:
+# - _compute_grpo_metrics()
+# - rlhf_grpo_training_loop()
 class GRPOEvaluator:
     """
     Evaluator class for GRPO that works for both RLHF and RLVR.
@@ -907,10 +914,11 @@ class GRPOEvaluator:
         evaluation_type="rlhf",
         reward_model=None,
         reward_calculator=None,
+        rope_model=False,
+        eos_id=50256,
     ):
         total_reward = 0.0
         total_kl_div = 0.0
-
         num_batches_to_eval = min(eval_num_batches, len(loader)) if eval_num_batches else len(loader)
 
         for i, batch in enumerate(loader):
@@ -921,7 +929,7 @@ class GRPOEvaluator:
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(eval_num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(eval_num_samples, dim=0)
-            responses = generate_batched_loop(
+            responses = generate_batched_loop_kv_cache(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
@@ -930,6 +938,9 @@ class GRPOEvaluator:
                 top_k=20,
                 temp=1.0,
                 last_real=last_real_pos,
+                device=device,
+                rope_model=rope_model,
+                eos_id=eos_id,
             )
 
             collated_batch = batched_responses_collator(
@@ -996,6 +1007,8 @@ class GRPOEvaluator:
         reward_calculator=None,
         eval_num_samples=1,
         eval_num_batches=None,
+        rope_model=False,
+        eos_id=50256,
     ):
         """
         Evaluates the performance of the policy model on both training and validation datasets.
@@ -1042,6 +1055,8 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
+                rope_model=rope_model,
+                eos_id=eos_id,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
@@ -1055,6 +1070,8 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
+                rope_model=rope_model,
+                eos_id=eos_id,
             )
 
         policy_model.train()
