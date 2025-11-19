@@ -915,7 +915,8 @@ class GRPOEvaluator:
         reward_model=None,
         reward_calculator=None,
         rope_model=False,
-        eos_id=50256,
+        eos_ids=50256,
+        pad_id=50256,
     ):
         total_reward = 0.0
         total_kl_div = 0.0
@@ -940,7 +941,8 @@ class GRPOEvaluator:
                 last_real=last_real_pos,
                 device=device,
                 rope_model=rope_model,
-                eos_id=eos_id,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
             )
 
             collated_batch = batched_responses_collator(
@@ -1008,7 +1010,8 @@ class GRPOEvaluator:
         eval_num_samples=1,
         eval_num_batches=None,
         rope_model=False,
-        eos_id=50256,
+        eos_ids=50256,
+        pad_id=50256,
     ):
         """
         Evaluates the performance of the policy model on both training and validation datasets.
@@ -1023,6 +1026,9 @@ class GRPOEvaluator:
             policy_config (dict): Configuration dictionary for the policy model (used for context length).
             device (str): The device to run evaluation on.
             max_gen (int): Maximum number of tokens to generate for each response.
+            rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
+            eos_ids (int | List[int], optional): Token ids to use for the end of sequence.
+            pad_id (int, optional): Token id to use for padding.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
             eval_num_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
         Returns:
@@ -1056,7 +1062,8 @@ class GRPOEvaluator:
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
                 rope_model=rope_model,
-                eos_id=eos_id,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
@@ -1071,7 +1078,8 @@ class GRPOEvaluator:
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
                 rope_model=rope_model,
-                eos_id=eos_id,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
             )
 
         policy_model.train()

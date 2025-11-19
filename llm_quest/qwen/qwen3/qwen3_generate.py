@@ -31,8 +31,13 @@ topp = 0.95
 min_p = None  # Qwen recommends disabled but it's there
 temp = 0.0
 seed = 123
-pad_side = "right"
+
 qwen3_cfg = qwen3_config_creator("0.6B", base_model=base_model)
+tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"])
+pad_side = "right"
+eos_token_id = tokenizer.pad_token_id
+pad_token_id = tokenizer.pad_token_id
+
 device = auto_device
 print(f"\nUsing DEVICE: {device.type}\n")
 
@@ -49,7 +54,7 @@ batched_generation_func = (
     generate_batched_loop_kv_cache_left_pad if pad_side == "left" else generate_batched_loop_kv_cache
 )
 
-tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"])
+
 qwen3_model = Qwen3Model(qwen3_cfg)
 qwen3_model = load_qwen3_weights(qwen3_model, qwen3_cfg)
 qwen3_model.to(device).eval()
@@ -89,7 +94,7 @@ output = generate_loop_kv_cache(
     top_k=topk,
     top_p=topp,
     temp=temp,
-    eos_id=tokenizer.eos_token_id,
+    eos_id=eos_token_id,
     rope_model=True,
 )
 
@@ -132,7 +137,8 @@ batched_output = generate_batched_loop_kv_cache(
     top_p=topp,
     min_p=min_p,
     temp=temp,
-    eos_id=tokenizer.eos_token_id,
+    eos_ids=eos_token_id,
+    pad_id=pad_token_id,
     device=device,
     attention_mask=batched_attention_mask,
 )
