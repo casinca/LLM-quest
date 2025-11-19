@@ -94,7 +94,7 @@ output = generate_loop_kv_cache(
     top_k=topk,
     top_p=topp,
     temp=temp,
-    eos_id=eos_token_id,
+    eos_ids=eos_token_id,
     rope_model=True,
 )
 
