@@ -95,7 +95,7 @@ def generate_loop_kv_cache(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=None,
+    eos_ids=None,
     device=torch.device("cuda"),
     rope_model=False,
 ):
@@ -113,6 +113,12 @@ def generate_loop_kv_cache(
     kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
 
     input_tensor = input_tensor.to(device)
+
+    if eos_ids is not None:
+        if not isinstance(eos_ids, list):
+            eos_ids = [eos_ids]
+        eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
+
     # truncate input to compatible context size, shape (b, ctx_len)
     trunc_input = input_tensor[:, -context_length:]
     # For RoPE models when using KVCache and incrementing position_id, shape (batch_size(1), 1)
@@ -126,7 +132,8 @@ def generate_loop_kv_cache(
         for _ in range(max_gen):
             next_token = sampling(logits, top_k, top_p, min_p, temp)
 
-            if eos_id is not None and next_token == eos_id:
+            # if any of the EoS tokens are seen, stop the generation
+            if eos_ids is not None and torch.isin(next_token, eos_ids_tensor).any():
                 break
 
             token_ids.append(next_token)
