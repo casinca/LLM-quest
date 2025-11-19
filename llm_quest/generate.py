@@ -33,7 +33,7 @@ def generate_loop(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=None,
+    eos_ids=None,
     device=torch.device("cuda"),
 ):
     """
@@ -57,7 +57,7 @@ def generate_loop(
                                 - if 1, untempered distribution
                                 - if 0, uses greedy sampling. Defaults to 0.0.
 
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+        eos_ids (int | List[int], optional): Token ID(s) that signal end of text. Generation stops early if encountered.
                                 Defaults to None.
         device (torch.device or str, optional): Device to move the input tensor to. Defaults to "cuda".
 
@@ -65,6 +65,11 @@ def generate_loop(
         torch.Tensor: Input tensor concatenated with generated token IDs
     """
     input_tensor = input_tensor.to(device)
+
+    if eos_ids is not None:
+        if not isinstance(eos_ids, list):
+            eos_ids = [eos_ids]
+        eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
 
     for i in range(max_gen):
         # truncate input to compatible context size, shape (b, ctx_len)
@@ -75,7 +80,8 @@ def generate_loop(
 
         next_token = sampling(logits, top_k, top_p, min_p, temp)
 
-        if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
+        # if any of the EoS tokens are seen, stop the generation
+        if eos_ids is not None and torch.isin(next_token, eos_ids_tensor).any():
             break
 
         input_tensor = torch.cat(
