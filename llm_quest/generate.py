@@ -252,7 +252,8 @@ def generate_batched_loop_kv_cache(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=50256,
+    eos_ids=50256,
+    pad_id=50256,
     device=torch.device("cuda"),
     last_real=None,
     rope_model=True,
@@ -278,7 +279,9 @@ def generate_batched_loop_kv_cache(
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+        eos_ids (int | List[int], optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to 50256 (GPT-2 EOS token).
+        pad_id (int, optional): Token ID that signals padding.
                                 Defaults to 50256 (GPT-2 EOS token).
         device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor ): A boolean tensor of shape (batch_size, sequence_length) indicating
@@ -297,6 +300,10 @@ def generate_batched_loop_kv_cache(
     """
     input_tensor = input_tensor.to(device)
     attention_mask = attention_mask.bool().to(device)
+
+    if not isinstance(eos_ids, list):
+        eos_ids = [eos_ids]
+    eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
 
     if last_real is not None:
         last_real = last_real.to(device)
@@ -328,7 +335,7 @@ def generate_batched_loop_kv_cache(
 
     next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
-    finished |= next_token.squeeze(1) == eos_id
+    finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
     attention_mask = torch.cat([attention_mask, (~finished).unsqueeze(-1)], dim=-1)
 
     # --- Continuing generations with kv cache ---
@@ -354,12 +361,12 @@ def generate_batched_loop_kv_cache(
 
         sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
-        # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
+        # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token.
         next_token = torch.where(
-            finished.unsqueeze(-1), torch.tensor(eos_id, device=device, dtype=torch.long), sampled_tokens
+            finished.unsqueeze(-1), torch.tensor(pad_id, device=device, dtype=torch.long), sampled_tokens
         )
         generated_tokens.append(next_token)
-        finished |= next_token.squeeze(1) == eos_id
+        finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
 
         # extend attention mask: True for unfinished sequences
         new_mask = (~finished).unsqueeze(-1)
