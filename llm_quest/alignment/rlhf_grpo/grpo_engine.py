@@ -341,7 +341,7 @@ def batched_responses_collator(responses, prompt_masks, device="cuda", eos_ids=5
     # True for: previous tokens(=0) + first EoS/pad(=1)
     attn_masks = cumsum_mask <= 1
     # among previous tokens, masking the padding tokens in the prompt part
-    attn_masks[:, :len_prompt] = prompt_masks.to(device)
+    attn_masks[:, :len_prompt] = prompt_masks
 
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
