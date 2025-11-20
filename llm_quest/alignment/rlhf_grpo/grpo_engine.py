@@ -300,15 +300,20 @@ def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=Non
 
 # NOTE: responses generated from `generate_batched_loop()` already have an EoS token at the end (unless
 # truncated/max_gen) therefore nothing is added here, responses are already ready to be sliced for logprobs.
-def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
+def batched_responses_collator(responses, prompt_masks, device="cuda", eos_ids=50256, pad_token_id=50256):
     """
     Prepare batched sampled responses for the reward model.
 
     Args:
         responses (torch.Tensor): shape (batch_size * num_samples, prompt_len + max_gen)
                                 responses = prompt + policy's output as padded token IDs.
-        len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
+        prompt_masks (torch.Tensor): Boolean tensor of shape (batch_size * num_samples, prompt_len)
+                                    This is used to differentiate between special tokens used in the prompt.
+                                    ex: chat template (should be attended) and special ones used as padding (not
+                                    attended).
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
+        eos_ids (int | List[int], optional): Token ID(s) that signal end of text generation. Defaults to 50256.
+        pad_token_id (int, optional): Token ID to use for padding. Defaults to 50256.
 
     Returns:
         Dict[str, torch.Tensor]: A dictionary containing:
@@ -319,13 +324,24 @@ def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_i
 
             *Except the first EoS/pad token in the response part.
     """
-    pad_mask = responses == pad_token_id
+    len_prompt = prompt_masks.shape[1]
 
-    first_eos_mask = pad_mask.clone()
-    first_eos_mask[:, :len_prompt] = False  # exclude pad tokens from the prompt part
-    first_eos_mask = first_eos_mask.cumsum(dim=1) == 1  # trick to retrieve the first EoS/pad in the response part
+    if isinstance(eos_ids, int):
+        eos_ids = [eos_ids]
+    eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
 
-    attn_masks = ~pad_mask | first_eos_mask  # True for: real tokens + 1st EoS/pad in the response part
+    is_eos = torch.isin(responses, eos_ids_tensor)
+    is_pad = responses == pad_token_id
+    stop_mask = is_eos | is_pad  # True if either EoS or pad token
+    stop_mask[:, :len_prompt] = False  # exclude EoS or pad tokens from the prompt part
+
+    # trick to retrieve the first EoS/pad in the response part
+    # ex: [False, False, True, True]= [0, 0, 1, 2], all previous tokens will be 0, first EoS/pad will be 1
+    cumsum_mask = stop_mask.cumsum(dim=1)
+    # True for: previous tokens(=0) + first EoS/pad(=1)
+    attn_masks = cumsum_mask <= 1
+    # among previous tokens, masking the padding tokens in the prompt part
+    attn_masks[:, :len_prompt] = prompt_masks.to(device)
 
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
@@ -600,7 +616,7 @@ def grpo_training_loop_variant_experimental(
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
@@ -790,7 +806,7 @@ def rlhf_grpo_training_loop(
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
@@ -947,7 +963,7 @@ class GRPOEvaluator:
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
