@@ -378,6 +378,7 @@ def z_scores(rewards, num_samples, dr_grpo=None):
     if dr_grpo == "dr_grpo":
         z_scores = rewards - group_mean
     else:
+        assert num_samples > 1, "num_samples must be greater than 1 to get a relative comparison"
         group_std = rewards.std(dim=1, keepdim=True)
         z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
 
