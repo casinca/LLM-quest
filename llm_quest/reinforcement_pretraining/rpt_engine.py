@@ -14,6 +14,16 @@ class PrefixMatchingReward:
 
         The valid boundary is the set of all possible byte lengths of the labels.
 
+    examples: label = " time and time again"
+            pred 1: "time"
+            both prefix and boundary dont match: missing leading space
+
+            pred 2 and 3: " time " and " time a"
+            prefix matches but not boundary: trailing space only makes boundary invalid, 2nd word is incomplete
+
+            pred 4 and 5 " time" and " time and"
+            both prefix and boundary match:
+
     args:
         tokenizer: the tokenizer to use to tokenize the labels
         good_answer_reward: the reward for a good answer
