@@ -270,7 +270,7 @@ def rlvr_grpo_training_loop(
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
