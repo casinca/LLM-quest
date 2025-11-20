@@ -91,6 +91,7 @@ class PrefixMatchingReward:
         rewards_list = []
 
         for response_string, label in zip(model_responses, labels):
+            # we do not want to sanitize the answer here, unlike RLVR, ex: spaces are important for MTP
             model_answer = ResponseExtractor.get_answer(response_string)
 
             if model_answer is None:
