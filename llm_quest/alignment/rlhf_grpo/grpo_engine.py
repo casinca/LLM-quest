@@ -393,6 +393,8 @@ def log_probs_per_token(logits, inputs):
     Compute and retrieve the log probabilities assigned to each label in a sequence.
     This is similar to the compute_logprobs() method in the `DPOLoss` class.
 
+    We are masking logprobs for prompt + padding tokens later with the loss_mask.
+
     Args:
         logits (torch.Tensor): Tensor of shape (B*, S*, vocab_size) containing the logits.
         inputs (torch.Tensor): Tensor of shape (B*, S*) containing the generated tokens from the policy.
@@ -813,7 +815,7 @@ def rlhf_grpo_training_loop(
 
             # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
-                loss_mask = collated_batch["reward_masks"][:, 1:]
+                loss_mask = collated_batch["reward_masks"][:, 1:]  # matching token positions corresponding to logprobs
 
                 old_logprobs = log_probs_per_token(  # shape: (B, S-1)
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
