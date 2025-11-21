@@ -203,13 +203,11 @@ class ResponseExtractor:
             str: The answer content (exactly as it appears in the <answer> tags, not sanitized), or None if not found
         """
         # we want to look for an answer after the CoT thinking block (specifically after the last </think> tag seen)
-        if "</think>" in response:
-            response = response.rsplit("</think>", 1)[-1]
-        else:  # if there isn't event a think tag, it's not even a valid response
+        if "</think>" not in response:  # if there isn't event a think tag, it's not even a valid response
             return None
+        response = response.rsplit("</think>", 1)[-1]
 
         matches = re.findall(cls.ANSWER_PATTERN, response)
-
         if matches:
             return matches[-1]  # return the latest flagged answer content
         return None
