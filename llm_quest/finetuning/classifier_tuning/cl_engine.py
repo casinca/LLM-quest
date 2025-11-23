@@ -1,5 +1,3 @@
-import math
-
 import torch
 
 from llm_quest.engine import evaluate, global_loss
@@ -46,10 +44,7 @@ def classifier_training_eval_loop(
     model,
     optimizer,
     num_epoch,
-    warmup_percent,
-    init_lr,
-    peak_lr,
-    min_lr,
+    lr_scheduler,
     eval_freq,
     eval_iter,
     device,
@@ -57,15 +52,9 @@ def classifier_training_eval_loop(
     """
     Same function as training_eval_loop() modified for classification:
         - global_loss(classification=True) ie calc loss only for the last token of each sequence
-        - slight edit to prevent error for no warmup and lr decay
     """
 
-    step = -1
-    total_steps = len(train_loader) * num_epoch
-
-    warmup_steps = int(warmup_percent * total_steps)
-    if warmup_percent > 0.0:
-        lr_increment = (peak_lr - init_lr) / warmup_steps
+    step = 0
 
     # keeping record of metrics for plotting
     train_losses, val_losses, train_accus, val_accus = [], [], [], []
@@ -73,21 +62,6 @@ def classifier_training_eval_loop(
     for epoch in range(1, num_epoch + 1):
         model.train()
         for input_batch, targets, attention_mask in train_loader:
-            step += 1
-
-            # lr update with warmup and cosine decay= 0.5 * (1 + cos(π * curr_step / total_step))
-            # curr_step and total_step are steps after the warmup, thus needs to be adjusted for the warmup difference
-            if step < warmup_steps:
-                lr = init_lr + step * lr_increment
-            else:
-                decay_steps = total_steps - warmup_steps  # total step adjusted for warmup
-                curr_step = step - warmup_steps  # curr decay step adjusted for warmup
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_step / decay_steps))
-                lr = min_lr + (peak_lr - min_lr) * cosine_decay
-
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = lr
-
             input_batch = input_batch.to(device)
             targets = targets.to(device)
             attention_mask = attention_mask.to(device)
@@ -101,13 +75,15 @@ def classifier_training_eval_loop(
             loss.backward()
 
             # gradient clipping at a max norm of 1 (after warmup)
-            if step >= warmup_steps:
+            if step >= lr_scheduler.warmup_steps:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
+            lr_scheduler.step(step)
             optimizer.step()
+            step += 1
 
             # eval
-            if step % eval_freq == 0:
+            if step == 1 or step % eval_freq == 0:
                 train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device, classification=True)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
@@ -115,6 +91,7 @@ def classifier_training_eval_loop(
                 print(
                     f"Epoch: {epoch}, Step: {step}",
                     f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
+                    f"lr: {lr_scheduler.current_lr:.1e}",
                 )
 
         # accuracy calc per epoch
