@@ -1,5 +1,6 @@
 # --- Hyperparameters ---
 batch_size = 2
+accumulation_steps = 1
 num_epoch = 10
 peak_lr = 5e-4
 init_lr = 1e-5
@@ -15,6 +16,7 @@ use_amp = False
 train_ratio = 0.9
 
 if __name__ == "__main__":
+    import math
 
     import tiktoken
     import torch
@@ -70,9 +72,11 @@ if __name__ == "__main__":
     # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
     optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay)
 
+    update_steps = math.ceil(len(train_loader) / accumulation_steps)  # ceil not to miss partial batches (last batches)
+    total_steps = update_steps * num_epoch
     lr_scheduler = LearningRateScheduler(
         optimizer,
-        total_steps=len(train_loader) * num_epoch,
+        total_steps=total_steps,
         init_lr=init_lr,
         peak_lr=peak_lr,
         warmup_steps=warmup_steps,
