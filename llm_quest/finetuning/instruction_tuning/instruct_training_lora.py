@@ -9,12 +9,14 @@ torch.manual_seed(123)
 batch_size = 8
 num_epoch = 2
 peak_lr = 5e-4
-warmup_percent = 0.0
+warmup_steps = 0
 init_lr = 0
-min_lr = 5e-4
+min_lr = None
+decay = None
 eval_freq = 5
 eval_iter = 5
 weight_decay = 0.1
+accumulation_steps = 2
 num_workers = 0
 pin_memory = False
 use_amp = False
@@ -24,16 +26,17 @@ rank = 4
 alpha = 16
 
 data_device = "cpu"
-model_device = None  # set in __main__
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
+    import math
+
     import tiktoken
 
     import config
     from llm_quest.common.lora import LoRALinearLayer
     from llm_quest.dataset import InstructionDataset, collate_function
-    from llm_quest.engine import training_eval_loop
+    from llm_quest.engine import LearningRateScheduler, training_eval_loop
     from llm_quest.gpt.gpt_attention import MultiHeadAttention
     from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
     from llm_quest.gpt.gpt_model import GPTModel
@@ -107,21 +110,32 @@ if __name__ == "__main__":
     # --- Training ---
     model.to(model_device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay)
 
-    training_eval_loop(
+    update_steps = math.ceil(len(train_loader) / accumulation_steps)
+    total_steps = update_steps * num_epoch
+
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
+
+    train_losses, val_losses = training_eval_loop(
         train_loader,
         val_loader,
         model,
         optimizer=optimizer,
         num_epoch=num_epoch,
-        warmup_percent=warmup_percent,
-        init_lr=init_lr,
-        peak_lr=peak_lr,
-        min_lr=min_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=model_device,
+        accumulation_steps=accumulation_steps,
         use_amp=use_amp,
     )
 
