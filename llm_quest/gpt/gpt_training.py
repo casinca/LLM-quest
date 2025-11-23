@@ -2,9 +2,10 @@
 batch_size = 2
 num_epoch = 10
 peak_lr = 5e-4
-warmup_percent = 0.2
 init_lr = 1e-5
 min_lr = 1e-5
+decay = "cosine"
+warmup_steps = 18
 eval_freq = 5
 eval_iter = 5
 weight_decay = 0.1
@@ -20,7 +21,7 @@ if __name__ == "__main__":
 
     from config import GPT_SMALL_CONFIG, auto_device, the_verdict_path
     from llm_quest.dataset import create_dataloader
-    from llm_quest.engine import training_eval_loop
+    from llm_quest.engine import LearningRateScheduler, training_eval_loop
     from llm_quest.gpt.gpt_model import GPTModel
 
     torch.manual_seed(123)
@@ -66,7 +67,18 @@ if __name__ == "__main__":
     model = GPTModel(GPT_SMALL_CONFIG)
     model.to(auto_device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay)
+    # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay)
+
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=len(train_loader) * num_epoch,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
 
     training_eval_loop(
         train_loader,
@@ -74,10 +86,7 @@ if __name__ == "__main__":
         model=model,
         optimizer=optimizer,
         num_epoch=num_epoch,
-        warmup_percent=warmup_percent,
-        init_lr=init_lr,
-        peak_lr=peak_lr,
-        min_lr=min_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=auto_device,
