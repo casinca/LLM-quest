@@ -358,18 +358,18 @@ def training_eval_loop(
                 optimizer.zero_grad()
                 step += 1
 
-            # --- Evaluation --- (AMP disabled for evaluation with torch no_grad in evaluate())
-            if step == 1 or step % eval_freq == 0:
-                train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
+                # --- Evaluation --- (AMP disabled for evaluation with torch no_grad in evaluate())
+                if step == 1 or step % eval_freq == 0:
+                    train_loss, val_loss = evaluate(train_loader, val_loader, model, eval_iter, device)
+                    train_losses.append(train_loss)
+                    val_losses.append(val_loss)
 
-                print(
-                    f"Epoch: {epoch}, Step: {step}  | ",
-                    f"Train loss: {train_loss:.5f}  Val loss: {val_loss:.5f}  | ",
-                    f"Δ: {val_loss - train_loss:.3f} ({((val_loss - train_loss) / train_loss * 100):.2f}%)  | ",
-                    f"lr: {lr_scheduler.current_lr:.1e}",
-                )
+                    print(
+                        f"Epoch: {epoch}, Step: {step}  | ",
+                        f"Train loss: {train_loss:.5f}  Val loss: {val_loss:.5f}  | ",
+                        f"Δ: {val_loss - train_loss:.3f} ({((val_loss - train_loss) / train_loss * 100):.2f}%)  | ",
+                        f"lr: {lr_scheduler.current_lr:.1e}",
+                    )
 
     return train_losses, val_losses
 
