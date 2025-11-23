@@ -12,7 +12,8 @@ num_epoch = 1
 peak_lr = 3.9e-4
 init_lr = 2.2e-4
 min_lr = 2.7e-4
-warmup_percent = 0.1
+decay = "cosine"
+warmup_steps = 100
 eval_freq = 100
 eval_iter = 10
 weight_decay = 0.1
@@ -23,13 +24,13 @@ use_amp = False
 model_cfg = config.gpt2_config_creator("gpt_m")
 
 data_device = "cpu"
-model_device = None  # set in __main__
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
+    import math
 
     from llm_quest.dataset import InstructionDataset, collate_function
-    from llm_quest.engine import training_eval_loop
+    from llm_quest.engine import LearningRateScheduler, training_eval_loop
     from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
     from llm_quest.gpt.gpt_model import GPTModel
 
@@ -75,7 +76,19 @@ if __name__ == "__main__":
     # --- Training ---
     model.to(device=model_device, dtype=torch.bfloat16)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay, fused=True)
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, fused=True)
+
+    update_steps = math.ceil(len(train_loader) / accumulation_steps)
+    total_steps = update_steps * num_epoch
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
 
     training_eval_loop(
         train_loader,
@@ -83,10 +96,7 @@ if __name__ == "__main__":
         model,
         optimizer=optimizer,
         num_epoch=num_epoch,
-        warmup_percent=warmup_percent,
-        init_lr=init_lr,
-        peak_lr=peak_lr,
-        min_lr=min_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=model_device,
