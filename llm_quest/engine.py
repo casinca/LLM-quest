@@ -112,6 +112,95 @@ def calc_loss_loader(dataloader, model, device, num_batches=None, classification
     return total_loss / num_batches
 
 
+class LearningRateScheduler:
+    def __init__(self, optimizer, total_steps, init_lr, peak_lr, warmup_steps=0, min_lr=None, decay=None):
+        """
+        Learning rate scheduler with warmup and decay support.
+
+        Args:
+            optimizer: PyTorch optimizer
+            total_steps(int): Total number of training steps
+            init_lr(float): Initial learning rate (starting point for warmup)
+            peak_lr(float): Peak learning rate (reached after warmup)
+            warmup_steps(int): Number of steps for warmup phase. Set to 0 to disable warmup.
+            min_lr(float): Minimum learning rate after decay. Set to None to disable decay.
+            decay(str): Decay schedule type ("cosine" only supported for now). Only used if min_lr is set.
+
+        Control points:
+            - Warmup disabled when: warmup_steps == 0
+            - Decay disabled when: min_lr is None
+        """
+        # Validate warmup settings
+        if warmup_steps > 0 and init_lr >= peak_lr:
+            raise ValueError(
+                f"Warmup enabled (warmup_steps={warmup_steps}) but init_lr ({init_lr:.2e}) "
+                f">= peak_lr ({peak_lr:.2e}). Either set warmup_steps=0 or init_lr < peak_lr."
+            )
+
+        # Validate decay settings
+        if min_lr is not None and min_lr >= peak_lr:
+            raise ValueError(
+                f"min_lr ({min_lr:.2e}) >= peak_lr ({peak_lr:.2e}). "
+                f"Either set min_lr=None (no decay) or min_lr < peak_lr."
+            )
+
+        if decay is not None and min_lr is None:
+            raise ValueError(f"decay='{decay}' was set but min_lr=None. " f"Either set min_lr < peak_lr or decay=None.")
+
+        if decay is None and min_lr is not None:
+            raise ValueError(
+                f"min_lr ({min_lr:.2e}) was set but decay=None. " f"Either set decay 'cosine' or min_lr=None."
+            )
+
+        self.optimizer = optimizer
+        self.total_steps = total_steps
+        self.peak_lr = peak_lr
+
+        # default init_lr to peak_lr when warmup is disabled
+        self.init_lr = init_lr if warmup_steps > 0 else peak_lr
+        self.current_lr = self.init_lr
+
+        # warmup init (controlled by warmup_steps)
+        self.warmup_steps = warmup_steps if warmup_steps > 0 else 0
+        self.warmup_range = self.peak_lr - self.init_lr
+        self.lr_step = self.warmup_range / self.warmup_steps if self.warmup_steps > 0 else 0
+
+        # decay init (controlled by min_lr)
+        self.min_lr = min_lr if min_lr is not None else peak_lr
+        self.decay = decay if min_lr is not None else None
+
+        # initialize optimizer's LR to match scheduler's initial LR, (overwrite optim initialized `lr` arg if needed)
+        for param_group in self.optimizer.param_groups:  # all groups
+            param_group["lr"] = self.current_lr
+
+    def _get_cosine_decay_lr(self, step):
+        # curr_step and decay_step are steps after the warmup, thus needs to be adjusted for the warmup difference
+        total_decay_steps = self.total_steps - self.warmup_steps  # total step adjusted for warmup
+        curr_decay_step = step - self.warmup_steps  # curr decay step adjusted for warmup
+        cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_decay_step / total_decay_steps))
+        return self.min_lr + (self.peak_lr - self.min_lr) * cosine_decay
+
+    def step(self, step):
+        # warmup or not
+        if step < self.warmup_steps:
+            self.current_lr = self.init_lr + self.lr_step * step
+
+            if step + 1 == self.warmup_steps:
+                print(f"Warmup finished at step {step+1}. Peak LR reached: {self.peak_lr:.1e}")
+
+        # decay or not
+        else:
+            if self.decay == "cosine":
+                self.current_lr = self._get_cosine_decay_lr(step)
+            else:
+                self.current_lr = self.peak_lr
+
+        # update optimizer
+        for param_group in self.optimizer.param_groups:
+            if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
+                param_group["lr"] = self.current_lr
+
+
 def training_eval_loop_simple(
     train_loader,
     val_loader,
@@ -546,92 +635,3 @@ def profile_training_eval_loop(
     print("To view results, run: tensorboard --logdir={profile_dir}")
 
     return train_losses, val_losses
-
-
-class LearningRateScheduler:
-    def __init__(self, optimizer, total_steps, init_lr, peak_lr, warmup_steps=0, min_lr=None, decay=None):
-        """
-        Learning rate scheduler with warmup and decay support.
-
-        Args:
-            optimizer: PyTorch optimizer
-            total_steps(int): Total number of training steps
-            init_lr(float): Initial learning rate (starting point for warmup)
-            peak_lr(float): Peak learning rate (reached after warmup)
-            warmup_steps(int): Number of steps for warmup phase. Set to 0 to disable warmup.
-            min_lr(float): Minimum learning rate after decay. Set to None to disable decay.
-            decay(str): Decay schedule type ("cosine" only supported for now). Only used if min_lr is set.
-
-        Control points:
-            - Warmup disabled when: warmup_steps == 0
-            - Decay disabled when: min_lr is None
-        """
-        # Validate warmup settings
-        if warmup_steps > 0 and init_lr >= peak_lr:
-            raise ValueError(
-                f"Warmup enabled (warmup_steps={warmup_steps}) but init_lr ({init_lr:.2e}) "
-                f">= peak_lr ({peak_lr:.2e}). Either set warmup_steps=0 or init_lr < peak_lr."
-            )
-
-        # Validate decay settings
-        if min_lr is not None and min_lr >= peak_lr:
-            raise ValueError(
-                f"min_lr ({min_lr:.2e}) >= peak_lr ({peak_lr:.2e}). "
-                f"Either set min_lr=None (no decay) or min_lr < peak_lr."
-            )
-
-        if decay is not None and min_lr is None:
-            raise ValueError(f"decay='{decay}' was set but min_lr=None. " f"Either set min_lr < peak_lr or decay=None.")
-
-        if decay is None and min_lr is not None:
-            raise ValueError(
-                f"min_lr ({min_lr:.2e}) was set but decay=None. " f"Either set decay 'cosine' or min_lr=None."
-            )
-
-        self.optimizer = optimizer
-        self.total_steps = total_steps
-        self.peak_lr = peak_lr
-
-        # default init_lr to peak_lr when warmup is disabled
-        self.init_lr = init_lr if warmup_steps > 0 else peak_lr
-        self.current_lr = self.init_lr
-
-        # warmup init (controlled by warmup_steps)
-        self.warmup_steps = warmup_steps if warmup_steps > 0 else 0
-        self.warmup_range = self.peak_lr - self.init_lr
-        self.lr_step = self.warmup_range / self.warmup_steps if self.warmup_steps > 0 else 0
-
-        # decay init (controlled by min_lr)
-        self.min_lr = min_lr if min_lr is not None else peak_lr
-        self.decay = decay if min_lr is not None else None
-
-        # initialize optimizer's LR to match scheduler's initial LR, (overwrite optim initialized `lr` arg if needed)
-        for param_group in self.optimizer.param_groups:  # all groups
-            param_group["lr"] = self.current_lr
-
-    def _get_cosine_decay_lr(self, step):
-        # curr_step and decay_step are steps after the warmup, thus needs to be adjusted for the warmup difference
-        total_decay_steps = self.total_steps - self.warmup_steps  # total step adjusted for warmup
-        curr_decay_step = step - self.warmup_steps  # curr decay step adjusted for warmup
-        cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_decay_step / total_decay_steps))
-        return self.min_lr + (self.peak_lr - self.min_lr) * cosine_decay
-
-    def step(self, step):
-        # warmup or not
-        if step < self.warmup_steps:
-            self.current_lr = self.init_lr + self.lr_step * step
-
-            if step + 1 == self.warmup_steps:
-                print(f"Warmup finished at step {step+1}. Peak LR reached: {self.peak_lr:.1e}")
-
-        # decay or not
-        else:
-            if self.decay == "cosine":
-                self.current_lr = self._get_cosine_decay_lr(step)
-            else:
-                self.current_lr = self.peak_lr
-
-        # update optimizer
-        for param_group in self.optimizer.param_groups:
-            if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
-                param_group["lr"] = self.current_lr
