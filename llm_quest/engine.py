@@ -211,7 +211,6 @@ def training_eval_loop_simple(
     eval_freq,
     eval_iter,
     device,
-    accumulation_steps=1,
 ):
     """
     A simple training and evaluation loop for a model.
@@ -225,7 +224,6 @@ def training_eval_loop_simple(
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
-        accumulation_steps (int): Number of steps/accumulated gradients before updating parameters
     """
     step = 0
     # keeping track of metrics for plotting
@@ -249,15 +247,11 @@ def training_eval_loop_simple(
             targets = targets.to(device)
 
             logits = model(input_batch, attn_mask=attn_mask)
-
             loss = global_loss(logits, targets, model=model)
-            loss = loss / accumulation_steps
 
             loss.backward()
-
-            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
-                optimizer.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            optimizer.zero_grad()
 
             # eval
             if step % eval_freq == 0:
@@ -402,7 +396,7 @@ def training_eval_loop(
         model (torch.nn.Module): Model to train
         optimizer (torch.optim.Optimizer): Optimizer to use for training
         num_epoch (int): Number of epochs to train for
-        lr_scheduler (LRScheduler): Learning rate scheduler object
+        lr_scheduler (LearningRateScheduler): Learning rate scheduler object
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
