@@ -26,7 +26,6 @@ def _calc_loss_batch(X, y, model, device, attn_mask=None, classification=False):
         torch.Tensor: The calculated loss for the batch.
     """
 
-    # putting on dedicated device
     X = X.to(device)
     y = y.to(device)
 
@@ -178,9 +177,11 @@ class LearningRateScheduler:
         total_decay_steps = self.total_steps - self.warmup_steps  # total step adjusted for warmup
         curr_decay_step = step - self.warmup_steps  # curr decay step adjusted for warmup
         cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_decay_step / total_decay_steps))
+
         return self.min_lr + (self.peak_lr - self.min_lr) * cosine_decay
 
     def step(self, step):
+        """update the current iteration's learning rate (not preparing for the next iteration)"""
         # warmup or not
         if step < self.warmup_steps:
             self.current_lr = self.init_lr + self.lr_step * step
