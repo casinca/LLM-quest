@@ -5,7 +5,8 @@ peak_lr = 8e-4
 init_lr = 1e-6
 min_lr = 1e-6
 weight_decay = 0.3
-warmup_percent = 0.3
+warmup_steps = 1170  # matching old warmup_percent arg of 30%
+decay = "cosine"
 eval_freq = 200
 eval_iter = 25
 num_workers = 10
@@ -20,6 +21,7 @@ if __name__ == "__main__":
 
     from config import TINY_VIT_CONFIG, auto_device
     from llm_quest.dataset import ImageDataset
+    from llm_quest.engine import LearningRateScheduler
     from llm_quest.multimodal.vision_transformer.vit_engine import vit_training_eval_loop
     from llm_quest.multimodal.vision_transformer.vit_model import ViTModel
 
@@ -65,7 +67,20 @@ if __name__ == "__main__":
     print(f"ViT model created with {total_params:,} parameters")
     print(f"Model configuration: {TINY_VIT_CONFIG}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay, fused=True)
+    # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, fused=True)
+
+    total_steps = len(train_loader) * num_epochs
+
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
 
     print("\nStarting training...")
 
@@ -76,10 +91,7 @@ if __name__ == "__main__":
         model=model,
         optimizer=optimizer,
         num_epoch=num_epochs,
-        warmup_percent=warmup_percent,
-        init_lr=init_lr,
-        peak_lr=peak_lr,
-        min_lr=min_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=auto_device,

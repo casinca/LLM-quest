@@ -1,5 +1,3 @@
-import math
-
 import torch
 
 # This is mostly copy pasta for now, adapting the training_eval_loop() and classifier_training_eval_loop() functions
@@ -67,10 +65,7 @@ def vit_training_eval_loop(
     model,
     optimizer,
     num_epoch,
-    warmup_percent,
-    init_lr,
-    peak_lr,
-    min_lr,
+    lr_scheduler,
     eval_freq,
     eval_iter,
     device,
@@ -85,11 +80,7 @@ def vit_training_eval_loop(
         model (torch.nn.Module): ViT model to train
         optimizer (torch.optim.Optimizer): Optimizer to use for training
         num_epoch (int): Number of epochs to train for
-        warmup_percent (float): Percentage of total steps to use for learning rate warmup,
-                                if set to 0.0, will disable warmup
-        init_lr (float): Initial learning rate for warmup (value doesn't matter if warmup disabled)
-        peak_lr (float): Peak learning rate after warmup
-        min_lr (float): Minimum learning rate for cosine decay (if same as peak_lr, will disable decay)
+        lr_scheduler (LearningRateScheduler): Learning rate scheduler object
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
@@ -101,11 +92,7 @@ def vit_training_eval_loop(
             - train_accus (list): Training accuracies
             - val_accus (list): Validation accuracies
     """
-    step = -1
-    total_steps = len(train_loader) * num_epoch
-    warmup_steps = int(warmup_percent * total_steps)
-    if warmup_percent and warmup_steps:
-        lr_increment = (peak_lr - init_lr) / warmup_steps
+    step = 0
 
     # Keep a record of metrics for plotting
     train_losses, val_losses, train_accus, val_accus = [], [], [], []
@@ -115,24 +102,6 @@ def vit_training_eval_loop(
         model.train()
 
         for input_batch, targets in train_loader:
-            step += 1
-
-            # Learning rate scheduler logic:
-            # lr update with warmup and cosine decay = 0.5 * (1 + cos(π * curr_step / total_step))
-            # curr_step and total_step are steps after the warmup, thus needs to be adjusted for the warmup difference
-            if step < warmup_steps:
-                lr = init_lr + step * lr_increment
-            else:
-                decay_steps = total_steps - warmup_steps  # total step adjusted for warmup
-                curr_step = step - warmup_steps  # curr decay step adjusted for warmup
-                cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_step / decay_steps))
-                lr = min_lr + (peak_lr - min_lr) * cosine_decay
-
-            # update lr
-            for param_group in optimizer.param_groups:
-                if not param_group.get("custom_lr", False):  # only adjust lr for non-custom groups
-                    param_group["lr"] = lr
-
             input_batch = input_batch.to(device)
             targets = targets.to(device)
 
@@ -146,12 +115,15 @@ def vit_training_eval_loop(
             # Backward pass and optimizer step (simplified - no scaler needed for bfloat16)
             loss.backward()
             # gradient clipping at a max norm of 1 (after warmup)
-            if step >= warmup_steps:
+            if step >= lr_scheduler.warmup_steps:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+
+            lr_scheduler.step(step)
             optimizer.step()
+            step += 1
 
             # eval (AMP disabled for evaluation with torch no_grad in evaluate())
-            if step % eval_freq == 0:
+            if step == 1 or step % eval_freq == 0:
                 train_loss, val_loss = ViT.evaluate(train_loader, val_loader, model, eval_iter, device)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
@@ -159,6 +131,7 @@ def vit_training_eval_loop(
                 print(
                     f"Epoch: {epoch}, Step: {step}",
                     f"Train loss: {train_loss:.5f}, Val loss: {val_loss:.5f}",
+                    f"lr: {lr_scheduler.current_lr:.1e}",
                 )
 
     # accuracy calc per epoch

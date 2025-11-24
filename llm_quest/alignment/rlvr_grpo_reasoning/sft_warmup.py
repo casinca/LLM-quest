@@ -10,9 +10,10 @@ torch.manual_seed(123)
 batch_size = 4
 num_epoch = 2
 peak_lr = 1e-5
-warmup_percent = 0
+warmup_steps = 0
 init_lr = 1e-5
-min_lr = 1e-5
+min_lr = None
+decay = None
 eval_freq = 100
 eval_iter = 10
 weight_decay = 0.1
@@ -22,13 +23,14 @@ pin_memory = False
 use_amp = True
 
 data_device = "cpu"
-model_device = None  # set in __main_
 
 if __name__ == "__main__":
     # heavy imports inside if __name__ == "__main__" for num_workers
+    import math
+
     import config
     from llm_quest.dataset import InstructionDataset, collate_function
-    from llm_quest.engine import training_eval_loop
+    from llm_quest.engine import LearningRateScheduler, training_eval_loop
     from llm_quest.gpt.gpt_model import GPTModel
     from llm_quest.utils import alpaca_deepseek_format
 
@@ -50,6 +52,7 @@ if __name__ == "__main__":
         formatting_func=alpaca_deepseek_format,
         file_type="jsonl",
     )[:1000]
+
     val_set = InstructionDataset(
         "../../../data/processed_data/gsm8k_processed/gsm8k_train.jsonl",
         tokenizer,
@@ -87,18 +90,28 @@ if __name__ == "__main__":
 
     model.to(model_device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=weight_decay, fused=True)
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=weight_decay, fused=True)
 
-    training_eval_loop(
+    update_steps = math.ceil(len(train_loader) / accumulation_steps)
+    total_steps = update_steps * num_epoch
+
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
+
+    train_losses, val_losses = training_eval_loop(
         train_loader,
         val_loader,
         model,
         optimizer=optimizer,
         num_epoch=num_epoch,
-        warmup_percent=warmup_percent,
-        init_lr=init_lr,
-        peak_lr=peak_lr,
-        min_lr=min_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=eval_freq,
         eval_iter=eval_iter,
         device=model_device,
@@ -106,11 +119,11 @@ if __name__ == "__main__":
         use_amp=use_amp,
     )
 
-    # save instruct finetuned model
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            # "optimizer_state_dict": optimizer.state_dict(),
-        },
-        config.sft_reasoning_gpt2,
-    )
+    ## save instruct finetuned model
+    # torch.save(
+    #    {
+    #        "model_state_dict": model.state_dict(),
+    #        # "optimizer_state_dict": optimizer.state_dict(),
+    #    },
+    #    config.sft_reasoning_gpt2,
+    # )

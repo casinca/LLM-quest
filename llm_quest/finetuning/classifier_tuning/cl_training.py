@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 
 import config
 from llm_quest.dataset import SpamDataset
+from llm_quest.engine import LearningRateScheduler
 from llm_quest.finetuning.classifier_tuning.cl_engine import classifier_training_eval_loop
 from llm_quest.gpt.gpt_download_weights import download_gpt_model, load_gpt_weights
 from llm_quest.gpt.gpt_model import GPTModel
@@ -56,11 +57,27 @@ for param in model.final_ln.parameters():
 if __name__ == "__main__":
 
     num_epoch = 5
+    init_lr = 1e-5
     peak_lr = 5e-4
+    warmup_steps = 0
+    min_lr = None
+    decay = None
 
     device = config.auto_device
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=peak_lr, weight_decay=0.1)
+    # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
+    optimizer = torch.optim.AdamW(model.parameters(), weight_decay=0.1)
+
+    total_steps = len(train_loader) * num_epoch
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
 
     classifier_training_eval_loop(
         train_loader,
@@ -68,10 +85,7 @@ if __name__ == "__main__":
         model=model,
         optimizer=optimizer,
         num_epoch=num_epoch,
-        warmup_percent=0.0,
-        init_lr=0,
-        peak_lr=peak_lr,
-        min_lr=peak_lr,
+        lr_scheduler=lr_scheduler,
         eval_freq=5,
         eval_iter=5,
         device=device,
