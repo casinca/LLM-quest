@@ -418,6 +418,10 @@ def training_eval_loop(
         model.train()
 
         for i, batch in enumerate(train_loader):
+            # accumulation tracking logic
+            is_last_batch = i == len(train_loader) - 1
+            curr_accumulation_step = (i + 1) % accumulation_steps
+
             # --- Forward pass ---
             if len(batch) == 3:
                 input_batch, targets, attn_mask = batch
@@ -433,12 +437,17 @@ def training_eval_loop(
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 logits = model(input_batch, attn_mask=attn_mask)
                 loss = global_loss(logits, targets, model=model)
-                loss = loss / accumulation_steps
+
+                # adjusting for non complete accumulation steps at the end of the epoch
+                if is_last_batch and curr_accumulation_step != 0:
+                    loss = loss / curr_accumulation_step
+                else:
+                    loss = loss / accumulation_steps
 
             loss.backward()
 
             # --- Optimizer step ---
-            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
+            if curr_accumulation_step == 0 or is_last_batch:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
                 lr_scheduler.step(step)
@@ -452,6 +461,7 @@ def training_eval_loop(
                     train_losses.append(train_loss)
                     val_losses.append(val_loss)
 
+                    # NOTE: if we print the current training loss, we need to * accumulation_steps to get the actual loss
                     print(
                         f"Epoch: {epoch}, Step: {step}  | ",
                         f"Train loss: {train_loss:.5f}  Val loss: {val_loss:.5f}  | ",
