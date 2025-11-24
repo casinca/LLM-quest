@@ -434,7 +434,7 @@ def training_eval_loop(
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=use_amp):
                 logits = model(input_batch, attn_mask=attn_mask)
                 loss = global_loss(logits, targets, model=model)
 
