@@ -438,9 +438,7 @@ def training_eval_loop(
 
             # --- Optimizer step ---
             if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
-                # gradient clipping at a max norm of 1 (after warmup)
-                if step >= lr_scheduler.warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
                 lr_scheduler.step(step)
                 optimizer.step()
@@ -603,8 +601,8 @@ def profile_training_eval_loop(
 
                 # Backward and optimizer step (simplified - no scaler needed for bfloat16)
                 loss.backward()
-                if step >= warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
 
                 # Evaluation
