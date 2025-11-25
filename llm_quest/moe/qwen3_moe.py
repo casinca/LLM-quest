@@ -83,7 +83,7 @@ class Qwen3MoE(nn.Module):
         self.top_k = cfg["top_k"]
         self.num_experts = cfg["num_experts"]
         self.load_coeff = cfg["aux_loss_coef"]
-        self.training = cfg["training"]
+        self.re_init_router_weights = cfg.get("re_init_router_weights", False)  # only used for Qwen3-Next Pretraining
 
         self.experts = nn.ModuleList([Expert(cfg) for _ in range(cfg["num_experts"])])
         self.gate = nn.Linear(cfg["emb_dim"], cfg["num_experts"], bias=False, dtype=cfg["dtype"])
@@ -94,8 +94,13 @@ class Qwen3MoE(nn.Module):
             self.shared_expert = Expert(cfg, hidden_dim=self.shared_expert_hidden_dim)
             self.shared_expert_gate = nn.Linear(cfg["emb_dim"], 1, bias=False, dtype=cfg["dtype"])  # single scalar
 
-            if self.training:
-                router_weights_init(self.gate.weight)  # only relevant for Pretraining with Qwen3-Next
+            # only relevant for Pretraining with Qwen3-Next.
+            if self.training and self.re_init_router_weights:
+                print(
+                    "# WARNING: Training and re_init_router_weights are TRUE, "
+                    "router weights are being re-initialized, shouldn't be used when loading weights! "
+                )
+                router_weights_init(self.gate.weight)
 
     def forward(self, x):
         b, s, emb_dim = x.shape

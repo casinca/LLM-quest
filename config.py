@@ -315,6 +315,7 @@ QWEN3_NEXT_SMALL_CONFIG = {
     "linear_value_head_dim": 64,
     "linear_conv_kernel_size": 4,
     # moe
+    "re_init_router_weights": True,
     "moe_hidden_dim": 4 * 896,
     "shared_expert_hidden_dim": 4 * 896,
     "num_experts": 8,
