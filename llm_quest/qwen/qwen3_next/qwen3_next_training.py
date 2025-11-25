@@ -26,7 +26,6 @@ accumulation_steps = 1
 use_amp = False
 
 qwen3_next_cfg = config.QWEN3_NEXT_SMALL_CONFIG
-qwen3_next_cfg["training"] = True
 
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct")
 

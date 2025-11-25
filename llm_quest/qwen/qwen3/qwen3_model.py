@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
@@ -19,6 +20,8 @@ class Qwen3Model(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.tie_embeddings = cfg["tie_embeddings"]  # attribute to be checked by the weight loading function
+        # Qwen cfgs are for inference, so this key is not originally present, it will be False by default
+        self.gradient_checkpointing = cfg.get("gradient_checkpointing", False)
         self.emb_dict = nn.Embedding(
             num_embeddings=cfg["vocab_size"],
             embedding_dim=cfg["emb_dim"],
@@ -69,8 +72,25 @@ class Qwen3Model(nn.Module):
         # x shape (b, s) → (b, s, emb_dim)
         x = self.emb_dict(x)
 
+        # Use gradient checkpointing during training, if enabled. Not compatible with inference (no backprop needed)
+        # checkpoint() recomputes the forward during the backward pass to save memory, at the cost of speed.
+        use_checkpointing = self.gradient_checkpointing and self.training and kv_cache is None
+
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin, attn_mask, kv_cache, position_ids)
+            if use_checkpointing:
+                x = checkpoint(
+                    block,
+                    x,
+                    self.mask,
+                    self.cos,
+                    self.sin,
+                    attn_mask,
+                    kv_cache,
+                    position_ids,
+                    use_reentrant=False,  # needs to be explicit since Pytorch 2.9 and False is recommended
+                )
+            else:
+                x = block(x, self.mask, self.cos, self.sin, attn_mask, kv_cache, position_ids)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
