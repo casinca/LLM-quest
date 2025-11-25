@@ -87,7 +87,7 @@ class Qwen3Model(nn.Module):
                     attn_mask,
                     kv_cache,
                     position_ids,
-                    use_reentrant=False,  # need to be explicit since Pytorch 2.9 and False is recommended
+                    use_reentrant=False,  # needs to be explicit since Pytorch 2.9 and False is recommended
                 )
             else:
                 x = block(x, self.mask, self.cos, self.sin, attn_mask, kv_cache, position_ids)
