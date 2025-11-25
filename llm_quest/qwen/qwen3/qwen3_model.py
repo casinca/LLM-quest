@@ -73,7 +73,7 @@ class Qwen3Model(nn.Module):
         x = self.emb_dict(x)
 
         # Use gradient checkpointing during training, if enabled. Not compatible with inference (no backprop needed)
-        # checkpoint() recomputes the forward during the backward pass to save memory
+        # checkpoint() recomputes the forward during the backward pass to save memory, at the cost of speed.
         use_checkpointing = self.gradient_checkpointing and self.training and kv_cache is None
 
         for block in self.trf_blocks:
