@@ -203,7 +203,6 @@ def qwen3_config_creator(model_size="0.6B", base_model=True):
         "head_dim": 128,
         "dtype": torch.bfloat16,
         "model_path": f"Qwen/Qwen3-{model_size}{'-Base' if base_model else ''}",
-        "training": False,
         # "rms_norm_eps": 1e-06,
         # "device": ""
     }
@@ -322,7 +321,6 @@ QWEN3_NEXT_SMALL_CONFIG = {
     "top_k": 2,
     "aux_loss_coef": 0.001,
     # training
-    "training": False,
     "p_dropout": 0.1,
 }
 
