@@ -111,31 +111,35 @@ class KVCache:
     Args:
         num_layers (int): Number of transformer layers
         context_len (int): Maximum context_length (max sequence length)
+        prompt_len (int): Length of the longest sequence in the batch (prompt length)
+        initial_chunk_size (int): Initial extra capacity beyond prompt_len (default: 512)
+        chunk_size (int): Size of chunks used to extend the KV cache (default: 256)
     """
 
-    def __init__(self, num_layers, context_len):
+    def __init__(self, num_layers, prompt_len, context_len, initial_chunk_size=512, chunk_size=256):
         self.num_layers = num_layers
+        self.prompt_len = prompt_len
         self.context_len = context_len
+        self.chunk_size = chunk_size
+        self.kv_capacity = self.prompt_len + initial_chunk_size
 
-        self.keys_cache = None
-        self.values_cache = None
+        self.keys_cache = []
+        self.values_cache = []
 
-        self.start_pos = 0  # track current sequence length
+        self.start_pos = 0  # track start of the current sequence length
+        self.end_pos = 0  # track end of the current sequence length
 
     def _initialize(self, batch_size, num_heads, head_dim, device, dtype):
         """
         initialize cache tensors on first call
         """
 
-        self.keys_cache = []
-        self.values_cache = []
-
         for _ in range(self.num_layers):
             self.keys_cache.append(
                 torch.zeros(
                     batch_size,
                     num_heads,
-                    self.context_len,
+                    self.kv_capacity,
                     head_dim,
                     device=device,
                     dtype=dtype,
@@ -145,12 +149,40 @@ class KVCache:
                 torch.zeros(
                     batch_size,
                     num_heads,
-                    self.context_len,
+                    self.kv_capacity,
                     head_dim,
                     device=device,
                     dtype=dtype,
                 )
             )
+
+    def _grow_kv_capacity(self, layer_idx):
+        """
+        Grow the KVcache capacity for a layer, if the total sequence length is greater than the current KV capacity.
+        """
+        # Only update the (global) KV capacity variable if it hasn't been updated by a previous layer yet
+        if self.kv_capacity < self.end_pos:
+            if self.end_pos < self.context_len:
+                # adding minimum necessary number of chunks. An alt is doubling the chunk size every time
+                self.kv_capacity += math.ceil((self.end_pos - self.kv_capacity) / self.chunk_size) * self.chunk_size
+            else:
+                self.kv_capacity = self.context_len
+
+        # create new extended KVcache for that layer
+        new_keys_cache = torch.empty(
+            self.batch_size, self.num_heads, self.kv_capacity, self.head_dim, device=self.device, dtype=self.dtype
+        )
+        new_values_cache = torch.empty(
+            self.batch_size, self.num_heads, self.kv_capacity, self.head_dim, device=self.device, dtype=self.dtype
+        )
+
+        # copy the old KVcache tensors (up to start_pos) from that layer to the new extended KVcache
+        new_keys_cache[:, :, : self.start_pos, :] = self.keys_cache[layer_idx][:, :, : self.start_pos, :]
+        new_values_cache[:, :, : self.start_pos, :] = self.values_cache[layer_idx][:, :, : self.start_pos, :]
+
+        # replace layer's KVcache with the new extended KVcache tensors
+        self.keys_cache[layer_idx] = new_keys_cache
+        self.values_cache[layer_idx] = new_values_cache
 
     def get_updated_cache(self, keys, values, layer_idx):
         """
@@ -166,16 +198,22 @@ class KVCache:
         Returns:
             A tuple containing the full cached keys and values up to the current sequence length.
         """
-        batch_size, num_heads, new_seq_len, head_dim = keys.shape
+        self.batch_size, self.num_heads, new_seq_len, self.head_dim = keys.shape
+        self.device, self.dtype = keys.device, keys.dtype
 
-        if self.keys_cache is None and self.values_cache is None:
-            self._initialize(batch_size, num_heads, head_dim, keys.device, keys.dtype)
+        if not self.keys_cache and not self.values_cache:
+            self._initialize(self.batch_size, self.num_heads, self.head_dim, self.device, self.dtype)
 
-        end_pos = self.start_pos + new_seq_len
+        self.end_pos = self.start_pos + new_seq_len
+
+        # check end position against the current layer's KV capacity
+        curr_layer_kv_capacity = self.keys_cache[layer_idx].shape[2]
+        if self.end_pos > curr_layer_kv_capacity:
+            self._grow_kv_capacity(layer_idx)
 
         # update from the new keys and values into the pre-allocated cache
-        self.keys_cache[layer_idx][:, :, self.start_pos : end_pos, :] = keys
-        self.values_cache[layer_idx][:, :, self.start_pos : end_pos, :] = values
+        self.keys_cache[layer_idx][:, :, self.start_pos : self.end_pos, :] = keys
+        self.values_cache[layer_idx][:, :, self.start_pos : self.end_pos, :] = values
 
         # update sequence length after the last layer has been processed for the next call
         if layer_idx == self.num_layers - 1:
@@ -183,8 +221,8 @@ class KVCache:
 
         # return slices of the cache, up to the new current sequence length
         return (
-            self.keys_cache[layer_idx][:, :, :end_pos, :],
-            self.values_cache[layer_idx][:, :, :end_pos, :],
+            self.keys_cache[layer_idx][:, :, : self.end_pos, :],
+            self.values_cache[layer_idx][:, :, : self.end_pos, :],
         )
 
 
