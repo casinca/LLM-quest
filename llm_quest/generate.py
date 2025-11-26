@@ -1,6 +1,6 @@
 import torch
 
-from llm_quest.gpt.gpt_attention import KVCache
+from llm_quest.utils import KVCache
 
 
 def generate_simple_loop(input_tensor, model, max_gen, context_length):
