@@ -1,4 +1,4 @@
-from math import sqrt
+import math
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ class SelfAttention_v1(nn.Module):
         keys = x @ self.w_keys
         values = x @ self.w_values
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
 
         raw_att = queries @ keys.T
         scaled_raw_att = raw_att / d_k
@@ -42,7 +42,7 @@ class SelfAttention_v2(nn.Module):
         keys = self.w_keys(x)
         values = self.w_values(x)
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
 
         raw_att = queries @ keys.T
         scaled_raw_att = raw_att / d_k
@@ -69,7 +69,7 @@ class SelfAttention_v3(nn.Module):
         keys = self.w_keys(x)
         values = self.w_values(x)
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the num of embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the num of embeddings keys (so last dim)
 
         raw_att = queries @ keys.mT  # .mT transpose last 2 dims (alt to transpose(1,2))
         scaled_raw_att = raw_att / d_k
