@@ -27,7 +27,7 @@ class VerifiableRewardCalculator:
         unfinished_answer_reward (float): The penalty for an unfinished answer (should be ≤ 0).
         reasoning_weight (float): A coeff to weight the reasoning reward vs. the answer.
         pad_token_id (int): The token id to use for padding.
-
+        dtype (torch.dtype): The dtype of the returned rewards.
     """
 
     def __init__(
@@ -37,6 +37,7 @@ class VerifiableRewardCalculator:
         wrong_answer_reward=0.0,
         unfinished_answer_reward=-1.0,
         reasoning_weight=0.0,
+        dtype=torch.bfloat16,
         pad_token_id=50256,  # placeholder for now
     ):
         assert wrong_answer_reward <= 0, "wrong_answer_reward should be ≤ 0"
@@ -47,6 +48,7 @@ class VerifiableRewardCalculator:
         self.wrong_answer_reward = wrong_answer_reward
         self.unfinished_answer_reward = unfinished_answer_reward
         self.reasoning_weight = reasoning_weight  # placeholder for now in case I want to do something fancy
+        self.dtype = dtype
 
     def _calc_answer_reward(self, response_strings, correct_answers):
         """
@@ -103,10 +105,9 @@ class VerifiableRewardCalculator:
 
         """
         decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
-
         answer_rewards = self._calc_answer_reward(decoded_responses, correct_answers)
 
-        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
+        return torch.tensor(answer_rewards, dtype=self.dtype, device=model_responses.device)
 
 
 def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device=torch.device("cpu")):
