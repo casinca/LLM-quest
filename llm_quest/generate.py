@@ -1,6 +1,6 @@
 import torch
 
-from llm_quest.gpt.gpt_attention import KVCache
+from llm_quest.utils import KVCache
 
 
 def generate_simple_loop(input_tensor, model, max_gen, context_length):
@@ -114,9 +114,9 @@ def generate_loop_kv_cache(
 
     token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
 
-    num_layers = len(model.trf_blocks)
     # Init KV cache
-    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
+    num_layers = len(model.trf_blocks)
+    kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
 
     input_tensor = input_tensor.to(device)
 
@@ -325,7 +325,7 @@ def generate_batched_loop_kv_cache(
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
     num_layers = len(model.trf_blocks)
-    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
+    kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
 
     generated_tokens = []
 
@@ -439,7 +439,7 @@ def generate_batched_loop_kv_cache_left_pad(
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
     num_layers = len(model.trf_blocks)
-    kv_cache = KVCache(num_layers=num_layers, context_len=context_length)
+    kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
 
     # --- Position IDs handling for left padding ---
     # creating position_ids for first forward pass RoPE + left padding, ex: attn [0,0,1,1,1] → pos [0,0,0,1,2]

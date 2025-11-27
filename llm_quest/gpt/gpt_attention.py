@@ -1,4 +1,4 @@
-from math import sqrt
+import math
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ class SelfAttention_v1(nn.Module):
         keys = x @ self.w_keys
         values = x @ self.w_values
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
 
         raw_att = queries @ keys.T
         scaled_raw_att = raw_att / d_k
@@ -42,7 +42,7 @@ class SelfAttention_v2(nn.Module):
         keys = self.w_keys(x)
         values = self.w_values(x)
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the embeddings keys (so last dim)
 
         raw_att = queries @ keys.T
         scaled_raw_att = raw_att / d_k
@@ -69,7 +69,7 @@ class SelfAttention_v3(nn.Module):
         keys = self.w_keys(x)
         values = self.w_values(x)
 
-        d_k = sqrt(keys.shape[-1])  # scaler, square root of the num of embeddings keys (so last dim)
+        d_k = math.sqrt(keys.shape[-1])  # scaler, square root of the num of embeddings keys (so last dim)
 
         raw_att = queries @ keys.mT  # .mT transpose last 2 dims (alt to transpose(1,2))
         scaled_raw_att = raw_att / d_k
@@ -100,92 +100,6 @@ class MultiHeadAttentionWrapper(nn.Module):
         multi_ctx_concat = torch.concat([head(x) for head in self.multi_context], dim=-1)
 
         return self.out_proj(multi_ctx_concat)
-
-
-# Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
-class KVCache:
-    """
-    KV cache with preallocation and updating by directly indexing into the cache.
-    We avoid torch.cat() operations from the old KVcache.
-
-    Args:
-        num_layers (int): Number of transformer layers
-        context_len (int): Maximum context_length (max sequence length)
-    """
-
-    def __init__(self, num_layers, context_len):
-        self.num_layers = num_layers
-        self.context_len = context_len
-
-        self.keys_cache = None
-        self.values_cache = None
-
-        self.start_pos = 0  # track current sequence length
-
-    def _initialize(self, batch_size, num_heads, head_dim, device, dtype):
-        """
-        initialize cache tensors on first call
-        """
-
-        self.keys_cache = []
-        self.values_cache = []
-
-        for _ in range(self.num_layers):
-            self.keys_cache.append(
-                torch.zeros(
-                    batch_size,
-                    num_heads,
-                    self.context_len,
-                    head_dim,
-                    device=device,
-                    dtype=dtype,
-                )
-            )
-            self.values_cache.append(
-                torch.zeros(
-                    batch_size,
-                    num_heads,
-                    self.context_len,
-                    head_dim,
-                    device=device,
-                    dtype=dtype,
-                )
-            )
-
-    def get_updated_cache(self, keys, values, layer_idx):
-        """
-        Update cache with the new keys and values and return the full cached keys and values.
-
-        Args:
-            keys: New keys tensor of shape (batch_size, num_heads, new_seq_len, head_dim)
-            values: New values tensor of shape (batch_size, num_heads, new_seq_len, head_dim)
-            layer_idx: Layer index to update
-
-        Note: In most scenarios new_seq_len should be 1
-
-        Returns:
-            A tuple containing the full cached keys and values up to the current sequence length.
-        """
-        batch_size, num_heads, new_seq_len, head_dim = keys.shape
-
-        if self.keys_cache is None and self.values_cache is None:
-            self._initialize(batch_size, num_heads, head_dim, keys.device, keys.dtype)
-
-        end_pos = self.start_pos + new_seq_len
-
-        # update from the new keys and values into the pre-allocated cache
-        self.keys_cache[layer_idx][:, :, self.start_pos : end_pos, :] = keys
-        self.values_cache[layer_idx][:, :, self.start_pos : end_pos, :] = values
-
-        # update sequence length after the last layer has been processed for the next call
-        if layer_idx == self.num_layers - 1:
-            self.start_pos += new_seq_len
-
-        # return slices of the cache, up to the new current sequence length
-        return (
-            self.keys_cache[layer_idx][:, :, :end_pos, :],
-            self.values_cache[layer_idx][:, :, :end_pos, :],
-        )
 
 
 # MHA optimized, splitting our tensors per head then merging back
