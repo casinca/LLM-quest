@@ -5,7 +5,6 @@ from config import auto_device, qwen3_config_creator
 from llm_quest.generate import (
     generate_batched_loop_kv_cache,
     generate_batched_loop_kv_cache_left_pad,
-    generate_loop,
     generate_loop_kv_cache,
 )
 from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
@@ -25,8 +24,9 @@ base_model = True
 enable_thinking = False
 add_generation_prompt = False  # more suited for base_model=False: adds the assistant token at the end of the prompt
 
+# Qwen recommends greedy decoding for base, non-greedy decoding for non-base models.
 max_gen = 80
-topk = 25
+topk = 20
 topp = 0.95
 min_p = None  # Qwen recommends disabled but it's there
 temp = 0.0
@@ -35,8 +35,15 @@ seed = 123
 qwen3_cfg = qwen3_config_creator("0.6B", base_model=base_model)
 tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"])
 pad_side = "right"
-eos_token_id = tokenizer.pad_token_id
-pad_token_id = tokenizer.pad_token_id
+
+# base model only knows a single EoS token id (151643), which also serves as the pad token id for non-base models.
+# non-base models have 2 possible EoS token ids (151643 and 151645) and pad token id (151643)
+if base_model:
+    eos_token_id = tokenizer.pad_token_id
+    pad_token_id = tokenizer.pad_token_id
+else:
+    eos_token_id = [tokenizer.eos_token_id, tokenizer.pad_token_id]
+    pad_token_id = tokenizer.pad_token_id
 
 device = auto_device
 print(f"\nUsing DEVICE: {device.type}\n")

@@ -1,3 +1,5 @@
+from typing import List, Union
+
 import torch
 
 from llm_quest.utils import KVCache
@@ -265,7 +267,7 @@ def generate_batched_loop_kv_cache(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_ids=50256,
+    eos_ids: Union[int, List[int]] = 50256,  # adding type hint to remove linting error
     pad_id=50256,
     device=torch.device("cuda"),
     last_real=None,
