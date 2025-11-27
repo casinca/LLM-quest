@@ -194,6 +194,7 @@ def rlvr_grpo_training_loop(
     save_checkpoint=True,
     rope_model=False,
     lr_scheduler=None,
+    sampling_params=None,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -229,7 +230,7 @@ def rlvr_grpo_training_loop(
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
         rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
         lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
-
+        sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
 
     Returns:
         None: The function modifies the `policy_model` in place.
@@ -263,15 +264,12 @@ def rlvr_grpo_training_loop(
                 attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
-                top_k=20,
-                top_p=None,
-                min_p=None,
-                temp=1.0,
                 last_real=last_real_pos,
                 rope_model=rope_model,
                 device=device,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
+                **(sampling_params if sampling_params is not None else {}),
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
@@ -363,6 +361,7 @@ def rlvr_grpo_training_loop(
                     rope_model=rope_model,
                     eos_ids=eos_ids,
                     pad_id=pad_id,
+                    sampling_params=sampling_params,
                 )
 
                 print(

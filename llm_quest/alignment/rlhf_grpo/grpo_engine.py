@@ -938,6 +938,7 @@ class GRPOEvaluator:
         rope_model=False,
         eos_ids=50256,
         pad_id=50256,
+        sampling_params=None,
     ):
         total_reward = 0.0
         total_kl_div = 0.0
@@ -957,13 +958,12 @@ class GRPOEvaluator:
                 attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
-                top_k=20,
-                temp=1.0,
                 last_real=last_real_pos,
                 device=device,
                 rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
+                **(sampling_params if sampling_params is not None else {}),
             )
 
             collated_batch = batched_responses_collator(
@@ -1033,6 +1033,7 @@ class GRPOEvaluator:
         rope_model=False,
         eos_ids=50256,
         pad_id=50256,
+        sampling_params=None,
     ):
         """
         Evaluates the performance of the policy model on both training and validation datasets.
@@ -1052,6 +1053,7 @@ class GRPOEvaluator:
             pad_id (int, optional): Token id to use for padding.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
             eval_num_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
+            sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
         Returns:
             dict[str, float]: A dictionary containing evaluation metrics: average reward and KL divergence.
         """
@@ -1085,6 +1087,7 @@ class GRPOEvaluator:
                 rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
+                sampling_params=sampling_params,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
@@ -1101,6 +1104,7 @@ class GRPOEvaluator:
                 rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
+                sampling_params=sampling_params,
             )
 
         policy_model.train()
