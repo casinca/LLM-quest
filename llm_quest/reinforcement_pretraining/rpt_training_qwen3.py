@@ -14,10 +14,7 @@ from llm_quest.reinforcement_pretraining.rpt_engine import PrefixMatchingReward
 
 # reasoning model triggered by chat template
 policy_cfg = config.qwen3_config_creator("0.6B", base_model=False)
-policy_cfg["training"] = True  # has no effect for Qwen3 dense models atm
-policy_cfg["context_length"] = 1500  # reduced context_length mainly for keeping the KVCache size small (not dynamic)
-reference_cfg = config.qwen3_config_creator("0.6B", base_model=False)
-reference_cfg["context_length"] = 1500
+reference_cfg = policy_cfg.copy()
 
 tokenizer = AutoTokenizer.from_pretrained(policy_cfg["model_path"])
 pad_token_id = tokenizer.pad_token_id
@@ -27,8 +24,9 @@ model_device = config.auto_device
 # --- hyperparameters ---
 batch_size = 2  # prompts batch size, responses batch size will be batch_size * num_samples(rollout)
 labels_length = 3
-min_context_tokens = 15
+min_context_tokens = 15  # avoids artificially hard samples to predict without enough context
 truncate_sample = (0, 100)
+
 # optimizer and LR scheduler hparams
 weight_decay = 0.1
 peak_lr = 1e-6
@@ -36,20 +34,29 @@ init_lr = 0.0
 warmup_steps = 18
 min_lr = None
 decay = None
+
 # loader hparams
 num_workers = 0
 pin_memory = False
 persistent_workers = False
+
+# Training
+use_gradient_checkpointing = False  # trade memory for speed
 rpt_training_hparams = {
-    # training
     "rope_model": True,
-    "num_samples": 2,
     "num_epoch": 1,
-    "num_grad_updates": 2,
     "max_gen": 700,
     "eos_ids": eos_token_ids,
     "pad_id": pad_token_id,
+    "sampling_params": {  # recommended values by Qwen for non-base models
+        "top_k": 20,
+        "top_p": 0.95,
+        "min_p": None,
+        "temp": 0.6,
+    },
     # GRPO
+    "num_samples": 2,
+    "num_grad_updates": 2,
     "min_clip_eps": 0.2,
     "max_clip_eps": 0.2,
     "beta": 0.0,
@@ -58,6 +65,7 @@ rpt_training_hparams = {
     "eval_freq": 10,
     "eval_batches": 1,
     "eval_num_samples": 2,
+    # thresholds for checkpoint saving
     "kl_div_threshold": 0.3,
     "min_reward_threshold": 0.35,
 }
@@ -78,7 +86,7 @@ instruction = (
 if __name__ == "__main__":
     torch.manual_seed(123)
 
-    reward_calculator = PrefixMatchingReward(tokenizer=tokenizer, good_answer_reward=2.0)
+    reward_calculator = PrefixMatchingReward(tokenizer=tokenizer, good_answer_reward=2.0, dtype=policy_cfg["dtype"])
 
     # --- datasets & loaders ---
     # reusing GSM8K dataset instead of Omni-Math
@@ -106,8 +114,8 @@ if __name__ == "__main__":
     )
 
 
-train_set = Subset(train_set, range(2000))
-val_set = Subset(val_set, range(200))
+train_set = Subset(train_set, range(500))
+val_set = Subset(val_set, range(50))
 
 
 # same as RLVR
@@ -145,6 +153,7 @@ val_loader = DataLoader(
 policy_model = Qwen3Model(policy_cfg)
 reference_model = Qwen3Model(reference_cfg)
 policy_model = load_qwen3_weights(policy_model, policy_cfg)
+policy_model.gradient_checkpointing = use_gradient_checkpointing
 
 policy_model.to(device=model_device, dtype=torch.bfloat16)
 reference_model.to(device=model_device, dtype=torch.bfloat16).eval()
