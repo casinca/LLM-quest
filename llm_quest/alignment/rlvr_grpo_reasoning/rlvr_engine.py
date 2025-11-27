@@ -193,6 +193,7 @@ def rlvr_grpo_training_loop(
     loss_variant="grpo",
     save_checkpoint=True,
     rope_model=False,
+    lr_scheduler=None,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -227,6 +228,9 @@ def rlvr_grpo_training_loop(
         "gspo".
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
         rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
+        lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
+
+
     Returns:
         None: The function modifies the `policy_model` in place.
 
@@ -242,7 +246,6 @@ def rlvr_grpo_training_loop(
         reference_model.load_state_dict(policy_model.state_dict())
 
         for batch in train_loader:
-            step += 1
             policy_model.eval()  # for every new batch, π_θ and π_θ_old are the same
             # note: generate_loop() comes with torch.inference_mode() and to gpu device, no need to reapply here
 
@@ -285,6 +288,7 @@ def rlvr_grpo_training_loop(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                 )
+
                 reference_logprobs = log_probs_per_token(
                     logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
@@ -332,15 +336,18 @@ def rlvr_grpo_training_loop(
                 )
 
                 optimizer.zero_grad()
+                if lr_scheduler is not None:
+                    lr_scheduler.step(step)
                 grpo_loss_batch.backward()
                 optimizer.step()
+                step += 1
 
                 cum_grpo_loss += grpo_loss_batch.item()
 
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
             # --- Evaluation ---
-            if evaluation and eval_freq is not None and (step % eval_freq == 0):
+            if evaluation and eval_freq is not None and (step == 1 or step % eval_freq == 0):
                 eval_metrics = GRPOEvaluator.evaluate(
                     train_loader=train_loader,
                     val_loader=val_loader,
@@ -357,9 +364,10 @@ def rlvr_grpo_training_loop(
                     eos_ids=eos_ids,
                     pad_id=pad_id,
                 )
+
                 print(
                     f"Step {step} | "
-                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | "
+                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | lr: {(lr_scheduler.current_lr if lr_scheduler is not None else optimizer.param_groups[0]['lr']):.1e} | "
                     f"T. Rwd: {eval_metrics['train_reward']:.4f}, T. KL Div: {eval_metrics['train_kl_div']:.4f} | "
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )
