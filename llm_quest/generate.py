@@ -323,6 +323,7 @@ def generate_batched_loop_kv_cache(
 
     batch_size = input_tensor.shape[0]
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    pad_token_tensor = torch.tensor(pad_id, device=device, dtype=torch.long)
 
     num_layers = len(model.trf_blocks)
     kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
@@ -375,9 +376,7 @@ def generate_batched_loop_kv_cache(
         sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
         # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token.
-        next_token = torch.where(
-            finished.unsqueeze(-1), torch.tensor(pad_id, device=device, dtype=torch.long), sampled_tokens
-        )
+        next_token = torch.where(finished.unsqueeze(-1), pad_token_tensor, sampled_tokens)
         generated_tokens.append(next_token)
         finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
 
