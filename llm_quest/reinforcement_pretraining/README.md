@@ -1,4 +1,8 @@
-# Reinforcement Pretraining (RPT) from scratch
+# Reinforcement Pretraining (RPT) from scratch*
+
+**The HF tokenizer is the only external dependency, all the rest is from scratch: model, GRPO RLVR pipeline re-used for RPT
+training.*
+
 
 Reinforcement Pretraining is a clever idea from Microsoft researchers: https://arxiv.org/abs/2506.08007. As the name
 suggests, mixing RL with a pretraining objective. They reframe next token prediction (NTP) as a reasoning task, giving
@@ -16,6 +20,7 @@ The 2-checks reward function they elaborated (see *3.2 Pre-Training with Reinfor
 `PrefixMatchingReward` class in `rpt_engine.py`) allows the model to be evaluated against, not just a single label (like
 NTP), but a defined amount of labels as seen in the `RPTStructuredDataset` in `llm_quest/dataset.py` with the
 `labels_length` hparam/argument.  
+
 For example, for a single sample, if the context is: `"The capital of Fra"` and labels are `"nce is Paris and it's"`,
 the model will be rewarded for predicting `"nce is Paris"` in 1 step.
 
@@ -39,39 +44,27 @@ only post training but also pre RLVR training. So a better starting and ending c
 
 &nbsp;
 
-## RPT: structured datasets vs continuous corpus of text
 
-RPT was done on structured datasets (Omni-Math, Tabular type etc...), ie with independent samples. Doing entropy
-filtering on these samples is straightforward because each sample has a truly distinct and defined beginning and end.
+## RPT Training: Test with our from-scratch `Qwen3-0.6B` arch
 
-Doing entropy filtering for RPT on a continuous corpus of text (like classic pretraining) is a bit more tricky because
-as we slide the window of context, the first token of each sample is considered a beginning, but in reality, it'll
-likely be a continuation of the previous sample.  
-This falsely leads the first tokens' predictions of each sample into high entropy predictions, because they are
-considered as having no prior context and thus harder to predict.  
+Researchers used a ~23x larger model than the one used here, yet `Qwen3-0.6B` was able to follow through.  
+MTP successes were rare compared to NTP (single token) due to the higher difficulty, but also because the model has a
+tendency to add trailing spaces to its answers... which can ruin a whole group of rewards.
 
-A `min_context_tokens` argument was later added to the `RPTStructuredDataset` as an alternative to entropy filtering, as
-a quick fix to avoid high entropy predictions for each sample.
-
-&nbsp;
-
-## Testing RPT Training from scratch with `Qwen3-0.6B` (reasoning enabled)
-
-Researchers used a ~23x larger model than the one used here, yet `Qwen3-0.6B` was able to follow through.
-MTP successes were rare compared to NTP due to the higher difficulty, but also because the model has a tendency to
-add trailing spaces to its answers... which can ruin a whole group of rewards.
-
-For example, below is a good MTP (3 tokens right out of a `labels_length` of 4):
+For example, below is a good MTP (3 tokens right out of a `labels_length=4`):
 
 <img src="_rpt_imgs/_rpt_correct_mtp_example.png" alt="alt text" width="500"/>
 
 &nbsp;
 
-If the last label had been the beginning of a word instead of a number, the reward would have been 0 because of the way the
-Qwen tokenizer splits the beginning of words and numbers differently, in addition to RPT rewards calculation.
-Here the model's predicted trailing space is considered as a single token, which is valid because number tokens aren't
-tokenized with leading spaces, unlike words.
-However, if the last label were the beginning of a word, the single trailing space wouldn't have been considered a valid
+If the last label had been the beginning of a word instead of a number, the reward would have been 0 because of the way
+the Qwen tokenizer splits spaces + beginning of words and numbers differently, in addition to RPT rewards calculation
+(valid boundary check).
+
+Here the model's predicted trailing space is considered as a single token, which is valid because digit tokens aren't
+tokenized with leading spaces but as 2 separate tokens (1 space and 1 digit), unlike words (space + word prefix = 1
+token).  
+So, if the last label was the beginning of a word, the single trailing space wouldn't have been considered a valid
 boundary, thus the reward would have been wasted for the first 2 correctly predicted labels.
 
 Overall the trailing problem can be handled with better prompting or penalization, among other things.
@@ -96,8 +89,9 @@ To solve this, numerous solutions can be found in the literature:
 - We can add a small penalty/bonus to one of the rewards based on different criteria (length based like
   [AGPO](https://arxiv.org/abs/2503.15952), entropy based like [EDGE-GRPO](https://arxiv.org/abs/2507.21848), uniqueness of the response...)
 
-In our case dynamic sampling would be triggered way to often with a group size of 2 and would slow down the training. We
-can't afford to ditch groups of equal rewards either, as at our small scale the data is precious, we want to make the
+
+In our case, dynamic sampling would be triggered way to often with a group size of 2 and would slow down the training.
+We can't afford to ditch groups of equal rewards either, as at our small scale the data is precious, we want to make the
 most of it.
 
 The solution chosen here (specifically for RPT, with 3 types of rewards), was to follow an anchor/augmented reward
@@ -170,7 +164,19 @@ bound to be unsuccessful, especially with a small model.
 Therefore, a `min_context_tokens` argument was added to the `RPTStructuredDataset` to only consider samples with a
 context length >= `min_context_tokens`, giving a bit more context to chew on for the model.
 
+&nbsp;
 
+## RPT: structured datasets vs continuous corpus of text
 
+RPT was done on structured datasets (Omni-Math, Tabular type etc...), ie with independent samples. Doing entropy
+filtering on these samples is straightforward because each sample has a truly distinct and defined beginning and end.
 
+Doing entropy filtering for RPT on a continuous corpus of text (like classic pretraining) is a bit more tricky because
+as we slide the window of context, the first token of each sample is considered a beginning, but in reality, it'll
+likely be a continuation of the previous sample.  
+This falsely leads the first tokens' predictions of each sample into high entropy predictions, because they are
+considered as having no prior context and thus harder to predict.  
+
+As mentioned in the last point, a `min_context_tokens` argument was later added to the `RPTStructuredDataset` as an
+alternative to entropy filtering, as a quick fix to avoid high entropy predictions for each sample.
 
