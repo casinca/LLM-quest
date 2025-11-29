@@ -55,6 +55,7 @@ rpt_training_hparams = {
         "temp": 0.6,
     },
     # GRPO
+    "loss_variant": "grpo",  # alt: dapo, dr_grpo, gspo
     "num_samples": 2,
     "num_grad_updates": 2,
     "min_clip_eps": 0.2,
@@ -84,6 +85,8 @@ instruction = (
 
 
 if __name__ == "__main__":
+
+    config.use_phantom_reward = True  # overriding config to use phantom reward specifically for RPT
     torch.manual_seed(123)
 
     reward_calculator = PrefixMatchingReward(tokenizer=tokenizer, good_answer_reward=2.0, dtype=policy_cfg["dtype"])
