@@ -71,7 +71,7 @@ if __name__ == "__main__":
         top_k=top_k,
         top_p=top_p,
         temp=temp,
-        eos_id=50256,
+        eos_ids=50256,
         device=device,
     )
 

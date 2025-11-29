@@ -74,9 +74,7 @@ def classifier_training_eval_loop(
             loss = global_loss(logits, targets, model, classification=True)  # classi=True for correct loss req shape
             loss.backward()
 
-            # gradient clipping at a max norm of 1 (after warmup)
-            if step >= lr_scheduler.warmup_steps:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
             lr_scheduler.step(step)
             optimizer.step()

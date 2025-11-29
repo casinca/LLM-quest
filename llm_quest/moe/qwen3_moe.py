@@ -15,7 +15,7 @@ import torch.nn as nn
 
 def router_weights_init(weights):
     """
-    re-initizalize router/gate weights following sigma-MoE initialization used in Qwen3-Next
+    re-initialize router/gate weights following sigma-MoE initialization used in Qwen3-Next
     https://arxiv.org/abs/2310.10837
 
     The goal is to have a better starting point for training where initial routing of experts is based on cosine

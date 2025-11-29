@@ -22,7 +22,7 @@ def generate_response(model, input_text):
         context_length=model_cfg["context_length"],
         temp=1,
         top_k=20,
-        eos_id=EOS_ID,
+        eos_ids=EOS_ID,
         device=model_device,
     )
     generated_text = ids_to_text(output_ids, tokenizer)

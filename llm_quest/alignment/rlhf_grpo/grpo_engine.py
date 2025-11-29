@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import config
 from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
-from llm_quest.generate import generate_batched_loop, generate_loop
+from llm_quest.generate import generate_batched_loop, generate_batched_loop_kv_cache, generate_loop
 from llm_quest.utils import CheckpointEvaluator
 
 
@@ -300,15 +300,20 @@ def rlhf_grpo_prompt_collator(prompts, pad_token_id=50256, custom_max_length=Non
 
 # NOTE: responses generated from `generate_batched_loop()` already have an EoS token at the end (unless
 # truncated/max_gen) therefore nothing is added here, responses are already ready to be sliced for logprobs.
-def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_id=50256):
+def batched_responses_collator(responses, prompt_masks, device="cuda", eos_ids=50256, pad_token_id=50256):
     """
     Prepare batched sampled responses for the reward model.
 
     Args:
         responses (torch.Tensor): shape (batch_size * num_samples, prompt_len + max_gen)
                                 responses = prompt + policy's output as padded token IDs.
-        len_prompt (int): Length of the prompt portion to distinguish between prompt and policy's output tokens.
+        prompt_masks (torch.Tensor): Boolean tensor of shape (batch_size * num_samples, prompt_len)
+                                    This is used to differentiate between special tokens used in the prompt.
+                                    ex: chat template (should be attended) and special ones used as padding (not
+                                    attended).
         device (str, optional): Device where the resulting tensors will be placed. Defaults to "cuda".
+        eos_ids (int | List[int], optional): Token ID(s) that signal end of text generation. Defaults to 50256.
+        pad_token_id (int, optional): Token ID to use for padding. Defaults to 50256.
 
     Returns:
         Dict[str, torch.Tensor]: A dictionary containing:
@@ -319,13 +324,24 @@ def batched_responses_collator(responses, len_prompt, device="cuda", pad_token_i
 
             *Except the first EoS/pad token in the response part.
     """
-    pad_mask = responses == pad_token_id
+    len_prompt = prompt_masks.shape[1]
 
-    first_eos_mask = pad_mask.clone()
-    first_eos_mask[:, :len_prompt] = False
-    first_eos_mask = first_eos_mask.cumsum(dim=1) == 1  # trick to retrieve the first EoS/pad in the response part
+    if isinstance(eos_ids, int):
+        eos_ids = [eos_ids]
+    eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
 
-    attn_masks = ~pad_mask | first_eos_mask  # True for: real tokens + 1st EoS/pad in the response part
+    is_eos = torch.isin(responses, eos_ids_tensor)
+    is_pad = responses == pad_token_id
+    stop_mask = is_eos | is_pad  # True if either EoS or pad token
+    stop_mask[:, :len_prompt] = False  # exclude EoS or pad tokens from the prompt part
+
+    # trick to retrieve the first EoS/pad in the response part
+    # ex: [False, False, True, True]= [0, 0, 1, 2], all previous tokens will be 0, first EoS/pad will be 1
+    cumsum_mask = stop_mask.cumsum(dim=1)
+    # True for: previous tokens(=0) + first EoS/pad(=1)
+    attn_masks = cumsum_mask <= 1
+    # among previous tokens, masking the padding tokens in the prompt part
+    attn_masks[:, :len_prompt] = prompt_masks
 
     reward_masks = attn_masks.clone()
     reward_masks[:, :len_prompt] = False
@@ -353,16 +369,25 @@ def z_scores(rewards, num_samples, dr_grpo=None):
     Returns:
         torch.Tensor: Tensor of shape (B*,) containing the z-scores.
     """
-
     # reshaping per groups, shape (batch_size, num_samples), to calculate the advantages.
     # (We don't want stats from different groups/prompts to affect one another.)
     rewards = rewards.view(-1, num_samples)  # batch size inferred (ie rewards.shape[0] // num_samples)
-    group_mean = rewards.mean(dim=1, keepdim=True)
+
+    # lazily add an extra 0 reward to the group to avoid the edge case of std=0 when all rewards are the same but != 0
+    if config.use_phantom_reward:
+        phantom_reward = torch.zeros(rewards.shape[0], 1, device=rewards.device)
+        augmented_rewards = torch.cat([rewards, phantom_reward], dim=1)
+    else:
+        augmented_rewards = rewards
+
+    group_mean = augmented_rewards.mean(dim=1, keepdim=True)
 
     if dr_grpo == "dr_grpo":
         z_scores = rewards - group_mean
     else:
-        group_std = rewards.std(dim=1, keepdim=True)
+        if not config.use_phantom_reward:
+            assert num_samples > 1, "num_samples must be greater than 1 to get a relative comparison"
+        group_std = augmented_rewards.std(dim=1, keepdim=True)
         z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
 
     return z_scores.view(-1)  # flattening back to (B,)
@@ -375,6 +400,8 @@ def log_probs_per_token(logits, inputs):
     """
     Compute and retrieve the log probabilities assigned to each label in a sequence.
     This is similar to the compute_logprobs() method in the `DPOLoss` class.
+
+    We are masking logprobs for prompt + padding tokens later with the loss_mask.
 
     Args:
         logits (torch.Tensor): Tensor of shape (B*, S*, vocab_size) containing the logits.
@@ -435,7 +462,7 @@ def grpo_loss(
     variant="grpo",
 ):
     """
-    Compute original GRPO loss, DAPO or Dr. GRPO variant for a batch.
+    Compute original GRPO loss, DAPO, Dr. GRPO or GSPO variant for a batch.
     credit to @qgallouedec's TRL doc for enumerating the variants and the papers, which made it faster to implement.
 
     Args:
@@ -457,46 +484,42 @@ def grpo_loss(
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
-        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)
+        grpo_loss_batch = gspo_loss(policy_ratio, advantages, min_clip, max_clip)
     else:
         # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
         # ie, each trajectory gets a single advantage.
         advantages_broadcast = advantages.unsqueeze(-1)
 
-    surr_obj_per_token = policy_ratio * advantages_broadcast
-    clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
+        surr_obj_per_token = policy_ratio * advantages_broadcast
+        clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
 
-    grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+        grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
 
-    if variant == "grpo":
-        # grpo loss per response
-        grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
+        if variant == "grpo":
+            # grpo loss per response
+            grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
 
-        # TODO (this part can be simplified to a single .mean() since groups are equal size)
-        # if the vGRPO variant doesn't work, revert this
-        # grpo loss per group/num_samples
-        grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-        # grpo loss for the batch
-        grpo_loss_batch = grpo_loss_group.mean()
+            # TODO (this part can be simplified to a single .mean() since groups are equal size)
+            # if the vGRPO variant doesn't work, revert this
+            # grpo loss per group/num_samples
+            grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+            # grpo loss for the batch
+            grpo_loss_batch = grpo_loss_group.mean()
 
-        return grpo_loss_batch
+        # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+        # token-level averaging (longer seqs have more influence on the loss) instead of Sample-level: 1/n_G * sum(G_i)
+        elif variant == "dapo":
+            grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
 
-    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
-    # Global token-level averaging (longer sequences have more influence on the loss) vs sample-level: 1/n_G * sum(G_i)
-    elif variant == "dapo":
-        grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+        # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+        elif variant == "dr_grpo":
+            grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
 
-        return grpo_loss_batch
+        else:
+            raise ValueError(f"Unknown loss type: {variant}")
 
-    # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
-    elif variant == "dr_grpo":
-        grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
-
-        return grpo_loss_batch
-
-    else:
-        raise ValueError(f"Unknown loss type: {variant}")
+    return grpo_loss_batch
 
 
 # NOTE: oldest GRPO version with single batch was removed in commit:
@@ -595,11 +618,12 @@ def grpo_training_loop_variant_experimental(
                 top_k=20,
                 temp=1,
                 last_real=last_real_pos,
+                device=device,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
@@ -774,26 +798,30 @@ def rlhf_grpo_training_loop(
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(num_samples, dim=0)
 
-            responses = generate_batched_loop(
+            responses = generate_batched_loop_kv_cache(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
                 top_k=20,
-                temp=1,
+                top_p=None,
+                min_p=None,
+                temp=1.0,
                 last_real=last_real_pos,
+                device=device,
+                rope_model=False,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
             # --- Retrieving logprobs & rewards ---
             with torch.inference_mode():
-                loss_mask = collated_batch["reward_masks"][:, 1:]
+                loss_mask = collated_batch["reward_masks"][:, 1:]  # matching token positions corresponding to logprobs
 
                 old_logprobs = log_probs_per_token(  # shape: (B, S-1)
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
@@ -887,6 +915,11 @@ def rlhf_grpo_training_loop(
                     torch.save(policy_model.state_dict(), save_path)
 
 
+# NOTE: GPT2 RLHF written tests on preference tuning was done with the old `generate_batched_loop()` function that has
+# been replaced here with `generate_batched_loop_kv_cache()` function.
+# If want to re-use the old `generate_batched_loop()` function, we need to change it in:
+# - _compute_grpo_metrics()
+# - rlhf_grpo_training_loop()
 class GRPOEvaluator:
     """
     Evaluator class for GRPO that works for both RLHF and RLVR.
@@ -906,10 +939,13 @@ class GRPOEvaluator:
         evaluation_type="rlhf",
         reward_model=None,
         reward_calculator=None,
+        rope_model=False,
+        eos_ids=50256,
+        pad_id=50256,
+        sampling_params=None,
     ):
         total_reward = 0.0
         total_kl_div = 0.0
-
         num_batches_to_eval = min(eval_num_batches, len(loader)) if eval_num_batches else len(loader)
 
         for i, batch in enumerate(loader):
@@ -920,20 +956,23 @@ class GRPOEvaluator:
             dup_prompts = batch["padded_prompts"].repeat_interleave(eval_num_samples, dim=0)
             dup_prompts_masks = batch["prompt_masks"].repeat_interleave(eval_num_samples, dim=0)
             last_real_pos = batch["last_real_pos"].repeat_interleave(eval_num_samples, dim=0)
-            responses = generate_batched_loop(
+            responses = generate_batched_loop_kv_cache(
                 input_tensor=dup_prompts,
                 model=policy_model,
                 attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
-                top_k=20,
-                temp=1.0,
                 last_real=last_real_pos,
+                device=device,
+                rope_model=rope_model,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
+                **(sampling_params if sampling_params is not None else {}),
             )
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
@@ -995,6 +1034,10 @@ class GRPOEvaluator:
         reward_calculator=None,
         eval_num_samples=1,
         eval_num_batches=None,
+        rope_model=False,
+        eos_ids=50256,
+        pad_id=50256,
+        sampling_params=None,
     ):
         """
         Evaluates the performance of the policy model on both training and validation datasets.
@@ -1009,8 +1052,12 @@ class GRPOEvaluator:
             policy_config (dict): Configuration dictionary for the policy model (used for context length).
             device (str): The device to run evaluation on.
             max_gen (int): Maximum number of tokens to generate for each response.
+            rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
+            eos_ids (int | List[int], optional): Token ids to use for the end of sequence.
+            pad_id (int, optional): Token id to use for padding.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
             eval_num_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
+            sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
         Returns:
             dict[str, float]: A dictionary containing evaluation metrics: average reward and KL divergence.
         """
@@ -1041,6 +1088,10 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
+                rope_model=rope_model,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
+                sampling_params=sampling_params,
             )
             val_metrics = GRPOEvaluator._compute_grpo_metrics(
                 val_loader,
@@ -1054,6 +1105,10 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
+                rope_model=rope_model,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
+                sampling_params=sampling_params,
             )
 
         policy_model.train()

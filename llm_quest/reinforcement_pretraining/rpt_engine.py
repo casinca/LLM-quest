@@ -14,12 +14,22 @@ class PrefixMatchingReward:
 
         The valid boundary is the set of all possible byte lengths of the labels.
 
+    examples: label = " time and time again"
+            pred 1: "time"
+            both prefix and boundary dont match: missing leading space
+
+            pred 2 and 3: " time " and " time a"
+            prefix matches but not boundary: trailing space only makes boundary invalid, 2nd word is incomplete
+
+            pred 4 and 5 " time" and " time and"
+            both prefix and boundary match:
+
     args:
         tokenizer: the tokenizer to use to tokenize the labels
         good_answer_reward: the reward for a good answer
         wrong_answer_reward: the penalty for a wrong answer
         unfinished_answer_reward: the penalty for an unfinished answer
-
+        dtype: the dtype of the returned rewards
     """
 
     def __init__(
@@ -28,6 +38,7 @@ class PrefixMatchingReward:
         good_answer_reward=1.0,
         wrong_answer_reward=0.0,
         unfinished_answer_reward=-10.0,
+        dtype=torch.bfloat16,
     ):
         assert wrong_answer_reward <= 0, "wrong_answer_reward should be ≤ 0"
         assert unfinished_answer_reward <= 0, "unfinished_answer_reward should be ≤ 0"
@@ -36,6 +47,7 @@ class PrefixMatchingReward:
         self.good_answer_reward = good_answer_reward
         self.wrong_answer_reward = wrong_answer_reward
         self.unfinished_answer_reward = unfinished_answer_reward
+        self.dtype = dtype
 
     @staticmethod
     def _is_prefix(answer_bytes, label_bytes):
@@ -91,6 +103,7 @@ class PrefixMatchingReward:
         rewards_list = []
 
         for response_string, label in zip(model_responses, labels):
+            # we do not want to sanitize the answer here, unlike RLVR, ex: spaces are important for MTP
             model_answer = ResponseExtractor.get_answer(response_string)
 
             if model_answer is None:
@@ -127,4 +140,4 @@ class PrefixMatchingReward:
         decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
         rewards_list = self._calc_reward(decoded_responses, labels)
 
-        return torch.tensor(rewards_list, dtype=torch.bfloat16, device=model_responses.device)
+        return torch.tensor(rewards_list, dtype=self.dtype, device=model_responses.device)

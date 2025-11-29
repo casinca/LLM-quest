@@ -13,30 +13,32 @@ from llm_quest.gpt.gpt_model import GPTModel
 # --- hyperparameters ---
 gpt_config = config.gpt2_config_creator("gpt_m")
 model_device = config.auto_device
+batch_size = 8  # alt 8
 # optimizer hparams
 lr = 5e-5  # alt 3e-5
 weight_decay = 0.1
-# training hparams
-batch_size = 8  # alt 8
-num_samples = 4  # alt 4
-num_epoch = 2  # alt 2
-num_grad_updates = 4  # alt 1 or 2
-max_gen = 35
-# GRPO hparams
-loss_variant = "grpo"
-min_clip_eps = 0.2  # alt 0.15
-max_clip_eps = 0.2  # alt 0.15
-beta = 0.5  # alt 0.1
-# evaluation hparams
-evaluation = True
-eval_freq = 10  # alt 20
-eval_batches = 1  # alt 2
-eval_num_samples = 5  # alt 4
-kl_div_threshold = 0.4  # alt 0.5
 # loader hparams
 num_workers = 0
 pin_memory = False
 persistent_workers = False
+rlhf_training_hparams = {
+    # training
+    "num_samples": 4,
+    "num_epoch": 2,
+    "num_grad_updates": 4,
+    "max_gen": 35,
+    # GRPO
+    "loss_variant": "grpo",
+    "min_clip_eps": 0.2,
+    "max_clip_eps": 0.2,
+    "beta": 0.5,
+    # eval
+    "evaluation": True,
+    "eval_freq": 10,
+    "eval_batches": 1,
+    "eval_num_samples": 5,
+    "kl_div_threshold": 0.4,
+}
 
 
 if __name__ == "__main__":
@@ -104,19 +106,7 @@ if __name__ == "__main__":
         reference_model=reference_model,
         reward_model=reward_model,
         optimizer=optimizer,
-        num_epoch=num_epoch,
-        num_samples=num_samples,
-        num_grad_updates=num_grad_updates,
         policy_config=gpt_config,
         device=model_device,
-        max_gen=max_gen,
-        min_clip_eps=min_clip_eps,
-        max_clip_eps=max_clip_eps,
-        beta=beta,
-        evaluation=evaluation,
-        eval_freq=eval_freq,
-        eval_batches=eval_batches,
-        eval_num_samples=eval_num_samples,
-        kl_div_threshold=kl_div_threshold,
-        loss_variant=loss_variant,
+        **rlhf_training_hparams,
     )

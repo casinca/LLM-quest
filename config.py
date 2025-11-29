@@ -325,6 +325,13 @@ QWEN3_NEXT_SMALL_CONFIG = {
     "p_dropout": 0.1,
 }
 
+# ----------- ALIGNMENT  -----------
+
+# This is a lazy simple toggle specifically for Reinforcement Pretraining (RPT) to modify how
+# advantages are calculated for GRPO, and avoid creating/passing an additional arg just for that.
+# It adds a phantom reward/anchor (r=0) in z-score calculation,
+# Helps when all rewards in a group are all >0 or <0 (avoiding std=0 issues)
+use_phantom_reward = False
 
 # ----------- PATHS -----------
 
