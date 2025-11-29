@@ -180,3 +180,15 @@ considered as having no prior context and thus harder to predict.
 As mentioned in the last point, a `min_context_tokens` argument was later added to the `RPTStructuredDataset` as an
 alternative to entropy filtering, as a quick fix to avoid high entropy predictions for each sample.
 
+&nbsp;
+
+## Future of Reinforcement Pretraining
+
+At the time of this readme update, RLP ([Reinforcement as a Pretraining Objective](https://github.com/NVlabs/RLP)) by
+Nvidia is an interesting inspiration following the steps of RPT.  
+
+Unlike RPT, RLP was done as a final step of pretraining (no reasoning model required), there is also no need to implement
+a reward function to score the model's responses, hence why they qualify themselves as "verifier free".  
+The signal/reward is derived directly from the model's responses. More specifically, comparing log likelihoods of the model predicting the next token with CoT vs without CoT.  
+We could reframe it as *"Did thinking about predicting the next token helped more than just predicting the next token
+directly?"* this is what they call "information gain" in their paper.
