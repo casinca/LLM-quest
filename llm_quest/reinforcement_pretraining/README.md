@@ -14,6 +14,19 @@ with extra attached modules or the [original MTP paper](https://arxiv.org/abs/24
 
 &nbsp;
 
+<!-- TOC -->
+
+  - [Details](#details)
+  - [RPT benefits](#rpt-benefits)
+  - [RPT Training: Test with our from-scratch Qwen3-0.6B arch](#rpt-training-test-with-our-from-scratch-qwen3-06b-arch)
+  - [Difficulties encountered](#difficulties-encountered)
+  - [RPT: structured datasets vs continuous corpus of text](#rpt-structured-datasets-vs-continuous-corpus-of-text)
+  - [Future of Reinforcement Pretraining](#future-of-reinforcement-pretraining)
+
+<!-- /TOC -->
+
+&nbsp;
+
 ## Details
 
 The 2-checks reward function they elaborated (see *3.2 Pre-Training with Reinforcement Learning in p.4* or the
