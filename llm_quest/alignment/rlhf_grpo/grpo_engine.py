@@ -369,17 +369,25 @@ def z_scores(rewards, num_samples, dr_grpo=None):
     Returns:
         torch.Tensor: Tensor of shape (B*,) containing the z-scores.
     """
-
     # reshaping per groups, shape (batch_size, num_samples), to calculate the advantages.
     # (We don't want stats from different groups/prompts to affect one another.)
     rewards = rewards.view(-1, num_samples)  # batch size inferred (ie rewards.shape[0] // num_samples)
-    group_mean = rewards.mean(dim=1, keepdim=True)
+
+    # lazily add an extra 0 reward to the group to avoid the edge case of std=0 when all rewards are the same but != 0
+    if config.use_phantom_reward:
+        phantom_reward = torch.zeros(rewards.shape[0], 1, device=rewards.device)
+        augmented_rewards = torch.cat([rewards, phantom_reward], dim=1)
+    else:
+        augmented_rewards = rewards
+
+    group_mean = augmented_rewards.mean(dim=1, keepdim=True)
 
     if dr_grpo == "dr_grpo":
         z_scores = rewards - group_mean
     else:
-        assert num_samples > 1, "num_samples must be greater than 1 to get a relative comparison"
-        group_std = rewards.std(dim=1, keepdim=True)
+        if not config.use_phantom_reward:
+            assert num_samples > 1, "num_samples must be greater than 1 to get a relative comparison"
+        group_std = augmented_rewards.std(dim=1, keepdim=True)
         z_scores = (rewards - group_mean) / (group_std + 1e-8)  # small epsilon to avoid the edge case div by zero
 
     return z_scores.view(-1)  # flattening back to (B,)
