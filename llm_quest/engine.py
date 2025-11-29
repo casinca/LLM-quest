@@ -26,7 +26,6 @@ def _calc_loss_batch(X, y, model, device, attn_mask=None, classification=False):
         torch.Tensor: The calculated loss for the batch.
     """
 
-    # putting on dedicated device
     X = X.to(device)
     y = y.to(device)
 
@@ -178,9 +177,11 @@ class LearningRateScheduler:
         total_decay_steps = self.total_steps - self.warmup_steps  # total step adjusted for warmup
         curr_decay_step = step - self.warmup_steps  # curr decay step adjusted for warmup
         cosine_decay = 0.5 * (1 + math.cos(math.pi * curr_decay_step / total_decay_steps))
+
         return self.min_lr + (self.peak_lr - self.min_lr) * cosine_decay
 
     def step(self, step):
+        """update the current iteration's learning rate (not preparing for the next iteration)"""
         # warmup or not
         if step < self.warmup_steps:
             self.current_lr = self.init_lr + self.lr_step * step
@@ -210,7 +211,6 @@ def training_eval_loop_simple(
     eval_freq,
     eval_iter,
     device,
-    accumulation_steps=1,
 ):
     """
     A simple training and evaluation loop for a model.
@@ -224,7 +224,6 @@ def training_eval_loop_simple(
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
-        accumulation_steps (int): Number of steps/accumulated gradients before updating parameters
     """
     step = 0
     # keeping track of metrics for plotting
@@ -248,15 +247,11 @@ def training_eval_loop_simple(
             targets = targets.to(device)
 
             logits = model(input_batch, attn_mask=attn_mask)
-
             loss = global_loss(logits, targets, model=model)
-            loss = loss / accumulation_steps
 
             loss.backward()
-
-            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
-                optimizer.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            optimizer.zero_grad()
 
             # eval
             if step % eval_freq == 0:
@@ -401,7 +396,7 @@ def training_eval_loop(
         model (torch.nn.Module): Model to train
         optimizer (torch.optim.Optimizer): Optimizer to use for training
         num_epoch (int): Number of epochs to train for
-        lr_scheduler (LRScheduler): Learning rate scheduler object
+        lr_scheduler (LearningRateScheduler): Learning rate scheduler object
         eval_freq (int): Number of steps between evaluations
         eval_iter (int): Number of batches to use during evaluation
         device (torch.device): Device to run training on (cuda/cpu)
@@ -417,6 +412,10 @@ def training_eval_loop(
         model.train()
 
         for i, batch in enumerate(train_loader):
+            # accumulation tracking logic
+            is_last_batch = i == len(train_loader) - 1
+            curr_accumulation_step = (i + 1) % accumulation_steps
+
             # --- Forward pass ---
             if len(batch) == 3:
                 input_batch, targets, attn_mask = batch
@@ -429,18 +428,21 @@ def training_eval_loop(
             targets = targets.to(device)
 
             # Autocast enable/disable for mixed precision training
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+            with torch.autocast(device.type, dtype=torch.bfloat16, enabled=use_amp):
                 logits = model(input_batch, attn_mask=attn_mask)
                 loss = global_loss(logits, targets, model=model)
-                loss = loss / accumulation_steps
+
+                # adjusting for non complete accumulation steps at the end of the epoch
+                if is_last_batch and curr_accumulation_step != 0:
+                    loss = loss / curr_accumulation_step
+                else:
+                    loss = loss / accumulation_steps
 
             loss.backward()
 
             # --- Optimizer step ---
-            if (i + 1) % accumulation_steps == 0 or i == len(train_loader) - 1:
-                # gradient clipping at a max norm of 1 (after warmup)
-                if step >= lr_scheduler.warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+            if curr_accumulation_step == 0 or is_last_batch:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
                 lr_scheduler.step(step)
                 optimizer.step()
@@ -453,6 +455,7 @@ def training_eval_loop(
                     train_losses.append(train_loss)
                     val_losses.append(val_loss)
 
+                    # NOTE: if we print the current training loss, we need to * accumulation_steps to get the actual loss
                     print(
                         f"Epoch: {epoch}, Step: {step}  | ",
                         f"Train loss: {train_loss:.5f}  Val loss: {val_loss:.5f}  | ",
@@ -603,8 +606,8 @@ def profile_training_eval_loop(
 
                 # Backward and optimizer step (simplified - no scaler needed for bfloat16)
                 loss.backward()
-                if step >= warmup_steps:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
 
                 # Evaluation

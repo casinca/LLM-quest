@@ -27,7 +27,7 @@ class VerifiableRewardCalculator:
         unfinished_answer_reward (float): The penalty for an unfinished answer (should be ≤ 0).
         reasoning_weight (float): A coeff to weight the reasoning reward vs. the answer.
         pad_token_id (int): The token id to use for padding.
-
+        dtype (torch.dtype): The dtype of the returned rewards.
     """
 
     def __init__(
@@ -37,6 +37,7 @@ class VerifiableRewardCalculator:
         wrong_answer_reward=0.0,
         unfinished_answer_reward=-1.0,
         reasoning_weight=0.0,
+        dtype=torch.bfloat16,
         pad_token_id=50256,  # placeholder for now
     ):
         assert wrong_answer_reward <= 0, "wrong_answer_reward should be ≤ 0"
@@ -47,6 +48,7 @@ class VerifiableRewardCalculator:
         self.wrong_answer_reward = wrong_answer_reward
         self.unfinished_answer_reward = unfinished_answer_reward
         self.reasoning_weight = reasoning_weight  # placeholder for now in case I want to do something fancy
+        self.dtype = dtype
 
     def _calc_answer_reward(self, response_strings, correct_answers):
         """
@@ -103,10 +105,9 @@ class VerifiableRewardCalculator:
 
         """
         decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
-
         answer_rewards = self._calc_answer_reward(decoded_responses, correct_answers)
 
-        return torch.tensor(answer_rewards, dtype=torch.bfloat16, device=model_responses.device)
+        return torch.tensor(answer_rewards, dtype=self.dtype, device=model_responses.device)
 
 
 def rlvr_grpo_prompt_collator(batch, pad_token_id=50256, custom_max_length=None, device=torch.device("cpu")):
@@ -178,6 +179,8 @@ def rlvr_grpo_training_loop(
     device,
     reward_calculator,
     max_gen=70,
+    eos_ids=50256,
+    pad_id=50256,
     min_clip_eps=0.2,
     max_clip_eps=0.2,
     beta=1.0,
@@ -189,6 +192,9 @@ def rlvr_grpo_training_loop(
     min_reward_threshold=0.35,
     loss_variant="grpo",
     save_checkpoint=True,
+    rope_model=False,
+    lr_scheduler=None,
+    sampling_params=None,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -207,6 +213,8 @@ def rlvr_grpo_training_loop(
         device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
         reward_calculator (Callable): A callable object that calculates the rewards for a batch of responses.
         max_gen (int): Maximum number of tokens to generate for each response.
+        eos_ids (int | List[int]): Token ids to use for the end of sequence.
+        pad_id (int): Token id to use for padding.
         min_clip_eps (float): Lower clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
@@ -220,6 +228,10 @@ def rlvr_grpo_training_loop(
         loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
         "gspo".
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
+        rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
+        lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
+        sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
+
     Returns:
         None: The function modifies the `policy_model` in place.
 
@@ -235,7 +247,6 @@ def rlvr_grpo_training_loop(
         reference_model.load_state_dict(policy_model.state_dict())
 
         for batch in train_loader:
-            step += 1
             policy_model.eval()  # for every new batch, π_θ and π_θ_old are the same
             # note: generate_loop() comes with torch.inference_mode() and to gpu device, no need to reapply here
 
@@ -253,15 +264,17 @@ def rlvr_grpo_training_loop(
                 attention_mask=dup_prompts_masks,
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
-                top_k=20,
-                temp=1,
                 last_real=last_real_pos,
-                rope_model=False,
+                rope_model=rope_model,
+                device=device,
+                eos_ids=eos_ids,
+                pad_id=pad_id,
+                **(sampling_params if sampling_params is not None else {}),
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
                 responses,
-                len_prompt=batch["padded_prompts"].shape[-1],
+                prompt_masks=dup_prompts_masks,
                 device=device,
             )
 
@@ -273,6 +286,7 @@ def rlvr_grpo_training_loop(
                     logits=policy_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
                 )
+
                 reference_logprobs = log_probs_per_token(
                     logits=reference_model(collated_batch["padded_responses"], collated_batch["attn_masks"]),
                     inputs=collated_batch["padded_responses"],
@@ -320,15 +334,18 @@ def rlvr_grpo_training_loop(
                 )
 
                 optimizer.zero_grad()
+                if lr_scheduler is not None:
+                    lr_scheduler.step(step)
                 grpo_loss_batch.backward()
                 optimizer.step()
+                step += 1
 
                 cum_grpo_loss += grpo_loss_batch.item()
 
             avg_grpo_loss = cum_grpo_loss / num_grad_updates
 
             # --- Evaluation ---
-            if evaluation and eval_freq is not None and (step % eval_freq == 0):
+            if evaluation and eval_freq is not None and (step == 1 or step % eval_freq == 0):
                 eval_metrics = GRPOEvaluator.evaluate(
                     train_loader=train_loader,
                     val_loader=val_loader,
@@ -341,10 +358,15 @@ def rlvr_grpo_training_loop(
                     max_gen=max_gen,
                     eval_num_samples=eval_num_samples,
                     eval_num_batches=eval_batches,
+                    rope_model=rope_model,
+                    eos_ids=eos_ids,
+                    pad_id=pad_id,
+                    sampling_params=sampling_params,
                 )
+
                 print(
                     f"Step {step} | "
-                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | "
+                    f"Avg GRPO Loss: {avg_grpo_loss:.4f} | lr: {(lr_scheduler.current_lr if lr_scheduler is not None else optimizer.param_groups[0]['lr']):.1e} | "
                     f"T. Rwd: {eval_metrics['train_reward']:.4f}, T. KL Div: {eval_metrics['train_kl_div']:.4f} | "
                     f"V. Rwd: {eval_metrics['val_reward']:.4f}, V. KL Div: {eval_metrics['val_kl_div']:.4f}"
                 )

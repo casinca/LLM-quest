@@ -52,9 +52,8 @@ def training_eval_loop_mtp(
 
             # Backward pass and optimizer step (simplified - no scaler needed for bfloat16)
             loss.backward()
-            # gradient clipping at a max norm of 1 (after warmup)
-            if step >= lr_scheduler.warmup_steps:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
 
             lr_scheduler.step(step)
             optimizer.step()

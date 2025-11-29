@@ -1,3 +1,5 @@
+from typing import List, Union
+
 import torch
 
 from llm_quest.utils import KVCache
@@ -33,7 +35,7 @@ def generate_loop(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=None,
+    eos_ids=None,
     device=torch.device("cuda"),
 ):
     """
@@ -57,7 +59,7 @@ def generate_loop(
                                 - if 1, untempered distribution
                                 - if 0, uses greedy sampling. Defaults to 0.0.
 
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+        eos_ids (int | List[int], optional): Token ID(s) that signal end of text. Generation stops early if encountered.
                                 Defaults to None.
         device (torch.device or str, optional): Device to move the input tensor to. Defaults to "cuda".
 
@@ -65,6 +67,11 @@ def generate_loop(
         torch.Tensor: Input tensor concatenated with generated token IDs
     """
     input_tensor = input_tensor.to(device)
+
+    if eos_ids is not None:
+        if not isinstance(eos_ids, list):
+            eos_ids = [eos_ids]
+        eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
 
     for i in range(max_gen):
         # truncate input to compatible context size, shape (b, ctx_len)
@@ -75,7 +82,8 @@ def generate_loop(
 
         next_token = sampling(logits, top_k, top_p, min_p, temp)
 
-        if eos_id is not None and next_token == eos_id:  # if a EoT is seen stops the generation earlier
+        # if any of the EoS tokens are seen, stop the generation
+        if eos_ids is not None and torch.isin(next_token, eos_ids_tensor).any():
             break
 
         input_tensor = torch.cat(
@@ -95,7 +103,7 @@ def generate_loop_kv_cache(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=None,
+    eos_ids=None,
     device=torch.device("cuda"),
     rope_model=False,
 ):
@@ -113,6 +121,12 @@ def generate_loop_kv_cache(
     kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
 
     input_tensor = input_tensor.to(device)
+
+    if eos_ids is not None:
+        if not isinstance(eos_ids, list):
+            eos_ids = [eos_ids]
+        eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
+
     # truncate input to compatible context size, shape (b, ctx_len)
     trunc_input = input_tensor[:, -context_length:]
     # For RoPE models when using KVCache and incrementing position_id, shape (batch_size(1), 1)
@@ -126,7 +140,8 @@ def generate_loop_kv_cache(
         for _ in range(max_gen):
             next_token = sampling(logits, top_k, top_p, min_p, temp)
 
-            if eos_id is not None and next_token == eos_id:
+            # if any of the EoS tokens are seen, stop the generation
+            if eos_ids is not None and torch.isin(next_token, eos_ids_tensor).any():
                 break
 
             token_ids.append(next_token)
@@ -252,7 +267,8 @@ def generate_batched_loop_kv_cache(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=50256,
+    eos_ids: Union[int, List[int]] = 50256,  # adding type hint to remove linting error
+    pad_id=50256,
     device=torch.device("cuda"),
     last_real=None,
     rope_model=True,
@@ -278,7 +294,9 @@ def generate_batched_loop_kv_cache(
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+        eos_ids (int | List[int], optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to 50256 (GPT-2 EOS token).
+        pad_id (int, optional): Token ID that signals padding.
                                 Defaults to 50256 (GPT-2 EOS token).
         device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor ): A boolean tensor of shape (batch_size, sequence_length) indicating
@@ -298,11 +316,16 @@ def generate_batched_loop_kv_cache(
     input_tensor = input_tensor.to(device)
     attention_mask = attention_mask.bool().to(device)
 
+    if not isinstance(eos_ids, list):
+        eos_ids = [eos_ids]
+    eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
+
     if last_real is not None:
         last_real = last_real.to(device)
 
     batch_size = input_tensor.shape[0]
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    pad_token_tensor = torch.tensor(pad_id, device=device, dtype=torch.long)
 
     num_layers = len(model.trf_blocks)
     kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
@@ -328,16 +351,13 @@ def generate_batched_loop_kv_cache(
 
     next_token = sampling(logits, top_k, top_p, min_p, temp)
     generated_tokens.append(next_token)
-    finished |= next_token.squeeze(1) == eos_id
+    finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
+    attention_mask = torch.cat([attention_mask, (~finished).unsqueeze(-1)], dim=-1)
 
     # --- Continuing generations with kv cache ---
     for _ in range(max_gen - 1):
         if finished.all():
             break
-
-        # extend attention mask with True for the newly generated token
-        new_mask = torch.ones_like(next_token, dtype=torch.bool)
-        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
         with torch.inference_mode():
             if rope_model:
@@ -357,12 +377,14 @@ def generate_batched_loop_kv_cache(
 
         sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
-        # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
-        next_token = torch.where(
-            finished.unsqueeze(-1), torch.tensor(eos_id, device=device, dtype=torch.long), sampled_tokens
-        )
+        # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token.
+        next_token = torch.where(finished.unsqueeze(-1), pad_token_tensor, sampled_tokens)
         generated_tokens.append(next_token)
-        finished |= next_token.squeeze(1) == eos_id
+        finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
+
+        # extend attention mask: True for unfinished sequences
+        new_mask = (~finished).unsqueeze(-1)
+        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
     all_generated = torch.cat(generated_tokens, dim=1)
     return torch.cat([input_tensor, all_generated], dim=1)

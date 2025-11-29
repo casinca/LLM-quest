@@ -41,7 +41,7 @@ for instruct in test_txt[0:2]:
         context_length=model_cfg["context_length"],
         temp=1,
         top_k=20,
-        eos_id=50256,
+        eos_ids=50256,
         device=model_device,
     )
 

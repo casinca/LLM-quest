@@ -192,20 +192,23 @@ class ResponseExtractor:
         return None
 
     @classmethod
-    def get_answer(cls, response, tail=50):
+    def get_answer(cls, response):
         """
         Extracts the final answer content from <answer> tags in the response.
+        Ensures the answer is extracted from after the last </think> tag if present.
 
         Args:
-            response (str): The response text containing <answer> tags
-            tail (int): range of chars, from the end, to consider for the answer extraction
+            response (str): The response text that should contain <answer> tags
 
         Returns:
-            str: The answer content, or None if not found
+            str: The answer content (exactly as it appears in the <answer> tags, not sanitized), or None if not found
         """
-        tail = response[-tail:]
-        matches = re.findall(cls.ANSWER_PATTERN, tail)
+        # we want to look for an answer after the CoT thinking block (specifically after the last </think> tag seen)
+        if "</think>" not in response:  # if there isn't event a think tag, it's not even a valid response
+            return None
+        response = response.rsplit("</think>", 1)[-1]
 
+        matches = re.findall(cls.ANSWER_PATTERN, response)
         if matches:
             return matches[-1]  # return the latest flagged answer content
         return None
