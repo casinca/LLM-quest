@@ -384,7 +384,13 @@ class CheckpointEvaluator:
         return False
 
 
+# Optimizing KVcache:
+# First implementation of KVcache, was concatenating to the existing cache, at each step
 # Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
+# then we replaced concats, with indexing inside a pre-allocated cache of length: context_len
+#
+# 3rd update ref: https://github.com/casinca/LLM-quest/commit/85ac4b14950307c74006e6199fd815c49fe172ae
+# optimizing pre-allocated cache by only extending when needed by chunk_size
 class KVCache:
     """
     KV cache with dynamic size (increased by chunk_size as sequence length increases) and updating by directly indexing
