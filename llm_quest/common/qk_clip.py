@@ -103,7 +103,7 @@ class QKClipMHA:
                 for i in range(len(model.trf_blocks))
             ]
             self.num_heads = model.trf_blocks[0].att.num_heads
-            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
+            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]  # hidden_dim = d_out
             self.head_dim = hidden_dim // self.num_heads
 
     @torch.no_grad()
@@ -114,7 +114,7 @@ class QKClipMHA:
 
         Args:
             model (torch.nn.Module): The LLM model to retrieve Q & K weights from.
-            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (n_heads,) tensors: the maximum
+            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (num_heads,) tensors: the maximum
             attention logits of each head in that i-th layer.
 
         Modifies the model's weights in-place.
@@ -127,17 +127,17 @@ class QKClipMHA:
             if not needs_clipping.any():
                 continue
 
-            gamma_factors_per_head = torch.where(
+            gamma_factors_per_head = torch.where(  # shape (num_heads,)
                 needs_clipping,
                 self.clip_threshold / max_attn_logits_per_head,
                 1.0,
             )
 
             query_weights, key_weights = self.cached_qk_layers[i]
-            # reshaping Q and K weights to (n_heads, head_dim, hidden_dim) for vectorized mult
+            # reshaping Q and K weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vect mult
             query_reshaped = query_weights.view(self.num_heads, self.head_dim, -1)
             key_reshaped = key_weights.view(self.num_heads, self.head_dim, -1)
-            # applying alpha exponent to gamma factors and reshaping to (n_heads, 1, 1) for vectorized mult
+            # applying alpha exponent to gamma factors and reshaping to (num_heads, 1, 1) for vectorized multiplication
             query_scales = (gamma_factors_per_head**self.alpha).view(self.num_heads, 1, 1)
             key_scales = (gamma_factors_per_head ** (1 - self.alpha)).view(self.num_heads, 1, 1)
 
@@ -177,7 +177,7 @@ class MagnitudeQKClipMHA:
                 for i in range(len(model.trf_blocks))
             ]
             self.num_heads = model.trf_blocks[0].att.num_heads
-            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]
+            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]  # hidden_dim = d_out
             self.head_dim = hidden_dim // self.num_heads
 
     @torch.no_grad()
@@ -188,7 +188,7 @@ class MagnitudeQKClipMHA:
 
         Args:
             model (torch.nn.Module): The LLM model to retrieve Q & K weights from.
-            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (n_heads,) tensors: the maximum
+            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (num_heads,) tensors: the maximum
             attention logits of each head in that i-th layer.
 
         Modifies the model's weights in-place.
@@ -202,10 +202,10 @@ class MagnitudeQKClipMHA:
                 continue
 
             query_weights, key_weights = self.cached_qk_layers[i]
-            # reshaping Q and K weights to (n_heads, head_dim, hidden_dim) for vectorized mult
+            # reshaping Q and K weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vect mult
             query_reshaped = query_weights.view(self.num_heads, self.head_dim, -1)
             key_reshaped = key_weights.view(self.num_heads, self.head_dim, -1)
-            # applying alpha exponent to gamma factors and reshaping to (n_heads, 1, 1) for vectorized mult
+            # applying alpha exponent to gamma factors and reshaping to (num_heads, 1, 1) for vectorized mult
             query_scales = (gamma_factors_per_head**self.alpha).view(self.num_heads, 1, 1)
             key_scales = (gamma_factors_per_head ** (1 - self.alpha)).view(self.num_heads, 1, 1)
 
