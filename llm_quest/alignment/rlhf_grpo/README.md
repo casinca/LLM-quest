@@ -7,6 +7,18 @@ from scratch.
 See [visualization](#visualization-of-the-pipeline) for the pipeline or jump straight to some interesting
 [results](#results) (or funny reward hacking [example](#reward-hacking-and-model-collapse)).
 
+<!-- TOC -->
+
+  - [GRPO](#grpo)
+  - [Pipeline](#pipeline)
+  - [Results](#results)
+  - [GRPO Variants](#grpo-variants)
+  - [Additional details](#additional-details)
+
+<!-- /TOC -->
+
+&nbsp;
+
 ## GRPO
 
 GRPO is a pure policy gradient method introduced in the DeepSeekMath paper: https://arxiv.org/abs/2402.03300. DeepSeek
