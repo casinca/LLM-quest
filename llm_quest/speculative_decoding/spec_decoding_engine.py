@@ -1,7 +1,7 @@
 import torch
 
 from llm_quest.generate import _top_k_sampling, _top_p_sampling, sampling
-from llm_quest.gpt.gpt_attention import KVCache
+from llm_quest.utils import KVCache
 
 
 def get_modified_distrib(logits, top_k, top_p, temp, return_logprobs=False):
