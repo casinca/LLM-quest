@@ -6,9 +6,26 @@
 *note1: Both implementations are solely based on research papers (that's the goal), all of them mentioned, are in the
 [resources](#resources--acknowledgements) section.*  
 *note2: og images from DeepSeek papers, edited by me*  
-*note3: I'm loosely using the term "logits" for the raw output of the gate, before activation, here*  
+*note3: I'm loosely using the term "logits" for the raw output of the gate, before activation.*  
 
-## 1/ Traditional MoE:
+<br>
+<!-- TOC -->
+
+- [1. Traditional MoE:](#1-traditional-moe)
+    - [a) The architecture implemented](#a-the-architecture-implemented)
+    - [b) More details](#b-more-details)
+- [2. DeepSeek MoE V2, V3 and R1](#2-deepseek-moe-v2-v3-and-r1)
+    - [a) What changes from part 1](#a-what-changes-from-part-1)
+    - [b) More details](#b-more-details)
+- [Additional notes](#additional-notes)
+- [Resources & Acknowledgements:](#resources--acknowledgements)
+- [Mistakes](#mistakes)
+
+<!-- /TOC -->
+
+<br>
+
+## 1. Traditional MoE:
 
 ### a) The architecture implemented:
 
@@ -123,11 +140,11 @@ case.
 
 <br>
 
-## 2/ DeepSeek MoE (V2, V3 and R1)
+## 2. DeepSeek MoE (V2, V3 and R1)
 
 <img src="./_moe_img/moe_img2.png" width="800">
 
-### a) What changes from 1/ :
+### a) What changes from part 1. :
 
 - Shared experts isolation
 
@@ -219,8 +236,8 @@ There was a divergence between the paper and their vLLM implementation.
 In the paper, they initially appeared to have a different flow: Apply the softmax to the **top-k logits only**.
 
 Whereas most implementations I've seen from Google with Gshard, Switch, ST MoE, Outrageous MoEs, DeepSeek or Microsoft
-DeepSpeed, they all use the same auxiliary loss in 1/ or similar, which requires doing the softmax **on all logits** as
-we saw above for $P_i$.  
+DeepSpeed, they all use the same auxiliary loss mentioned in part 1 or similar, which requires doing the softmax 
+**on all logits** as we saw above for $P_i$.  
 Thus I thought Mistral wasn't using the same aux loss as others... From digging around, found on HF repo this issue:
 https://github.com/huggingface/transformers/pull/28403. It turns out they weren't following the paper formula (softmax
 on topk) after all but following what others did.
