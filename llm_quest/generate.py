@@ -319,13 +319,13 @@ def generate_batched_loop_kv_cache(
     if not isinstance(eos_ids, list):
         eos_ids = [eos_ids]
     eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
+    pad_token_tensor = torch.tensor(pad_id, device=device, dtype=torch.long)
 
     if last_real is not None:
         last_real = last_real.to(device)
 
     batch_size = input_tensor.shape[0]
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
-    pad_token_tensor = torch.tensor(pad_id, device=device, dtype=torch.long)
 
     num_layers = len(model.trf_blocks)
     kv_cache = KVCache(num_layers=num_layers, prompt_len=input_tensor.shape[-1], context_len=context_length)
@@ -345,46 +345,41 @@ def generate_batched_loop_kv_cache(
         # whether RoPE model or not, we don't need specific position_ids for the first generation, in right padding
         logits = model(input_tensor, attn_mask=attention_mask, kv_cache=kv_cache)
 
-    # extract logits from the last real token position for right padding
-    seq_pos = torch.arange(batch_size, device=device)
-    logits = logits[seq_pos, last_real, :]
+        # extract logits from the last real token position for right padding
+        seq_pos = torch.arange(batch_size, device=device)
+        logits = logits[seq_pos, last_real, :]
 
-    next_token = sampling(logits, top_k, top_p, min_p, temp)
-    generated_tokens.append(next_token)
-    finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
-    attention_mask = torch.cat([attention_mask, (~finished).unsqueeze(-1)], dim=-1)
+        # --- Continuing generations with kv cache ---
+        for i in range(max_gen):
+            sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
-    # --- Continuing generations with kv cache ---
-    for _ in range(max_gen - 1):
-        if finished.all():
-            break
+            # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token
+            next_token = torch.where(finished.unsqueeze(-1), pad_token_tensor, sampled_tokens)
+            generated_tokens.append(next_token)
+            finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
 
-        with torch.inference_mode():
-            if rope_model:
-                logits = model(
-                    next_token,
-                    attn_mask=attention_mask,
-                    kv_cache=kv_cache,
-                    position_ids=next_pos_ids,
-                ).squeeze(1)
-                next_pos_ids += 1
-            else:
-                logits = model(
-                    next_token,
-                    attn_mask=attention_mask,
-                    kv_cache=kv_cache,
-                ).squeeze(1)
+            # extend attention mask: True for unfinished sequences
+            new_mask = (~finished).unsqueeze(-1)
+            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
-        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
+            if finished.all():
+                break
 
-        # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token.
-        next_token = torch.where(finished.unsqueeze(-1), pad_token_tensor, sampled_tokens)
-        generated_tokens.append(next_token)
-        finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
-
-        # extend attention mask: True for unfinished sequences
-        new_mask = (~finished).unsqueeze(-1)
-        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
+            if i < max_gen - 1:  # avoid a last extra wasted computation
+                if rope_model:
+                    logits = model(
+                        next_token,
+                        attn_mask=attention_mask,
+                        kv_cache=kv_cache,
+                        position_ids=next_pos_ids,
+                    ).squeeze(1)
+                    next_pos_ids += 1
+                else:
+                    logits = model(
+                        next_token,
+                        attn_mask=attention_mask,
+                        kv_cache=kv_cache,
+                    ).squeeze(1)
 
     all_generated = torch.cat(generated_tokens, dim=1)
     return torch.cat([input_tensor, all_generated], dim=1)
