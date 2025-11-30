@@ -427,6 +427,42 @@ def log_probs_per_token(logits, inputs):
     return label_log_probs  # shape (b, s-1)
 
 
+# Instead of first calculating the full distributions of log probabilities for each token and having a large (b, s-1, v)
+# tensor to then filter log probs for the wanted/label tokens:
+# We can filter directly the logits because logits are the same as unnormalized log probabilities (x_i = log(exp(x_i)))
+# Therefore we just have to calculate and subtract the 2nd term via LogSumExp to get the log probs:
+# log(P(x_i)) =  log(exp(x_i)) - log(sum(exp(x_j)) = x_i - log(sum(exp(x_j)))
+#
+# NOTE: As per Huggingface's TRL, this method has some problems with BF16 precision.
+# which can be confirmed even here as some training batches will return loss 0.0000
+# https://github.com/huggingface/trl/blob/0726977a3aaf893e594dc7c64aced8e90770f020/trl/trainer/utils.py#L1532C1-L1532C102
+def log_probs_per_token_optimized(logits, inputs):
+    """
+    Compute and retrieve the log probabilities assigned to each label in a sequence.
+    Shouldn't be used with BF16 or <=16 bits precision for now
+
+    We are masking logprobs for prompt + padding tokens later with the loss_mask.
+
+    Args:
+        logits (torch.Tensor): Tensor of shape (B*, S*, vocab_size) containing the logits.
+        inputs (torch.Tensor): Tensor of shape (B*, S*) containing the generated tokens from the policy.
+
+        *considering B as batch_size * num_samples and S as prompt_len+max_gen.
+
+    Returns:
+        torch.Tensor: Tensor of shape (B, S-1)* containing the log probabilities.
+    """
+    logits = logits[:, :-1, :]
+    labels = inputs[:, 1:]
+
+    # select logits assigned to each label
+    label_logits = torch.gather(logits, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    # LogSumExp reduces logits to (b, s-1), we avoid creating a (b, s-1, v) tensor
+    label_log_probs = label_logits - torch.logsumexp(logits, dim=-1)  # x_i - log(sum(exp(x_j)))
+
+    return label_log_probs  # shape (b, s-1)
+
+
 def kl_div_per_token(policy_logprobs, reference_logprobs):
     """
     Compute the KL divergence per token between the policy and reference log probabilities.
