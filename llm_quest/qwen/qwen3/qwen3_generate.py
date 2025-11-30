@@ -135,7 +135,7 @@ batched_input_ids = batch_encoded.input_ids.to(device)
 batched_attention_mask = batch_encoded.attention_mask.to(device)
 
 torch.manual_seed(seed)
-batched_output = generate_batched_loop_kv_cache(
+batched_output = batched_generation_func(
     input_tensor=batched_input_ids,
     model=qwen3_model,
     max_gen=max_gen,
