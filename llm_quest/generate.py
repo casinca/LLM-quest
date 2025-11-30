@@ -394,7 +394,8 @@ def generate_batched_loop_kv_cache_left_pad(
     top_p=None,
     min_p=None,
     temp=0.0,
-    eos_id=50256,
+    eos_ids: Union[int, List[int]] = 50256,
+    pad_id=50256,
     device=torch.device("cuda"),
     rope_model=True,  # placeholder for API
     *,
@@ -418,7 +419,9 @@ def generate_batched_loop_kv_cache_left_pad(
         temp (float, optional): Sampling temperature. A higher value makes the output more random.
                                 if 1, untempered distribution.
                                 Defaults to 0.0 (greedy sampling).
-        eos_id (int, optional): Token ID that signals end of text. Generation stops early if encountered.
+        eos_ids (int | List[int], optional): Token ID that signals end of text. Generation stops early if encountered.
+                                Defaults to 50256 (GPT-2 EOS token).
+        pad_id (int, optional): Token ID that signals padding.
                                 Defaults to 50256 (GPT-2 EOS token).
         device (torch.device or str, optional): The device to perform computations on. Defaults to "cuda".
         attention_mask (torch.Tensor): tensor of shape (batch_size, sequence_length) indicating
@@ -430,6 +433,11 @@ def generate_batched_loop_kv_cache_left_pad(
     """
     input_tensor = input_tensor.to(device)
     attention_mask = attention_mask.bool().to(device)
+
+    if not isinstance(eos_ids, list):
+        eos_ids = [eos_ids]
+    eos_ids_tensor = torch.tensor(eos_ids, device=device, dtype=torch.long)
+    pad_token_tensor = torch.tensor(pad_id, device=device, dtype=torch.long)
 
     batch_size = input_tensor.shape[0]
     finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
@@ -450,39 +458,33 @@ def generate_batched_loop_kv_cache_left_pad(
     with torch.inference_mode():
         logits = model(input_tensor, attn_mask=attention_mask, kv_cache=kv_cache, position_ids=position_ids)
 
-    # with left padding, all sequences end at position -1 (no need to track last real token like right padding)
-    logits = logits[:, -1, :]
+        # with left padding, all sequences end at position -1 (no need to track last real token like right padding)
+        logits = logits[:, -1, :]
 
-    next_token = sampling(logits, top_k, top_p, min_p, temp)
-    generated_tokens.append(next_token)
-    finished |= next_token.squeeze(1) == eos_id
+        # --- Continuing generations with kv cache ---
+        for i in range(max_gen):
+            sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
 
-    # --- Continuing generations with kv cache ---
-    for _ in range(max_gen - 1):
-        if finished.all():
-            break
+            # For finished sequences, we keep appending Pad token. For unfinished sequences, we append the new token.
+            next_token = torch.where(finished.unsqueeze(-1), pad_token_tensor, sampled_tokens)
+            generated_tokens.append(next_token)
+            finished |= torch.isin(next_token.squeeze(1), eos_ids_tensor)
 
-        # extend attention mask with True for the newly generated token
-        new_mask = torch.ones_like(next_token, dtype=torch.bool)
-        attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
+            # extend attention mask: True for unfinished sequences
+            new_mask = (~finished).unsqueeze(-1)
+            attention_mask = torch.cat([attention_mask, new_mask], dim=-1)
 
-        with torch.inference_mode():
-            logits = model(
-                next_token,
-                attn_mask=attention_mask,
-                kv_cache=kv_cache,
-                position_ids=next_pos_id,
-            ).squeeze(1)
-        next_pos_id += 1
+            if finished.all():
+                break
 
-        sampled_tokens = sampling(logits, top_k, top_p, min_p, temp)
-
-        # For finished sequences, we keep appending EoS. For unfinished sequences, we append the new token.
-        next_token = torch.where(
-            finished.unsqueeze(-1), torch.tensor(eos_id, device=device, dtype=torch.long), sampled_tokens
-        )
-        generated_tokens.append(next_token)
-        finished |= next_token.squeeze(1) == eos_id
+            if i < max_gen - 1:  # avoid a last extra wasted computation
+                logits = model(
+                    next_token,
+                    attn_mask=attention_mask,
+                    kv_cache=kv_cache,
+                    position_ids=next_pos_id,
+                ).squeeze(1)
+            next_pos_id += 1
 
     all_generated = torch.cat(generated_tokens, dim=1)
     return torch.cat([input_tensor, all_generated], dim=1)
