@@ -81,6 +81,8 @@ class QKClip:
 
     QK-clip is designed to prevent attention logits from becoming excessively large by rescaling the Q and K weights for
     each attention head, and avoid numerical instability/training issues.
+    NOTE: This implementation is compatible with Multi-Head (MHA), Grouped-Query (GQA), and Multi-Query (MQA) attention
+    mechanisms.
 
     Args:
         clip_threshold (float): The threshold(τ) in the formula for clipping the attention logits.
@@ -93,7 +95,8 @@ class QKClip:
         self.clip_threshold = clip_threshold
         self.alpha = alpha
         self.cached_qk_layers = None  # caching references to avoid recomputation
-        self.num_heads = None
+        self.num_query_heads = None  # num_heads in attention class
+        self.num_kv_heads = None
         self.head_dim = None
 
     def _init_cache(self, model):
@@ -102,9 +105,15 @@ class QKClip:
                 (model.trf_blocks[i].att.w_queries.weight, model.trf_blocks[i].att.w_keys.weight)
                 for i in range(len(model.trf_blocks))
             ]
-            self.num_heads = model.trf_blocks[0].att.num_heads
-            hidden_dim = model.trf_blocks[0].att.w_queries.weight.shape[0]  # hidden_dim = d_out
-            self.head_dim = hidden_dim // self.num_heads
+            # In my case the attention block always has a num_heads attribute (for queries) and optionally num_kv_groups
+            attention_block = model.trf_blocks[0].att
+            self.num_query_heads = attention_block.num_heads
+            # fallback for MHA models that don't have a num_kv_groups attribute, so num_kv_groups = num_query_heads.
+            self.num_kv_heads = getattr(attention_block, "num_kv_groups", self.num_query_heads)
+
+            q_hidden_dim = attention_block.w_queries.weight.shape[0]  # hidden_dim = d_out
+            self.head_dim = q_hidden_dim // self.num_query_heads
+            self.is_not_mha = self.num_query_heads != self.num_kv_heads
 
     @torch.no_grad()
     def __call__(self, model, max_attn_logits_per_layer):
@@ -114,7 +123,7 @@ class QKClip:
 
         Args:
             model (torch.nn.Module): The LLM model to retrieve Q & K weights from.
-            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (num_heads,) tensors: the maximum
+            max_attn_logits_per_layer (list[torch.Tensor]): A list containing 1D (n_query_heads,) tensors: the maximum
             attention logits of each head in that i-th layer.
 
         Modifies the model's weights in-place.
@@ -127,21 +136,35 @@ class QKClip:
             if not needs_clipping.any():
                 continue
 
-            gamma_factors_per_head = torch.where(  # shape (num_heads,)
+            gamma_factors_per_query_head = torch.where(  # (num_heads/num_query_heads,)
                 needs_clipping,
                 self.clip_threshold / max_attn_logits_per_head,
                 1.0,
             )
 
             query_weights, key_weights = self.cached_qk_layers[i]
-            # reshaping Q and K weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vect mult
-            query_reshaped = query_weights.view(self.num_heads, self.head_dim, -1)
-            key_reshaped = key_weights.view(self.num_heads, self.head_dim, -1)
-            # applying alpha exponent to gamma factors and reshaping to (num_heads, 1, 1) for vectorized multiplication
-            query_scales = (gamma_factors_per_head**self.alpha).view(self.num_heads, 1, 1)
-            key_scales = (gamma_factors_per_head ** (1 - self.alpha)).view(self.num_heads, 1, 1)
 
+            # Query Scaling (same for MHA, GQA, MQA): W_q = W_q * gamma^alpha
+            # reshaping Q weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vect mult
+            query_reshaped = query_weights.view(self.num_query_heads, self.head_dim, -1)
+            # applying alpha exponent to gamma factors and reshaping to (num_heads, 1, 1) for vectorized multiplication
+            query_scales = (gamma_factors_per_query_head**self.alpha).view(self.num_query_heads, 1, 1)
             query_reshaped *= query_scales
+
+            # Key Scaling (MHA or GQA/MQA): (technically we could unify since MHA is GQA with num_kv_groups = num_heads)
+            # W_k = W_k * gamma^(1-alpha)
+            key_reshaped = key_weights.view(self.num_kv_heads, self.head_dim, -1)
+
+            if self.is_not_mha:
+                num_queries_per_kv = self.num_query_heads // self.num_kv_heads  # = self.num_repeat in attention class
+                gamma_factors_grouped = gamma_factors_per_query_head.view(self.num_kv_heads, num_queries_per_kv)
+                # For each KV head, we use the minimum gamma (strongest clip factor) from its corresponding query group.
+                # This is the safest/strictest approach to ensure clipping is effective for the head that needs it most
+                min_gamma_per_kv_head = torch.min(gamma_factors_grouped, dim=1).values
+                key_scales = (min_gamma_per_kv_head ** (1 - self.alpha)).view(self.num_kv_heads, 1, 1)
+            else:
+                key_scales = (gamma_factors_per_query_head ** (1 - self.alpha)).view(self.num_kv_heads, 1, 1)
+
             key_reshaped *= key_scales
 
 
