@@ -74,7 +74,7 @@ class QKClipNaive:
                 key_weights *= k_scale
 
 
-class QKClipMHA:
+class QKClip:
     """
     Standalone class to apply the per head QK-clip (Query-Key) technique from Moonshot AI, based on MuonClip
     Optimizer: https://github.com/MoonshotAI/Kimi-K2/blob/main/tech_report.pdf
