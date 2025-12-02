@@ -1,6 +1,9 @@
 # This is a standalone implementation of the qk clip technique from Moonshot.ai used in their MuonClip optimizer:
 # https://moonshotai.github.io/Kimi-K2/ and https://github.com/MoonshotAI/Kimi-K2/blob/main/tech_report.pdf
 #
+# Unlike Moonshot.ai's paper which describe application for MLA, this implementation is compatible with MHA, GQA or MQA.
+# See motivation: https://github.com/casinca/LLM-quest/pull/14
+#
 # QK-Clip can be universally applied with any optimizer, and not specifically tied to Muon (even though this specific
 # optimizer benefits from it a lot due to its update mechanism), hence a standalone class.
 #
