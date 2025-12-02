@@ -21,8 +21,8 @@
 
 ## Latest 3 updates
 
+- Moonshot.ai's QK-Clip compatibility with Grouped attention variants (GQA, MQA)
 - Revisiting Reinforcement Pretraining (RPT) with a more robust Qwen3-0.6B
-- Multimodal Part 2: Vision Language Model (VLM)
 - Qwen3-Next
 
 &nbsp;
