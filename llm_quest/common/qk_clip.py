@@ -115,6 +115,38 @@ class QKClip:
             self.head_dim = q_hidden_dim // self.num_query_heads
             self.is_not_mha = self.num_query_heads != self.num_kv_heads
 
+    @staticmethod
+    def _gamma_reduction(gamma_factors_grouped, reduction="min"):
+        """
+        Intended for the case of grouped attention like GQA or MQA:
+        Reduces the gamma factors per query head to a single gamma factor in order to choose which one to use for the
+        corresponding shared K heads.
+
+        Args:
+            gamma_factors_grouped (torch.Tensor): The gamma factors per query head for a given layer.
+            reduction (str): The reduction method to use. Can be "min", "max", or "mean".
+                            Default to "min" as it's the only approach that guarantee the original intent of
+                            max logit <= threshold at the expanse of clipping heads that don't need it.
+
+                - "min": Use the minimum gamma factor (strongest clip factor, safest approach)
+                - "max": Use the maximum gamma factor (weakest clip factor, riskier approach)
+                - "mean": Use the mean gamma factor (balanced approach)
+
+        returns:
+            gamma_factors_per_kv_head (torch.Tensor): shape (num_kv_heads,) The gamma factors for the corresponding K
+            heads.
+        """
+        if reduction == "min":
+            gamma_factors_per_kv_head = torch.min(gamma_factors_grouped, dim=1).values
+        elif reduction == "max":
+            gamma_factors_per_kv_head = torch.max(gamma_factors_grouped, dim=1).values
+        elif reduction == "mean":
+            gamma_factors_per_kv_head = torch.mean(gamma_factors_grouped, dim=1)
+        else:
+            raise ValueError(f"Invalid reduction: {reduction}")
+
+        return gamma_factors_per_kv_head
+
     @torch.no_grad()
     def __call__(self, model, max_attn_logits_per_layer):
         """
@@ -136,7 +168,7 @@ class QKClip:
             if not needs_clipping.any():
                 continue
 
-            gamma_factors_per_query_head = torch.where(  # (num_heads/num_query_heads,)
+            gamma_factors_per_query_head = torch.where(  # shape (num_heads/num_query_heads,)
                 needs_clipping,
                 self.clip_threshold / max_attn_logits_per_head,
                 1.0,
@@ -145,7 +177,7 @@ class QKClip:
             query_weights, key_weights = self.cached_qk_layers[i]
 
             # Query Scaling (same for MHA, GQA, MQA): W_q = W_q * gamma^alpha
-            # reshaping Q weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vect mult
+            # reshaping Q weights to get num_heads matrices/weights of shape (head_dim, hidden_dim) for vectorized mult
             query_reshaped = query_weights.view(self.num_query_heads, self.head_dim, -1)
             # applying alpha exponent to gamma factors and reshaping to (num_heads, 1, 1) for vectorized multiplication
             query_scales = (gamma_factors_per_query_head**self.alpha).view(self.num_query_heads, 1, 1)
@@ -158,10 +190,10 @@ class QKClip:
             if self.is_not_mha:
                 num_queries_per_kv = self.num_query_heads // self.num_kv_heads  # = self.num_repeat in attention class
                 gamma_factors_grouped = gamma_factors_per_query_head.view(self.num_kv_heads, num_queries_per_kv)
-                # For each KV head, we use the minimum gamma (strongest clip factor) from its corresponding query group.
+                # For each K head, we use the minimum gamma (by default) from its corresponding query group.
                 # This is the safest/strictest approach to ensure clipping is effective for the head that needs it most
-                min_gamma_per_kv_head = torch.min(gamma_factors_grouped, dim=1).values
-                key_scales = (min_gamma_per_kv_head ** (1 - self.alpha)).view(self.num_kv_heads, 1, 1)
+                gamma_factors_per_kv_head = self._gamma_reduction(gamma_factors_grouped, reduction="min")
+                key_scales = (gamma_factors_per_kv_head ** (1 - self.alpha)).view(self.num_kv_heads, 1, 1)
             else:
                 key_scales = (gamma_factors_per_query_head ** (1 - self.alpha)).view(self.num_kv_heads, 1, 1)
 
