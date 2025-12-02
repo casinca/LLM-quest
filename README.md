@@ -1,148 +1,124 @@
-# LLM Quest: Architectures, techniques, research papers from scratch
+# LLM Quest
 
-This repo is a constant WIP.  
-It was initially a "package like" version following the great
-[LLM from scratch repo/book](https://github.com/rasbt/LLMs-from-scratch) structure from [@rasbt](https://github.com/rasbt).
-
-Little by little, it served me as a base for verbose re-implementations of different architectures and research
-papers. Put simply, LLM stuff that piques my interest for experiments and learning.
+**LLM Architectures, techniques, and research papers for experimentation and learning — from scratch.**
 
 
-## Latest
+<!-- TOC -->
 
-- Multimodal Part 2: Vision Language Model (VLM) from scratch
-- Qwen3-Next from scratch
-- Qwen3 (dense and MoE) from scratch
-- Speculative Decoding from scratch
-- Reinforcement Pretraining (RPT) from scratch
-- Qwen GSPO (Group Sequence Policy Optimization)
-- Moonshot.ai's standalone QK-Clip technique (from MuonClip) and own Magnitude-QK-Clip variant
-- RLVR Reasoning with GRPO from scratch
-- Multimodal Part 1: Vision Transformer (ViT) from scratch
-- RLHF with GRPO from scratch
-- Gemma 3 architecture from scratch
-- DeepSeek V3, R1 architecture from scratch
-- Mixture of Experts (MoE) from scratch
+- [Content](#content)
+    - [Architectures](#architectures)
+    - [Mixture of Experts MoE](#mixture-of-experts-moe)
+    - [Alignment & Reasoning](#alignment--reasoning)
+    - [Multimodal](#multimodal)
+    - [Fine-tuning SFT](#fine-tuning-sft)
+    - [Other Model-Agnostic Techniques and Papers](#other-model-agnostic-techniques-and-papers)
+- [Acknowledgements](#acknowledgements)
 
-<sub><sup>(did I mention "from scratch"?)</sup></sub>
+<!-- /TOC -->
+
 
 &nbsp;
 
+## Latest 3 updates
+
+- Revisiting Reinforcement Pretraining (RPT) with a more robust Qwen3-0.6B
+- Multimodal Part 2: Vision Language Model (VLM)
+- Qwen3-Next
+
+&nbsp;
 
 ## Content
 
-*More details in each subfolder's `README.md`*
-
- - GPT* (modified for attention masks $^1$):
-    - MHA
-    - Layer Norm
-    - FFN
-    - GeLU
-    - KVCache
+> *More details are available in each subfolder's `README.md`*
 
 &nbsp;
 
- - GPT to Llama 3.2 from scratch*:
-    - GQA
-    - RoPE + YaRN
-    - RMS Norm
-    - SwiGLU
+### Architectures
+
+|        | Key Components |
+|:-------|:---------------|
+| **GPT-2**\* | • MHA<br>• LayerNorm<br>• FFN<br>• GeLU<br>• KVCache |
+| **GPT to Llama 3.2**\* | • GQA<br>• RoPE + YaRN<br>• RMS Norm<br>• SwiGLU |
+| **Llama 3.2 to DeepSeek V3/R1** | • MLA<br>• MTP<br>• DeepSeek MoE |
+| **Llama 3.2 to Gemma 3** *(text-only)* | • GeGLU<br>• Local/Global attention<br>• SWA<br>• QK norm<br>• Logit softcapping (*Gemma 2*) |
+| **Qwen3** *(dense and MoE)* | — |
+| **Qwen3-Next** | • Gated DeltaNet<br>• Gated Attention<br>• Zero-Centered RMSNorm<br>• Weighted shared expert<br>• Partial RoPE |
 
 &nbsp;
 
- - Llama 3.2 to DeepSeek V3, R1 from scratch:
-    - MLA
-    - MTP
-    - DeepSeek MoE
+### Mixture of Experts (MoE)
+
+| Variant | Notes |
+|:--------|:------------|
+| **Sparse MoE** | Classic auxiliary loss + z router loss |
+| **DeepSeek MoE** | Fine-grained + shared expert isolation + auxiliary loss-free load balancing |
 
 &nbsp;
 
- - Llama 3.2 to Gemma 3 from scratch (text-only):
-    - GeGLU
-    - Local/Global attention
-    - SWA
-    - QK norm
-    - Logit softcapping (Gemma 2, kept for reference)
+### Alignment & Reasoning
+
+| Method | Notes |
+|:-------|:------|
+| **DPO**\* | With cDPO for noisy labels, step by step |
+| **RLHF with GRPO** | including variants: Dr. GRPO, DAPO, GSPO |
+| **RLVR with GRPO** | —  |
+| **Qwen GSPO** | Transition from GRPO implementation |
+| **Reinforcement Pretraining (RPT)** | — |
+
 
 &nbsp;
 
- - Qwen3 (dense and MoE) from scratch:
-   - nothing new compared to above architectures
+### Multimodal
+
+|        | Key Components |
+|:-------|:---------------|
+| **Part 1: GPT to ViT** | • Image patches + learnable CLS token + positional encoding<br>• Full Attention<br>• Classification head |
+| **Part 2: VLM** | • ViT-LLM adapter (multimodal alignment/fine-tuning)<br>• Early fusion (image + text embeddings) |
+
 
 &nbsp;
 
- - Qwen3-Next from scratch:
-   - Gated DeltaNet
-   - Gated Attention
-   - Zero-Centered RMSNorm
-   - Weighted shared expert in MoE
-   - Partial RoPE
+### Fine-tuning (SFT)
+
+| Type | Method |
+|:-----|:-------|
+| **Classifier** | Hidden state retrieval for the last real token |
+| **Instruction**\* | — |
+
 
 &nbsp;
 
- - Multimodal Part 1: GPT to Vision Transformer (ViT) from scratch:
-    - Image encoding: Image patches + learnable CLS token + positional encoding
-    - Full Attention
-    - Image Classification head
-    
+### Other Model-Agnostic Techniques and Papers
 
- - Multimodal Part 2: Vision Language Model (VLM) from scratch:
-    - ViT↔LLM adapter: multimodal alignment/fine-tuning
-    - Early fusion: image embeddings + text embeddings
-
-&nbsp;
-    
- - Mixture of Experts (MoE) from scratch:
-    - Sparse MoE with classic auxiliary loss + z router loss
-    - DeepSeek MoE variant: fine-grained + shared expert isolation + auxiliary loss-free load balancing
+|           | Notes |
+|:----------|:------------|
+| **QK-Clip** | Query-Key clipping (naive & per head + GQA compatible) from [Moonshot.ai](https://www.moonshot.ai/)'s MuonClip and experimental "Magnitude" variant. |
+| **Speculative Decoding** | Google's original version |
+| **Dynamic Tanh** | Normalization-free alternative to RMSNorm/LayerNorm ([Zhu et al., 2025](https://arxiv.org/abs/2503.10622)) |
+| **RoPE + YaRN** | NTK-aware + by-part/wavelength scaling |
+| **LoRA**\* | — |
+| **Number Token Loss** | Regression-like loss on number tokens — Wasserstein Distance variant ([Zausinger et al., 2025](https://arxiv.org/abs/2411.02083)) |
+| **generate.py** | common sampling functions: temperature, top-k, top-p, min-p |
+| **experimental** | — |
 
 &nbsp;
 
- - GPT Fine-tuning (SFT):
-    - classifier (method: retrieval of the hidden state for the last real token)
-    - instruction*
+**\*** : Already covered by @rasbt; my code is similar.
+
+<sup>1</sup> : The original GPT-2 implementation only included causal masks, not attention masks. (In OpenAI's code,
+causal masks are called ["attention
+mask"](https://github.com/openai/gpt-2/blob/9b63575ef42771a015060c964af2c3da4cf7c8ab/src/model.py#L58C1-L58C38), which
+can be confusing) 
+
 
 &nbsp;
 
- - Alignment:
-    - DPO* (with cDPO for noisy labels), step by step
-    - RLHF with GRPO from scratch
-    - RLVR Reasoning with GRPO from scratch (working but slow)
-    - Qwen GSPO (transition from the GRPO implementation)
+## Acknowledgements
 
-&nbsp;
-    
-- Common:
-   - NumTokenLoss (Regression-like Loss on Number Tokens - Wasserstein Distance variant 
-   [*Zausinger et al, 2025*](https://arxiv.org/abs/2411.02083))
-   - QK-Clip (Query-Key clipping) from Moonshot.ai's MuonClip, alternative to logit softcapping and QK norm.
-   - DyT (Dynamic Tanh, normalization free ([*Zhu et al, 2025*](https://arxiv.org/abs/2503.10622)) alternative to 
-   RMSNorm, LayerNorm)
-   - RoPE + YaRN (NTK aware + by-part/wavelength scaling)
-   - LoRA*
-   - `[prefix]_engine.py`, `engine.py` functions for training logic
-   - `dataset.py` functions for preprocessing data 
+Most notably, the Open-source community, without whom none of this would have been possible.  
+Whether academia, top AI labs or independent researchers, I am grateful for their shared knowledge and research.  
 
-&nbsp;
+Research papers used in the repo are always cited and linked in the relevant readmes or code comments.
 
-*\** Already covered by @rasbt, my code is similar. 
- 
-$^1$ The original GPT-2 implementation, at the time, didn't have attention masks but only causal masks (*in OpenAI's
-code, they call the actual causal masks ["attention
-mask"](https://github.com/openai/gpt-2/blob/9b63575ef42771a015060c964af2c3da4cf7c8ab/src/model.py#L58C1-L58C38) which
-adds confusion to the terminology*).  
-I implemented it mainly for SFT or RLHF related tasks to ensure the model doesn't attend from/to padding tokens + can be
-used for custom losses as a mask (For CE loss, Pytorch built-in function with no_loss/ignore_index=-100 tokens is
-faster).  
-It's not a problem for pretraining or inference (unless batching is desired) which were the main use cases of the
-original GPT-2.
-
-&nbsp;
-
-## potential TODOs
-- reorganize activation and normalization functions in dedicated modules
-- nested TODOs
-- Confusing names: model attn_mask arg (padding tokens only) and attention_mask used as loss mask for alignment
-- GRPO:  
-   - add process supervision
-   - GRPO iterative RL variant (continuous learning of $r_{\phi}$)
+Special mention to [@rasbt](https://github.com/rasbt) for the [LLMs-from-scratch](https://github.com/rasbt/LLMs-from-scratch) book/repo,
+  which made me kickstart this repo and became a base for verbose re-implementations of various research papers.
