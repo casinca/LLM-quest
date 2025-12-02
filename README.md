@@ -5,7 +5,6 @@
 
 <!-- TOC -->
 
-- [Latest 3 additions](#latest-3-updates)
 - [Content](#content)
     - [Architectures](#architectures)
     - [Mixture of Experts MoE](#mixture-of-experts-moe)
