@@ -139,19 +139,24 @@ class TransformerBlock(nn.Module):
             dtype=cfg["dtype"],
             local_global_att_ratio=cfg["local_global_att_ratio"],
         )
-        self.norm_1 = RMSNorm(cfg["emb_dim"])
-        self.norm_2 = RMSNorm(cfg["emb_dim"])
+        self.pre_att_norm = RMSNorm(cfg["emb_dim"])
+        self.post_att_norm = RMSNorm(cfg["emb_dim"])
+        self.pre_ffn_norm = RMSNorm(cfg["emb_dim"])
+        self.post_ffn_norm = RMSNorm(cfg["emb_dim"])
         self.ffn = FFN(cfg)
 
     def forward(self, x, mask, cos, sin, swa_mask=None):
 
         residual = x
-        x = self.norm_1(x)
+        x = self.pre_att_norm(x)
         x = self.att(x, mask, cos, sin, swa_mask)
+        x = self.post_att_norm(x)
         x = x + residual
+
         residual = x
-        x = self.norm_2(x)
+        x = self.pre_ffn_norm(x)
         x = self.ffn(x)
+        x = self.post_ffn_norm(x)
         x = x + residual
 
         return x
