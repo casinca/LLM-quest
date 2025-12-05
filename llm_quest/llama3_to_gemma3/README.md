@@ -18,6 +18,7 @@ et al.)*, ie, growing attention logits leading to attention weights becoming alm
 z-router loss](../moe/README.md#router-z-loss)).
     - logits softcapping: https://arxiv.org/abs/1611.09940
     - QK normalization: https://arxiv.org/abs/2302.05442
+    - Dual RMSNorm: Most models use either pre or post normalization for the attention and the FFN block, Gemma3 does both.
 
 
 **Common to Gemma2 and Gemma3:**
