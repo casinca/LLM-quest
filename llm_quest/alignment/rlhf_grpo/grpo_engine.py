@@ -520,7 +520,7 @@ def grpo_loss(
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
-        grpo_loss_batch = gspo_loss(policy_ratio, advantages, min_clip, max_clip)
+        grpo_loss_batch = gspo_loss(policy_ratio, advantages, min_clip, max_clip) # already masked for padding+prompt
     else:
         # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
         # ie, each trajectory gets a single advantage.
