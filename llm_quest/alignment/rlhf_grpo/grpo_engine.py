@@ -558,6 +558,33 @@ def grpo_loss(
     return grpo_loss_batch
 
 
+def sapo_loss(policy_ratio, advantages, loss_mask, temp_pos_tokens=1.0, temp_neg_tokens=1.05):
+    """
+    Compute the SAPO (Soft Adaptive Policy Optimization) loss from Qwen.
+    https://arxiv.org/abs/2511.20347
+
+    Args:
+        policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio.
+        advantages (torch.Tensor): Tensor of shape (B, 1) containing the advantages per sequence (broadcasted)
+        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask, this should be the reward mask.
+        temp_pos_tokens (float, optional): Temperature (tau_pos in the paper) for positive tokens. Defaults to 1.0.
+        temp_neg_tokens (float, optional): Temperature (tau_neg in the paper) for non-positive tokens. Defaults to 1.05.
+                                            it's called "neg" but it's for <=0 advantages.
+
+        Per the paper, fig.5 t_neg>t_pos, yields the best stability results.
+    """
+    temps = torch.where(advantages > 0, temp_pos_tokens, temp_neg_tokens)
+
+    soft_gate = torch.sigmoid(temps * (policy_ratio - 1)) * 4 / temps
+    sapo_loss_per_token = -soft_gate * advantages
+    sapo_loss_per_token *= loss_mask
+
+    sapo_loss_seq = sapo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+    sapo_loss_batch = sapo_loss_seq.mean()
+
+    return sapo_loss_batch
+
+
 # NOTE: oldest GRPO version with single batch was removed in commit:
 # https://github.com/casinca/LLM-quest/commit/da15e415aa91f70d34f4263b17df0e54e7c68f73
 
