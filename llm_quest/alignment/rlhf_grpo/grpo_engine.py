@@ -498,8 +498,15 @@ def grpo_loss(
     variant="grpo",
 ):
     """
-    Compute original GRPO loss, DAPO, Dr. GRPO or GSPO variant for a batch.
-    credit to @qgallouedec's TRL doc for enumerating the variants and the papers, which made it faster to implement.
+    Compute chosen loss variant among:
+    - GRPO
+    - DAPO
+    - Dr. GRPO
+    - GSPO
+    - SAPO
+
+    credit to @qgallouedec's TRL doc for enumerating the DAPO and Dr. GRPO variants with their papers, which made it
+    faster to implement.
 
     Args:
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
@@ -520,40 +527,44 @@ def grpo_loss(
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
-        grpo_loss_batch = gspo_loss(policy_ratio, advantages, min_clip, max_clip) # already masked for padding+prompt
+        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)  # already masked for padding+prompt
+
+    # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
+    # ie, each trajectory gets a single advantage.
+    advantages_broadcast = advantages.unsqueeze(-1)
+
+    if variant == "sapo":
+        return sapo_loss(policy_ratio, advantages_broadcast, loss_mask)
+
+    # --- Rest of variants with hard clip PPO style surrogate objective ---
+    surr_obj_per_token = policy_ratio * advantages_broadcast
+    clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
+
+    grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+
+    if variant == "grpo":
+        # grpo loss per response
+        grpo_loss_seq = grpo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+
+        # TODO (this part can be simplified to a single .mean() since groups are equal size)
+        # if the vGRPO variant doesn't work, revert this
+        # grpo loss per group/num_samples
+        grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+        # grpo loss for the batch
+        grpo_loss_batch = grpo_loss_group.mean()
+
+    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+    # token-level averaging (longer seqs have more influence on the loss) instead of Sample-level: 1/n_G * sum(G_i)
+    elif variant == "dapo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+
+    # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+    elif variant == "dr_grpo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
+
     else:
-        # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
-        # ie, each trajectory gets a single advantage.
-        advantages_broadcast = advantages.unsqueeze(-1)
-
-        surr_obj_per_token = policy_ratio * advantages_broadcast
-        clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
-
-        grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-
-        if variant == "grpo":
-            # grpo loss per response
-            grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
-
-            # TODO (this part can be simplified to a single .mean() since groups are equal size)
-            # if the vGRPO variant doesn't work, revert this
-            # grpo loss per group/num_samples
-            grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-            # grpo loss for the batch
-            grpo_loss_batch = grpo_loss_group.mean()
-
-        # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
-        # token-level averaging (longer seqs have more influence on the loss) instead of Sample-level: 1/n_G * sum(G_i)
-        elif variant == "dapo":
-            grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
-
-        # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
-        elif variant == "dr_grpo":
-            grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
-
-        else:
-            raise ValueError(f"Unknown loss type: {variant}")
+        raise ValueError(f"Unknown loss type: {variant}")
 
     return grpo_loss_batch
 
