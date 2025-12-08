@@ -41,7 +41,7 @@ pin_memory = False
 persistent_workers = False
 
 # Training
-use_gradient_checkpointing = False  # trade memory for speed
+use_gradient_checkpointing = False  # trade memory for speed if disabled
 rpt_training_hparams = {
     "rope_model": True,
     "num_epoch": 1,
@@ -55,7 +55,7 @@ rpt_training_hparams = {
         "temp": 0.6,
     },
     # GRPO
-    "loss_variant": "grpo",  # alt: dapo, dr_grpo, gspo
+    "loss_variant": "grpo",  # alt: dapo, dr_grpo, gspo, sapo
     "num_samples": 2,
     "num_grad_updates": 2,
     "min_clip_eps": 0.2,

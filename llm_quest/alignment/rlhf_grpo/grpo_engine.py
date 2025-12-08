@@ -498,8 +498,15 @@ def grpo_loss(
     variant="grpo",
 ):
     """
-    Compute original GRPO loss, DAPO, Dr. GRPO or GSPO variant for a batch.
-    credit to @qgallouedec's TRL doc for enumerating the variants and the papers, which made it faster to implement.
+    Compute chosen loss variant among:
+    - GRPO
+    - DAPO
+    - Dr. GRPO
+    - GSPO
+    - SAPO
+
+    credit to @qgallouedec's TRL doc for enumerating the DAPO and Dr. GRPO variants with their papers, which made it
+    faster to implement.
 
     Args:
         policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
@@ -520,42 +527,74 @@ def grpo_loss(
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
-        grpo_loss_batch = gspo_loss(policy_ratio, advantages, min_clip, max_clip)
+        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)  # already masked for padding+prompt
+
+    # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
+    # ie, each trajectory gets a single advantage.
+    advantages_broadcast = advantages.unsqueeze(-1)
+
+    if variant == "sapo":
+        return sapo_loss(policy_ratio, advantages_broadcast, loss_mask)
+
+    # --- Rest of variants with hard clip PPO style surrogate objective ---
+    surr_obj_per_token = policy_ratio * advantages_broadcast
+    clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
+
+    grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+    grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+
+    if variant == "grpo":
+        # grpo loss per response
+        grpo_loss_seq = grpo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+
+        # TODO (this part can be simplified to a single .mean() since groups are equal size)
+        # if the vGRPO variant doesn't work, revert this
+        # grpo loss per group/num_samples
+        grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+        # grpo loss for the batch
+        grpo_loss_batch = grpo_loss_group.mean()
+
+    # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+    # token-level averaging (longer seqs have more influence on the loss) instead of Sample-level: 1/n_G * sum(G_i)
+    elif variant == "dapo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+
+    # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+    elif variant == "dr_grpo":
+        grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
+
     else:
-        # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
-        # ie, each trajectory gets a single advantage.
-        advantages_broadcast = advantages.unsqueeze(-1)
-
-        surr_obj_per_token = policy_ratio * advantages_broadcast
-        clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
-
-        grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
-        grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
-
-        if variant == "grpo":
-            # grpo loss per response
-            grpo_loss_seq = grpo_loss_per_token.sum(-1) / loss_mask.sum(-1).clamp(min=1)
-
-            # TODO (this part can be simplified to a single .mean() since groups are equal size)
-            # if the vGRPO variant doesn't work, revert this
-            # grpo loss per group/num_samples
-            grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
-            # grpo loss for the batch
-            grpo_loss_batch = grpo_loss_group.mean()
-
-        # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
-        # token-level averaging (longer seqs have more influence on the loss) instead of Sample-level: 1/n_G * sum(G_i)
-        elif variant == "dapo":
-            grpo_loss_batch = grpo_loss_per_token.sum() / loss_mask.sum().clamp(min=1)
-
-        # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
-        elif variant == "dr_grpo":
-            grpo_loss_batch = grpo_loss_per_token.sum() / (grpo_loss_per_token.shape[0] * max_gen)
-
-        else:
-            raise ValueError(f"Unknown loss type: {variant}")
+        raise ValueError(f"Unknown loss type: {variant}")
 
     return grpo_loss_batch
+
+
+def sapo_loss(policy_ratio, advantages, loss_mask, temp_pos_tokens=1.0, temp_neg_tokens=1.05):
+    """
+    Compute the SAPO (Soft Adaptive Policy Optimization) loss from Qwen.
+    See PR description for more details: https://github.com/casinca/LLM-quest/pull/15
+    https://arxiv.org/abs/2511.20347
+
+    Args:
+        policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio.
+        advantages (torch.Tensor): Tensor of shape (B, 1) containing the advantages per sequence (broadcasted)
+        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask, this should be the reward mask.
+        temp_pos_tokens (float, optional): Temperature (tau_pos in the paper) for positive tokens. Defaults to 1.0.
+        temp_neg_tokens (float, optional): Temperature (tau_neg in the paper) for non-positive tokens. Defaults to 1.05.
+                                            it's called "neg" but it's for <=0 advantages.
+
+        Per the paper, fig.5 t_neg>t_pos, yields the best stability results.
+    """
+    temps = torch.where(advantages > 0, temp_pos_tokens, temp_neg_tokens)
+
+    soft_gate = torch.sigmoid(temps * (policy_ratio - 1)) * 4 / temps
+    sapo_loss_per_token = -soft_gate * advantages
+    sapo_loss_per_token *= loss_mask
+
+    sapo_loss_seq = sapo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+    sapo_loss_batch = sapo_loss_seq.mean()
+
+    return sapo_loss_batch
 
 
 # NOTE: oldest GRPO version with single batch was removed in commit:
