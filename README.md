@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- Qwen SAPO (Soft Adaptive Policy Optimization) loss implementation
 - Moonshot.ai's QK-Clip compatibility with Grouped attention variants (GQA, MQA)
 - Revisiting Reinforcement Pretraining (RPT) with a more robust Qwen3-0.6B
-- Qwen3-Next
 
 &nbsp;
 
@@ -60,7 +60,7 @@
 | Method | Notes |
 |:-------|:------|
 | **DPO**\* | With cDPO for noisy labels, step by step |
-| **RLHF with GRPO** | including variants: Dr. GRPO, DAPO, GSPO |
+| **RLHF with GRPO** | including variants: Dr. GRPO, DAPO, GSPO, SAPO |
 | **RLVR with GRPO** | —  |
 | **Qwen GSPO** | Transition from GRPO implementation |
 | **Reinforcement Pretraining (RPT)** | — |
