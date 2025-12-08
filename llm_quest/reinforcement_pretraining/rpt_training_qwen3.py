@@ -55,7 +55,7 @@ rpt_training_hparams = {
         "temp": 0.6,
     },
     # GRPO
-    "loss_variant": "sapo",  # alt: dapo, dr_grpo, gspo, sapo
+    "loss_variant": "grpo",  # alt: dapo, dr_grpo, gspo, sapo
     "num_samples": 2,
     "num_grad_updates": 2,
     "min_clip_eps": 0.2,
