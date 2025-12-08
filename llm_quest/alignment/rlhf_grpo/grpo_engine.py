@@ -572,6 +572,7 @@ def grpo_loss(
 def sapo_loss(policy_ratio, advantages, loss_mask, temp_pos_tokens=1.0, temp_neg_tokens=1.05):
     """
     Compute the SAPO (Soft Adaptive Policy Optimization) loss from Qwen.
+    See PR description for more details: https://github.com/casinca/LLM-quest/pull/15
     https://arxiv.org/abs/2511.20347
 
     Args:
