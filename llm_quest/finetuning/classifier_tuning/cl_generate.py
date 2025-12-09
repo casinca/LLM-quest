@@ -15,25 +15,25 @@ from llm_quest.utils import text_to_ids
 # Even though it works since padded tokens gets context propagated, it's not the best way to do it.
 
 
-def classify_text(text, model, device, max_length=None, pad_token=50256):
+def classify_text(text, model, device, tokenizer, max_length=None, pad_token=50256):
     """
     A classification function inspired by our previous generate_loop() and SpamDataset class
     """
-    model.eval()
-    input = text_to_ids(text, tokenizer=tokenizer)
+    model.eval().to(device)
+    input_ids = text_to_ids(text, tokenizer=tokenizer).to(device)
     # calc max length and input length
     ctx_len = model.pos_emb_dict.weight.shape[0]  # shape (ctx_len, emb_dim)
     max_length = min(max_length, ctx_len) if max_length else ctx_len
-    input_len = min(input.shape[1], max_length)
+    input_len = min(input_ids.shape[1], max_length)
 
     # truncating and padding
     # creating a tensor full of pads token of size max_length
-    pads = torch.full((input.shape[0], max_length), pad_token)
+    pads = torch.full((input_ids.shape[0], max_length), pad_token, device=device)
     # replace all pads token below input_len by the corresponding inputs
-    pads[:, :input_len] = input[:, :input_len]
+    pads[:, :input_len] = input_ids[:, :input_len]
 
     # This is only as a trick to retrieve the last token's logits, We don't need attn_mask for generation
-    attn_mask = torch.zeros_like(pads, dtype=torch.bool)
+    attn_mask = torch.zeros_like(pads, dtype=torch.bool, device=device)
     attn_mask[:, :input_len] = 1
 
     with torch.no_grad():
@@ -49,6 +49,7 @@ def classify_text(text, model, device, max_length=None, pad_token=50256):
 if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
+    device = config.auto_device
 
     model_config = config.gpt2_config_creator("gpt_s")
     model_config["drop_rate"] = 0.0
@@ -65,6 +66,6 @@ if __name__ == "__main__":
 
     text_spam = "You are a winner you have been specially selected to receive $1000 cash or a $2000 award."
 
-    output = classify_text(text_spam, model, device="cuda", max_length=35)
+    output = classify_text(text_spam, model, device=device, tokenizer=tokenizer, max_length=35)
 
     print(output)
