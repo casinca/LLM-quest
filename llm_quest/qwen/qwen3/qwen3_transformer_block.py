@@ -123,7 +123,18 @@ class MoETransformerBlock(nn.Module):
         self.norm2 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)
 
-    def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
+    def forward(
+        self,
+        x,
+        mask,
+        cos,
+        sin,
+        attn_mask=None,
+        kv_cache=None,
+        position_ids=None,
+        gate_probas=None,
+        return_gate_probas=False,
+    ):
         # Pre-normalization architecture
         residual = x
         x = self.norm1(x)
@@ -132,7 +143,11 @@ class MoETransformerBlock(nn.Module):
 
         residual = x
         x = self.norm2(x)
-        x = self.moe(x)  # Use MoE instead of regular FFN
+        moe_out = self.moe(x, gate_probas=gate_probas, return_gate_probas=return_gate_probas)
+        if return_gate_probas:
+            x, used_gate_probas = moe_out
+        else:
+            x = moe_out
         x = x + residual
 
-        return x
+        return (x, used_gate_probas) if return_gate_probas else x
