@@ -9,9 +9,7 @@ from llm_quest.qwen.qwen3.qwen3_transformer_block import MoETransformerBlock, Tr
 
 class Qwen3Model(nn.Module):
     """
-    A Qwen3 model implementation following the different architectures:
-
-    Supports both dense and MoE variants based on the config cfg["model_type"]
+    Dense Qwen3 model implementation.
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
@@ -28,15 +26,8 @@ class Qwen3Model(nn.Module):
             dtype=cfg["dtype"],
         )
 
-        # Choose transformer block type based on model configuration
-        if cfg["model_type"] == "moe":
-            self.trf_blocks = nn.ModuleList(
-                [MoETransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])],
-            )
-        else:  # dense
-            self.trf_blocks = nn.ModuleList(
-                [TransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])],
-            )
+        # Dense transformer blocks only; MoE lives in Qwen3MoEModel
+        self.trf_blocks = nn.ModuleList([TransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])])
 
         self.final_norm = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
 
@@ -98,12 +89,97 @@ class Qwen3Model(nn.Module):
         return logits
 
 
+class Qwen3MoEModel(Qwen3Model):
+    """
+    MoE Variant of Qwen3Model with support for routing/gate replay.
+    """
+
+    def __init__(self, cfg):
+        # Reuse base construction (embeddings, norms, head, buffers), then swap blocks to MoE.
+        super().__init__(cfg)
+        self.trf_blocks = nn.ModuleList([MoETransformerBlock(cfg, layer_idx) for layer_idx in range(cfg["n_layers"])])
+
+    def forward(
+        self,
+        x,
+        attn_mask=None,
+        kv_cache=None,
+        position_ids=None,
+        gate_probas=None,
+        return_gate_probas=False,
+    ):
+        """
+        args:
+            x: (b, s)
+            attn_mask: (b, s) Attention mask (passed as True = real tokens)
+            kv_cache: KVCache instance/object
+            position_ids: (b, s/1) (long tensor), containing the position of each token in the sequence
+            gate_probas (optional): (b*s, num_experts) Gate/Router probabilities for MoE layers. This is to enable
+            gate/routing replay.
+            return_gate_probas: if True, returns the gate probabilities used by each MoE block (shape: (b*s, num_experts)).
+        """
+        x = self.emb_dict(x)
+
+        use_checkpointing = (
+            self.gradient_checkpointing and self.training and kv_cache is None and not return_gate_probas
+        )
+        collected_gate_probas = []
+
+        # Retrieving the current gate/router probabilities for the current layer
+        for layer_idx, block in enumerate(self.trf_blocks):
+            current_gate_probas = None
+            if gate_probas is not None:
+                if isinstance(gate_probas, (list, tuple)):
+                    if layer_idx < len(gate_probas):
+                        current_gate_probas = gate_probas[layer_idx]
+                else:
+                    current_gate_probas = gate_probas
+
+            if use_checkpointing:
+                x = checkpoint(
+                    block,
+                    x,
+                    self.mask,
+                    self.cos,
+                    self.sin,
+                    attn_mask,
+                    kv_cache,
+                    position_ids,
+                    current_gate_probas,
+                    False,  # return_gate_probas
+                    use_reentrant=False,  # needs to be explicit since Pytorch 2.9 and False is recommended
+                )
+            else:
+                block_out = block(
+                    x,
+                    self.mask,
+                    self.cos,
+                    self.sin,
+                    attn_mask,
+                    kv_cache,
+                    position_ids,
+                    current_gate_probas,
+                    return_gate_probas,
+                )
+
+                if return_gate_probas:
+                    x, layer_gate_probas = block_out
+                    collected_gate_probas.append(layer_gate_probas)
+                else:
+                    x = block_out
+
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+
+        return (logits, collected_gate_probas) if return_gate_probas else logits
+
+
 # Quick test
 if __name__ == "__main__":
     import config
 
     torch.manual_seed(123)
-    model = Qwen3Model(config.qwen3_config_creator("temp_moe"))
+    model = Qwen3MoEModel(config.qwen3_config_creator("temp_moe"))
 
     sample_input = torch.randint(0, 1000, (2, 10))  # b=2, seq_len=10
     output = model(sample_input)
