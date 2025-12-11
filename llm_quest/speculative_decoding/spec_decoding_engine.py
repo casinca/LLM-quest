@@ -203,7 +203,7 @@ def speculative_sampling(
 
     # all accepted, sample bonus token from target model x ~ p_γ+1(x)
     if num_accepted == num_drafted and remaining_tokens > num_drafted:
-        bonus_token = sampling(target_logits[:, -1, :], top_k, top_p, temp)
+        bonus_token = sampling(target_logits[:, -1, :], top_k, top_p, temp=temp)
         accepted_tokens.append(bonus_token.squeeze())
 
     accepted_tokens = torch.stack(accepted_tokens).unsqueeze(0)
@@ -261,7 +261,7 @@ def _speculative_step(
 
     # --- Drafting tokens with the approximation/draft model ---
     for _ in range(draft_max_gen):
-        next_token = sampling(drafted_logits, top_k, top_p, temp)
+        next_token = sampling(drafted_logits, top_k, top_p, temp=temp)
 
         if eos_id is not None and next_token.item() == eos_id:
             draft_tokens.append(next_token)
