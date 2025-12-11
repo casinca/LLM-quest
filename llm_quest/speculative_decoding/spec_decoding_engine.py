@@ -248,9 +248,13 @@ def _speculative_step(
     draft_tokens = []
     draft_logits = []
     curr_len = current_sequence.shape[1]
-
-    kv_cache = KVCache(num_layers=len(draft_model.trf_blocks), context_len=context_length)
     trunc_seq = current_sequence[:, -context_length:] if curr_len > context_length else current_sequence
+
+    kv_cache = KVCache(
+        num_layers=len(draft_model.trf_blocks),
+        prompt_len=trunc_seq.shape[1],
+        context_len=context_length,
+    )
 
     drafted_logits = draft_model(trunc_seq, kv_cache=kv_cache)[:, -1, :]  # fill the cache
     draft_logits.append(drafted_logits.unsqueeze(1))
