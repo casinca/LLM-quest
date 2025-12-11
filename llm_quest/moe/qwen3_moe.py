@@ -102,12 +102,21 @@ class Qwen3MoE(nn.Module):
                 )
                 router_weights_init(self.gate.weight)
 
-    def forward(self, x):
+    def forward(self, x, gate_probas=None, return_gate_probas=False):
         b, s, emb_dim = x.shape
         # gating
         x_2d = x.view(-1, emb_dim)  # matrix/tabular view for easier indexing row/col manipulation (HF style)
-        gate_logits = self.gate(x_2d)  # shape (b*s, num_experts)
-        gate_probas = nn.functional.softmax(gate_logits, dim=-1)
+
+        # normal path
+        if gate_probas is None:
+            gate_logits = self.gate(x_2d)  # shape (b*s, num_experts)
+            gate_probas = nn.functional.softmax(gate_logits, dim=-1)
+        # gate/routing replay: we don't pass hidden states to the gate, we re-use our gate probs
+        else:
+            if gate_probas.dim() != 2:
+                raise ValueError("gate_probas must be 2D shaped as (batch*seq, num_experts)")
+            gate_probas = gate_probas.to(dtype=x.dtype, device=x.device)
+
         topk_probas, topk_idxs = gate_probas.topk(self.top_k, dim=-1)  # shape (b*s, topk)
         topk_probas /= topk_probas.sum(dim=-1, keepdim=True)  # normalize to topk range
 
@@ -154,4 +163,5 @@ class Qwen3MoE(nn.Module):
             output += weighted_shared_expert_output
 
         output = output.view(b, s, emb_dim)  # reshape back to original 3D shape
-        return output
+
+        return (output, gate_probas) if return_gate_probas else output
