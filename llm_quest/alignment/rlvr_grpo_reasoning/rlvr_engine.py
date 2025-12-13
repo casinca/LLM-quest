@@ -11,6 +11,7 @@ from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     kl_div_per_token,
     log_probs_per_token,
     z_scores,
+    off_policy_seq_mask,
 )
 from llm_quest.generate import generate_batched_loop_kv_cache
 from llm_quest.utils import CheckpointEvaluator, ResponseExtractor
@@ -195,6 +196,7 @@ def rlvr_grpo_training_loop(
     rope_model=False,
     lr_scheduler=None,
     sampling_params=None,
+    off_policy_sequence_masking=False,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -231,7 +233,7 @@ def rlvr_grpo_training_loop(
         rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
         lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
         sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
-
+        off_policy_sequence_masking (bool, optional): Whether to use off-policy sequence masking. Defaults to False.
     Returns:
         None: The function modifies the `policy_model` in place.
 
@@ -319,6 +321,12 @@ def rlvr_grpo_training_loop(
                     policy_ratio = torch.exp(policy_logprobs - old_logprobs)
 
                 kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
+
+                if off_policy_sequence_masking:
+                    # KL div (as π_θ_old/π_θ) approximated with K1 estimator
+                    k1_estimator_per_token = old_logprobs - policy_logprobs.detach()
+                    off_policy_mask = off_policy_seq_mask(k1_estimator_per_token, advantages, loss_mask, delta=0.1)
+                    loss_mask &= off_policy_mask  # inject in the loss mask directly
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
