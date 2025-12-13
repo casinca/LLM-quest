@@ -485,6 +485,39 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     return ratio - log_ratio - 1
 
 
+def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.1):
+    """
+    Compute the off-policy sequence mask mentioned in the DeepSeek V3.2 paper:
+    https://arxiv.org/abs/2512.02556
+
+    NOTE: It will be applied at the token level merged with the loss mask. It'll be broadcasted, ie tokens will get the
+    same mask per sequence.
+
+    Args:
+        kl_div_per_token (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
+        advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per sequence
+        delta (float): threshold of policy divergence. DeepSeek didn't mention any default in the paper.
+                        0.1 sounds decent and not too restrictive?
+        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask, this should be the reward mask.
+                                This is used to get the correct K1 estimator per sequence, adjusted for the prompt and
+                                padding tokens.
+
+    Returns:
+        torch.Tensor: Boolean Tensor of shape (B, 1) containing the off-policy sequence mask.
+    """
+    # here we need the mean per sequence, therefore
+    sum_kl_div = (kl_div_per_token * loss_mask).sum(dim=-1, keepdim=True)
+    mean_kl_div = sum_kl_div / loss_mask.sum(dim=-1, keepdim=True).clamp(min=1)  # shape (B, 1)
+
+    # conditions (inverting from the paper's conditions to inject in the loss mask directly)
+    advantage_mask = advantages.view(-1, 1) >= 0  # broadcasted to (B, 1) and compare
+    kl_div_mask = mean_kl_div <= delta
+
+    off_policy_mask = advantage_mask | kl_div_mask  # zeroed if (adv negative & kl div high)
+
+    return off_policy_mask
+
+
 def grpo_loss(
     policy_ratio,
     advantages,
