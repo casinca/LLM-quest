@@ -466,7 +466,7 @@ def log_probs_per_token_optimized(logits, inputs):
 def kl_div_per_token(policy_logprobs, reference_logprobs):
     """
     Compute the KL divergence per token between the policy and reference log probabilities.
-    Estimated with (Schulman, 2020) unbiased estimator, see:
+    Estimated with (Schulman, 2020) K3 unbiased estimator, see:
     https://github.com/casinca/LLM-quest/tree/master/llm_quest/alignment/rlhf_grpo#grpo
 
     Args:
@@ -531,7 +531,7 @@ def grpo_loss(
 
     # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
     # ie, each trajectory gets a single advantage.
-    advantages_broadcast = advantages.unsqueeze(-1)
+    advantages_broadcast = advantages.unsqueeze(-1)  # shape (B, 1)
 
     if variant == "sapo":
         return sapo_loss(policy_ratio, advantages_broadcast, loss_mask)
