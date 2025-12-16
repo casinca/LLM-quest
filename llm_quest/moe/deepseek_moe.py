@@ -176,6 +176,9 @@ class DeepSeekMoE(nn.Module):
 
         # gating
         gate_logits = self.gate(x_2d)  # shape (b*s, num_routed)
+        # NOTE: DeepSeek MoE and DeepSeek V2 used Softmax to normalize the gate logits which was the original
+        # implementation here but DeepSeek V3 uses Sigmoid+renormalize to 1.0 to get the probas.
+        # ex: gate_probas = torch.sigmoid(gate_logits)
         gate_probas = nn.functional.softmax(gate_logits, dim=-1)  # we want unbiased probas for weighting
         # adding biases for load balance and top-k experts selection
         biased_probas = gate_probas + self.biases
