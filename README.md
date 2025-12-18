@@ -21,9 +21,10 @@
 
 ## Latest 3 updates
 
+- Nvidia LatentMoE from Nemotron 3 white paper
 - Qwen SAPO (Soft Adaptive Policy Optimization) loss implementation
 - Moonshot.ai's QK-Clip compatibility with Grouped attention variants (GQA, MQA)
-- Revisiting Reinforcement Pretraining (RPT) with a more robust Qwen3-0.6B
+
 
 &nbsp;
 
