@@ -206,10 +206,35 @@ MoE"](../experimental/Readme.md/#a-global-scalar-weighting))
 ---
 #### Sigmoid (optional)
 
-There is no mentioned reason for using sigmoid (in V3 paper) instead of softmax (DeepSeek MoE paper). I believe
-weighting from sigmoids gave them better results over softmax?
+There is no mentioned reason for using sigmoid (in V3 paper) instead of softmax (DeepSeek MoE paper).  
+A reason for Sigmoid is to avoid competition between experts, as it would be the case with softmax.  
+Each expert is scored independently (0.0 to 1.0) therefore multiple experts can have high scores (e.g., Expert A= 0.9,
+Expert B =0.9) whereas with softmax it has to sum up to 1 (if A = 0.9, B can't be 0.9).
 
 Ie, softmax on a vector $\neq$ sigmoid on each scalar followed by normalization of the vector
+
+<br>
+
+## Nvidia LatentMoE
+
+Nvidia, with their recent release of [Nemotron 3 models](https://research.nvidia.com/labs/nemotron/Nemotron-3/),
+introduced what they call **LatentMoE** (not to be confounded with [MoLAE (Mixture of Latent Experts)](https://arxiv.org/abs/2503.23100)), an optimization, that has some vibes from DeepSeek MLA (Low-Rank
+Compression).
+Feature dimensions are reduced before being passed to the experts and then up-projected back to the initial feature
+dimensions afterward.
+
+This isn't just about shrinking the feature dimensions for bandwidth savings and speed, the number of experts and activated ones are scaled up/rebalanced proportionally by the "latent/compression" factor.
+
+<img style="width: 80%;" alt="nvidia latent copy" src="https://github.com/user-attachments/assets/2b30446c-de1c-4873-8d93-afe0f3bbb058" />
+
+&nbsp;
+
+The shared expert and the router/gate are not getting the latent reduced features (probably not worth for a single shared expert, no All-to-All problem since it's shared. They kept the router with uncompressed information to best score for the experts.) 
+
+*LatentMoE was used only for the super and ultra models. At the time of writing, only the Nano model was released, but the description from the paper is supposedly enough to re-implement what they meant*
+
+Another tidbit, they seem to have used the DeepSeek Aux loss free load balancing for their training, judging by the
+`e_score_correction_bias` term present in the Nano code. Which would make sense since their MoE block looks copied from DeepSeekV3.
 
 <br>
 
