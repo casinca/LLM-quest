@@ -853,6 +853,7 @@ def rlhf_grpo_training_loop(
     min_clip_eps=0.2,
     max_clip_eps=0.2,
     beta=1.0,
+    unbiased_kl_estimate=False,
     evaluation=True,
     eval_freq=None,
     eval_batches=None,
@@ -881,6 +882,8 @@ def rlhf_grpo_training_loop(
         max_clip_eps (float): Upper clipping parameter ϵ for the policy ratio in the PPO-like clipped objective function
         beta (float): Coefficient 𝛽 for the KL divergence penalty term in the loss. Controls the
                     trade-off between maximizing reward and staying close to the reference policy.
+        unbiased_kl_estimate (bool, optional): Whether to use the Unbiased KL Estimate from the DeepSeek V3.2 paper.
+        Defaults to False.
         evaluation (bool, optional): Whether to perform evaluation. Defaults to True.
         eval_freq (int, optional): Frequency (in training steps) at which to perform evaluation. Defaults to None.
         eval_batches (int, optional): Number of batches to evaluate on. If None, evaluates on the whole val_loader.
@@ -975,7 +978,11 @@ def rlhf_grpo_training_loop(
                 else:  # token level policy ratio
                     policy_ratio = torch.exp(policy_logprobs - old_logprobs)
 
-                kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)  # (will be masked in the loss calc)
+                # KL divergence will be masked in the loss calc
+                if unbiased_kl_estimate:
+                    kl_div = kl_div_per_token(policy_logprobs, reference_logprobs, policy_ratio=policy_ratio)
+                else:
+                    kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
