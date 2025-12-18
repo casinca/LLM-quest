@@ -463,7 +463,7 @@ def log_probs_per_token_optimized(logits, inputs):
     return label_log_probs  # shape (b, s-1)
 
 
-def kl_div_per_token(policy_logprobs, reference_logprobs):
+def kl_div_per_token(policy_logprobs, reference_logprobs, policy_ratio=None):
     """
     Compute the KL divergence per token between the policy and reference log probabilities.
     Estimated with (Schulman, 2020) K3 unbiased estimator, see:
@@ -473,6 +473,9 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
         policy_logprobs (torch.Tensor): Tensor of shape (B*, S*) containing the policy log probabilities.
         reference_logprobs (torch.Tensor): Tensor of shape (B*, S*) containing the reference log
         probabilities.
+        policy_ratio (torch.Tensor, optional): Tensor of shape (B*, S*) containing the policy ratio per token.
+        This is used for the Unbiased KL Estimate from the DeepSeek V3.2 paper, where the KL divergence is scaled by the
+        policy ratio, so that the gradient becomes unbiased. Defaults to None.
 
         *considering B as batch_size * num_samples and S as prompt_len+max_gen.
 
@@ -482,7 +485,12 @@ def kl_div_per_token(policy_logprobs, reference_logprobs):
     ratio = torch.exp(reference_logprobs - policy_logprobs)
     log_ratio = reference_logprobs - policy_logprobs
 
-    return ratio - log_ratio - 1
+    if policy_ratio is not None:
+        kl_div = policy_ratio * (ratio - log_ratio - 1)
+    else:
+        kl_div = ratio - log_ratio - 1
+
+    return kl_div
 
 
 def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.1):
