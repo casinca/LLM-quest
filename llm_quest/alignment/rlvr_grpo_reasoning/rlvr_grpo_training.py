@@ -13,6 +13,7 @@ from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import (
 from llm_quest.dataset import ReasoningDataset
 from llm_quest.gpt.gpt_model import GPTModel
 
+# TODO rlvr_grpo_training.py needs to be reworked the same way as rpt_training_qwen3.py
 # --- hyperparameters ---
 gpt_config = config.gpt2_config_creator("gpt_m")
 model_device = config.auto_device
