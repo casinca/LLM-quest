@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- DeepSeek V3.2 GRPO optimizations: Off-policy masking, Unbiased KL estimate
 - Nvidia LatentMoE from Nemotron 3 white paper
 - Qwen SAPO (Soft Adaptive Policy Optimization) loss implementation
-- Moonshot.ai's QK-Clip compatibility with Grouped attention variants (GQA, MQA)
 
 
 &nbsp;
@@ -53,6 +53,7 @@
 |:--------|:------------|
 | **Sparse MoE** | Classic auxiliary loss + z router loss |
 | **DeepSeek MoE** | Fine-grained + shared expert isolation + auxiliary loss-free load balancing |
+| **Nvidia LatentMoE** | latent/low rank compression + experts rebalancing |
 
 &nbsp;
 
