@@ -493,7 +493,7 @@ def kl_div_per_token(policy_logprobs, reference_logprobs, policy_ratio=None):
     return kl_div
 
 
-def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.1):
+def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.5):
     """
     Compute the off-policy sequence mask mentioned in the DeepSeek V3.2 paper:
     https://arxiv.org/abs/2512.02556
@@ -504,8 +504,10 @@ def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.1):
     Args:
         kl_div_per_token (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
         advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per sequence
-        delta (float): threshold of policy divergence. DeepSeek didn't mention any default in the paper.
-                        0.1 sounds decent and not too restrictive?
+        delta (float): threshold of policy divergence. default to 0.5.
+                    0.5 nat ~ exp(0.5) ~ 1.64. Meaning the old policy was 1.64x more likely, on avg, to generate these
+                    tokens than the current policy. (assuming responses were generated from the old policy).
+                    This hparam is `delta` in the p.7 of the DeepSeek V3.2 paper.
         loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask, this should be the reward mask.
                                 This is used to get the correct K1 estimator per sequence, adjusted for the prompt and
                                 padding tokens.
@@ -537,6 +539,7 @@ def grpo_loss(
     num_samples,
     max_gen=1,
     variant="grpo",
+    off_policy_mask=None,
 ):
     """
     Compute chosen loss variant among:
@@ -560,11 +563,17 @@ def grpo_loss(
         num_samples (int): Number of samples per group (simply used for reshaping per groups).
         max_gen (int, optional): used for Length Bias in the Dr. GRPO loss (in p.7 of the Dr. GRPO paper)
                                 Defaults to 1. (no effect)
-        variant (str): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo", "gspo"
+        variant (str): Variant of the GRPO loss to compute, default is `grpo` alt: `dapo`, `dr_grpo`, `gspo`, `sapo`.
+        off_policy_mask (torch.Tensor, optional): Tensor of shape (B, 1) containing the off-policy sequence mask.
+                                            When provided, it's applied only to the surrogate objective, not KL div.
+                                            Defaults to None.
 
     Returns:
         torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
     """
+    assert not (
+        variant in ["sapo", "gspo"] and off_policy_mask is not None
+    ), f"not incompatible with {variant} but needs a cleaner implementation with current code"
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
@@ -578,10 +587,17 @@ def grpo_loss(
         return sapo_loss(policy_ratio, advantages_broadcast, loss_mask)
 
     # --- Rest of variants with hard clip PPO style surrogate objective ---
-    surr_obj_per_token = policy_ratio * advantages_broadcast
+    unclipped_surr_obj_per_token = policy_ratio * advantages_broadcast
     clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
 
-    grpo_loss_per_token = -(torch.min(surr_obj_per_token, clipped_surr_obj_per_token) - beta * kl_div)
+    surr_obj_per_token = torch.min(unclipped_surr_obj_per_token, clipped_surr_obj_per_token)
+
+    # Apply off-policy mask to the surrogate objective, not KL div!
+    # that's the reason we can't simplify it by injecting in the loss mask directly
+    if off_policy_mask is not None:
+        surr_obj_per_token *= off_policy_mask
+
+    grpo_loss_per_token = -(surr_obj_per_token - beta * kl_div)
     grpo_loss_per_token *= loss_mask  # final masking: prompt + padding tokens
 
     if variant == "grpo":

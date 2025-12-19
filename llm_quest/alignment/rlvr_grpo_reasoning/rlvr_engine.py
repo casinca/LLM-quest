@@ -197,7 +197,7 @@ def rlvr_grpo_training_loop(
     rope_model=False,
     lr_scheduler=None,
     sampling_params=None,
-    off_policy_sequence_masking=False,
+    off_policy_masking_threshold=0.5,
 ):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) training loop with GRPO, derived from
@@ -213,7 +213,7 @@ def rlvr_grpo_training_loop(
         num_samples (int): The number of responses/samples to generate from the policy model for each prompt.
         num_grad_updates (int): The number of gradient update steps to perform per batch of sampled data.
         policy_config (dict): Configuration dictionary for the policy model (used for context length).
-        device (torch.device or str): The device (e.g., 'cuda', 'cpu') to perform computations on.
+        device (torch.device or str): The device (e.g., `cuda`, `cpu`) to perform computations on.
         reward_calculator (Callable): A callable object that calculates the rewards for a batch of responses.
         max_gen (int): Maximum number of tokens to generate for each response.
         eos_ids (int | List[int]): Token ids to use for the end of sequence.
@@ -230,13 +230,17 @@ def rlvr_grpo_training_loop(
         eval_num_samples (int, optional): Number of responses to generate per prompt for evaluation. Defaults to 1.
         kl_div_threshold (float, optional): max KL divergence allowed for checkpoint saving. Defaults to 0.5.
         min_reward_threshold (float, optional): minimum reward threshold for checkpoint saving. Defaults to 0.35.
-        loss_variant (str, optional): Variant of the GRPO loss to compute, default is "grpo" alt: "dapo", "dr_grpo",
-        "gspo".
+        loss_variant (str, optional): Variant of the GRPO loss to compute, default is `grpo` alt: `dapo`, `dr_grpo`,
+        `gspo`, `sapo`.
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
         rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
         lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
-        sampling_params (dict, optional): Dictionary containing sampling parameters (top_k, top_p, min_p, temp).
-        off_policy_sequence_masking (bool, optional): Whether to use off-policy sequence masking. Defaults to False.
+        sampling_params (dict, optional): Dictionary containing sampling parameters (`top_k`, `top_p`, `min_p`, `temp`).
+        off_policy_masking_threshold (float, optional): Threshold for off-policy masking. Defaults to 0.5.
+        0.5 nat ~ exp(0.5) ~ 1.64. Meaning the old policy was 1.64x more likely, on avg, to generate these tokens than
+        the current policy. (assuming responses were generated from the old policy).
+        This hparam is `delta` in the p.7 of the DeepSeek V3.2 paper.
+
     Returns:
         None: The function modifies the `policy_model` in place.
 
@@ -329,11 +333,14 @@ def rlvr_grpo_training_loop(
                 else:
                     kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
 
-                if off_policy_sequence_masking:
+                if off_policy_masking_threshold is not None:
                     # KL div (as π_θ_old/π_θ) approximated with K1 estimator
                     k1_estimator_per_token = old_logprobs - policy_logprobs.detach()
-                    off_policy_mask = off_policy_seq_mask(k1_estimator_per_token, advantages, loss_mask, delta=0.1)
-                    loss_mask &= off_policy_mask  # inject in the loss mask directly
+                    off_policy_mask = off_policy_seq_mask(
+                        k1_estimator_per_token, advantages, loss_mask, delta=off_policy_masking_threshold
+                    )
+                else:
+                    off_policy_mask = None
 
                 # loss, backprop, update
                 grpo_loss_batch = grpo_loss(
@@ -346,6 +353,7 @@ def rlvr_grpo_training_loop(
                     kl_div=kl_div,
                     num_samples=num_samples,
                     variant=loss_variant,
+                    off_policy_mask=off_policy_mask,
                 )
 
                 optimizer.zero_grad()
