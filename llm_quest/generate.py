@@ -105,14 +105,8 @@ def generate_loop_kv_cache(
     temp=0.0,
     eos_ids=None,
     device=torch.device("cuda"),
-    rope_model=False,
 ):
-    """Standalone function, same as generate_loop() but with KV cache.
-
-    Args:
-        rope_model (bool, optional): Whether the model is a RoPE model. Defaults to False.
-                                    If True, position_ids are handled differently for RoPE models.
-    """
+    """Standalone function, same as generate_loop() but with KV cache."""
 
     token_ids = []  # little optim to avoid repeated concat in the loop. store token ids and concat once at the end
 
@@ -147,11 +141,8 @@ def generate_loop_kv_cache(
             token_ids.append(next_token)
 
             # since 1 token/seq, we can also squeeze now (b, 1, v) → (b, v) same as logits[:, -1, :]
-            if rope_model:
-                logits = model(next_token, kv_cache=kv_cache, position_ids=next_position_id).squeeze(1)
-                next_position_id += 1
-            else:
-                logits = model(next_token, kv_cache=kv_cache).squeeze(1)
+            logits = model(next_token, kv_cache=kv_cache, position_ids=next_position_id).squeeze(1)
+            next_position_id += 1
 
     # final "input" is actually initial input+all predicted words
     return torch.cat([input_tensor] + token_ids, dim=-1)
@@ -271,7 +262,6 @@ def generate_batched_loop_kv_cache(
     pad_id=50256,
     device=torch.device("cuda"),
     last_real=None,
-    rope_model=True,
     *,
     attention_mask,  # emphasizing that now is a required argument even for single batch
 ):
@@ -305,9 +295,6 @@ def generate_batched_loop_kv_cache(
         last_real (torch.Tensor, optional): A tensor of shape (batch_size,) indicating the index of the last real token
                                             in each prompt of `input_tensor`. Used for backwards compatibility with
                                             position_ids calculation. Defaults to None.
-        rope_model (bool, optional): Backward compatibility for GPT2.
-                                    Whether the model is a RoPE model. Defaults to True.
-                                    If False, positional information with padding is handled differently.
 
     Returns:
         torch.Tensor: A tensor of shape (batch_size, prompt_length + generated_length) containing the original prompts
@@ -366,20 +353,13 @@ def generate_batched_loop_kv_cache(
                 break
 
             if i < max_gen - 1:  # avoid a last extra wasted computation
-                if rope_model:
-                    logits = model(
-                        next_token,
-                        attn_mask=attention_mask,
-                        kv_cache=kv_cache,
-                        position_ids=next_pos_ids,
-                    ).squeeze(1)
-                    next_pos_ids += 1
-                else:
-                    logits = model(
-                        next_token,
-                        attn_mask=attention_mask,
-                        kv_cache=kv_cache,
-                    ).squeeze(1)
+                logits = model(
+                    next_token,
+                    attn_mask=attention_mask,
+                    kv_cache=kv_cache,
+                    position_ids=next_pos_ids,
+                ).squeeze(1)
+                next_pos_ids += 1
 
     all_generated = torch.cat(generated_tokens, dim=1)
     return torch.cat([input_tensor, all_generated], dim=1)
@@ -397,7 +377,6 @@ def generate_batched_loop_kv_cache_left_pad(
     eos_ids: Union[int, List[int]] = 50256,
     pad_id=50256,
     device=torch.device("cuda"),
-    rope_model=True,  # placeholder for API
     *,
     attention_mask,
 ):

@@ -102,7 +102,6 @@ output = generate_loop_kv_cache(
     top_p=topp,
     temp=temp,
     eos_ids=eos_token_id,
-    rope_model=True,
 )
 
 print(tokenizer.decode(output[0].tolist(), skip_special_tokens=False))

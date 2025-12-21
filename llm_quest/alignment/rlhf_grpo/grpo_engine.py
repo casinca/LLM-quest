@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import config
 from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
-from llm_quest.generate import generate_batched_loop, generate_batched_loop_kv_cache, generate_loop
+from llm_quest.generate import generate_batched_loop, generate_batched_loop_kv_cache
 from llm_quest.utils import CheckpointEvaluator
 
 
@@ -945,7 +945,6 @@ def rlhf_grpo_training_loop(
                 temp=1.0,
                 last_real=last_real_pos,
                 device=device,
-                rope_model=False,
             )  # responses 2D shape: (batch_size * num_samples, max_prompt_len + max_gen), for simplicity: (B, S)
 
             collated_batch = batched_responses_collator(
@@ -1078,7 +1077,6 @@ class GRPOEvaluator:
         evaluation_type="rlhf",
         reward_model=None,
         reward_calculator=None,
-        rope_model=False,
         eos_ids=50256,
         pad_id=50256,
         sampling_params=None,
@@ -1103,7 +1101,6 @@ class GRPOEvaluator:
                 context_length=policy_config["context_length"],
                 last_real=last_real_pos,
                 device=device,
-                rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
                 **(sampling_params if sampling_params is not None else {}),
@@ -1173,7 +1170,6 @@ class GRPOEvaluator:
         reward_calculator=None,
         eval_num_samples=1,
         eval_num_batches=None,
-        rope_model=False,
         eos_ids=50256,
         pad_id=50256,
         sampling_params=None,
@@ -1191,7 +1187,6 @@ class GRPOEvaluator:
             policy_config (dict): Configuration dictionary for the policy model (used for context length).
             device (str): The device to run evaluation on.
             max_gen (int): Maximum number of tokens to generate for each response.
-            rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
             eos_ids (int | List[int], optional): Token ids to use for the end of sequence.
             pad_id (int, optional): Token id to use for padding.
             eval_num_samples (int): Number of responses to generate per prompt. Defaults to 1.
@@ -1227,7 +1222,6 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
-                rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
                 sampling_params=sampling_params,
@@ -1244,7 +1238,6 @@ class GRPOEvaluator:
                 evaluation_type=evaluation_type,
                 reward_model=reward_model,
                 reward_calculator=reward_calculator,
-                rope_model=rope_model,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
                 sampling_params=sampling_params,

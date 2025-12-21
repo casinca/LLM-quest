@@ -43,7 +43,6 @@ persistent_workers = False
 # Training
 use_gradient_checkpointing = False  # trade memory for speed if disabled
 rpt_training_hparams = {
-    "rope_model": True,
     "num_epoch": 1,
     "max_gen": 700,
     "eos_ids": eos_token_ids,

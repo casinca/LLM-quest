@@ -194,7 +194,6 @@ def rlvr_grpo_training_loop(
     min_reward_threshold=0.35,
     loss_variant="grpo",
     save_checkpoint=True,
-    rope_model=False,
     lr_scheduler=None,
     sampling_params=None,
     off_policy_masking_threshold=0.5,
@@ -233,7 +232,6 @@ def rlvr_grpo_training_loop(
         loss_variant (str, optional): Variant of the GRPO loss to compute, default is `grpo` alt: `dapo`, `dr_grpo`,
         `gspo`, `sapo`.
         save_checkpoint (bool, optional): Whether to save the best checkpoint. Defaults to True.
-        rope_model (bool, optional): Whether to use a model which uses RoPE (backward compatibility with GPT2)
         lr_scheduler (LearningRateScheduler, optional): Learning rate scheduler. Defaults to None.
         sampling_params (dict, optional): Dictionary containing sampling parameters (`top_k`, `top_p`, `min_p`, `temp`).
         off_policy_masking_threshold (float, optional): Threshold for off-policy masking. Defaults to 0.5.
@@ -274,7 +272,6 @@ def rlvr_grpo_training_loop(
                 max_gen=max_gen,
                 context_length=policy_config["context_length"],
                 last_real=last_real_pos,
-                rope_model=rope_model,
                 device=device,
                 eos_ids=eos_ids,
                 pad_id=pad_id,
@@ -381,7 +378,6 @@ def rlvr_grpo_training_loop(
                     max_gen=max_gen,
                     eval_num_samples=eval_num_samples,
                     eval_num_batches=eval_batches,
-                    rope_model=rope_model,
                     eos_ids=eos_ids,
                     pad_id=pad_id,
                     sampling_params=sampling_params,
