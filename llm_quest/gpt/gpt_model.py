@@ -6,9 +6,13 @@ from llm_quest.gpt.gpt_transformer_block import LayerNorm, TransformerBlock
 
 class GPTModel(nn.Module):
     """
-    A gpt model implementation.
+    A gpt2 model implementation.
 
-    This model follows the architecture described in the GPT papers, consisting of:
+    This model originally followed the architecture described in the GPT papers, but later was modified for KVCache,
+    Multi-modal early fusion, attention mask and retrieving last token logits, while preserving the original
+    architecture.
+
+    Originally consisting of:
     - Token embeddings
     - Positional embeddings
     - Multiple transformer blocks
@@ -36,7 +40,35 @@ class GPTModel(nn.Module):
         # projecting output to vocab_size to get logits
         self.out = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
-    def forward(self, x, attn_mask=None, kv_cache=None, last_token_only=False, input_embedded = False):
+    def forward(
+        self,
+        x,
+        attn_mask=None,
+        kv_cache=None,
+        last_token_only=False,
+        input_embedded=False,
+        position_ids=None,
+    ):
+        """
+        Forward pass of the GPT model.
+
+        Args:
+            x (torch.Tensor): Input tensor. Shape (b, seq_len) containing token IDs if
+                input_embedded is False, or (b, seq_len, emb_dim) if input_embedded is True.
+            attn_mask (torch.Tensor, optional): Attention mask of shape (b, seq_len).
+                Contains True for valid tokens and False for padding tokens.
+            kv_cache (KVCache, optional): Key-Value cache object for efficient generation.
+            last_token_only (bool): If True, returns logits only for the last valid token.
+                Defaults to False.
+            input_embedded (bool): Whether the input x is already embedded (for multimodal early fusion).
+                                Defaults to False.
+            position_ids (torch.Tensor, optional): Precomputed position IDs of shape (b, 1)
+                or (b, seq_len). If None, they are computed from the kv_cache start position.
+
+        Returns:
+            torch.Tensor: Logits of shape (b, seq_len, vocab_size) if last_token_only is False,
+                or (b, vocab_size) if last_token_only is True.
+        """
         # Input for Multimodal Early fusion training is already embedded: (b, num_patches + 1 + seq_len, emb_dim)
         # thus bypassing token and positional embedding
         if not input_embedded:
@@ -44,14 +76,17 @@ class GPTModel(nn.Module):
             # shape (b, s) → (b, s, emb_dim)
             x = self.emb_dict(x)
 
-            # --- Modif for kv_cache ---
-            past_len = 0
-            if kv_cache is not None:
-                # need to add the length to correctly offset the positions for the current tokens
-                past_len = kv_cache.start_pos
+            # --- Modif for positional embeddings ---
+            # we use precomputed position_ids for positional embeddings if provided (avoids fake padding positions)
+            # otherwise for single generation, we can compute them from the KVCache start position
+            if position_ids is None:
+                past_len = 0
+                if kv_cache is not None:
+                    # need to add the length to correctly offset the positions for the current tokens
+                    past_len = kv_cache.start_pos
+                position_ids = torch.arange(past_len, past_len + seq_len, device=x.device).unsqueeze(0)  # (1, s)
 
-            positions = torch.arange(past_len, past_len + seq_len, device=x.device)
-            pos_emb = self.pos_emb_dict(positions)  # same device as input
+            pos_emb = self.pos_emb_dict(position_ids)  # same device as input
 
             # old way:
             # pos tensor has the same length as the current batch seq len
