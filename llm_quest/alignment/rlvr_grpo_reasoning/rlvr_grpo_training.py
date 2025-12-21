@@ -1,8 +1,8 @@
 from functools import partial
 
 import torch
-import transformers
 from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
 import config
 from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import (
@@ -11,44 +11,68 @@ from llm_quest.alignment.rlvr_grpo_reasoning.rlvr_engine import (
     rlvr_grpo_training_loop,
 )
 from llm_quest.dataset import ReasoningDataset
+from llm_quest.engine import LearningRateScheduler
 from llm_quest.gpt.gpt_model import GPTModel
 
-# TODO rlvr_grpo_training.py needs to be reworked the same way as rpt_training_qwen3.py
-# --- hyperparameters ---
 gpt_config = config.gpt2_config_creator("gpt_m")
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2")
+tokenizer.pad_token = tokenizer.eos_token
+assert tokenizer.pad_token_id == tokenizer.eos_token_id == 50256
+eos_and_pad_id = tokenizer.eos_token_id
+
 model_device = config.auto_device
+
+# --- hyperparameters ---
+batch_size = 2  # prompts batch size, responses batch size will be batch_size * num_samples(rollout)
+
 # optimizer hparams
-lr = 5e-5
 weight_decay = 0.1
-# training hparams
-batch_size = 4
-num_samples = 4
-num_epoch = 1
-num_grad_updates = 3
-max_gen = 250
-# GRPO hparams
-loss_variant = "grpo"
-min_clip_eps = 0.2
-max_clip_eps = 0.2
-beta = 0.45
-# evaluation hparams
-evaluation = True
-eval_freq = 50
-eval_batches = 1
-eval_num_samples = 4
-kl_div_threshold = 0.3
-min_reward_threshold = 0.35
+peak_lr = 1e-6
+init_lr = 0.0
+warmup_steps = 18
+min_lr = None
+decay = None
+
 # loader hparams
 num_workers = 0
 pin_memory = False
 persistent_workers = False
 
+# training
+rlvr_training_hparams = {
+    "num_epoch": 1,
+    "max_gen": 250,
+    "eos_ids": eos_and_pad_id,
+    "pad_id": eos_and_pad_id,
+    "sampling_params": {
+        "top_k": 20,
+        "top_p": None,
+        "min_p": None,
+        "temp": 1.0,
+    },
+    # GRPO hparams
+    "loss_variant": "grpo",
+    "num_samples": 2,
+    "num_grad_updates": 2,
+    "min_clip_eps": 0.2,
+    "max_clip_eps": 0.2,
+    "beta": 0.45,
+    # evaluation hparams
+    "evaluation": True,
+    "eval_freq": 50,
+    "eval_batches": 1,
+    "eval_num_samples": 4,
+    # thresholds for checkpoint saving
+    "kl_div_threshold": 0.3,
+    "min_reward_threshold": 0.35,
+}
+
 
 if __name__ == "__main__":
     torch.manual_seed(123)
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")  # using HF tokenizer mainly for batch_decode
-    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)  # or for RPT, import PrefixMatchingReward
+    config.use_phantom_reward = True
+    reward_calculator = VerifiableRewardCalculator(tokenizer=tokenizer)
 
     # --- datasets & loaders ---
     train_set = ReasoningDataset(config.reasoning_train_path, tokenizer)
@@ -58,6 +82,7 @@ if __name__ == "__main__":
         rlvr_grpo_prompt_collator,
         custom_max_length=gpt_config["context_length"],
         device=model_device,
+        pad_token_id=eos_and_pad_id,
     )
 
     train_loader = DataLoader(
@@ -94,7 +119,19 @@ if __name__ == "__main__":
     policy_model.to(device=model_device, dtype=torch.bfloat16)
     reference_model.to(device=model_device, dtype=torch.bfloat16)
 
-    optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr, weight_decay=weight_decay, fused=True)
+    # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
+    optimizer = torch.optim.AdamW(policy_model.parameters(), weight_decay=weight_decay, fused=True)
+
+    total_steps = len(train_loader) * rlvr_training_hparams["num_epoch"]
+    lr_scheduler = LearningRateScheduler(
+        optimizer,
+        total_steps=total_steps,
+        init_lr=init_lr,
+        peak_lr=peak_lr,
+        warmup_steps=warmup_steps,
+        min_lr=min_lr,
+        decay=decay,
+    )
 
     rlvr_grpo_training_loop(
         train_loader=train_loader,
@@ -102,21 +139,9 @@ if __name__ == "__main__":
         policy_model=policy_model,
         reference_model=reference_model,
         optimizer=optimizer,
-        num_epoch=num_epoch,
-        num_samples=num_samples,
-        num_grad_updates=num_grad_updates,
+        lr_scheduler=lr_scheduler,
         policy_config=gpt_config,
         device=model_device,
         reward_calculator=reward_calculator,
-        max_gen=max_gen,
-        min_clip_eps=min_clip_eps,
-        max_clip_eps=max_clip_eps,
-        beta=beta,
-        evaluation=evaluation,
-        eval_freq=eval_freq,
-        eval_batches=eval_batches,
-        eval_num_samples=eval_num_samples,
-        kl_div_threshold=kl_div_threshold,
-        min_reward_threshold=min_reward_threshold,
-        loss_variant=loss_variant,
+        **rlvr_training_hparams,
     )
