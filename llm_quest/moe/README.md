@@ -17,6 +17,7 @@
 - [2. DeepSeek MoE V2, V3 and R1](#2-deepseek-moe-v2-v3-and-r1)
     - [a) What changes from part 1](#a-what-changes-from-part-1)
     - [b) More details](#b-more-details)
+- [Nvidia LatentMoE](#nvidia-latentmoe)
 - [Additional notes](#additional-notes)
 - [Resources & Acknowledgements:](#resources--acknowledgements)
 - [Mistakes](#mistakes)
