@@ -19,7 +19,7 @@ class GlobalBuffers:
 
     _mask_buffer = {}
     _rope_buffer = {}
-    _swa_buffer = {}
+    _swa_buffer = {} # same dict is used for both SWA
 
     @staticmethod
     def get_causal_mask(ctx_len):
@@ -64,5 +64,24 @@ class GlobalBuffers:
             swa_mask = k_range < (window_size - 1 - i_range)
 
             GlobalBuffers._swa_buffer[key] = swa_mask
+
+        return GlobalBuffers._swa_buffer[key]
+
+    @staticmethod
+    def get_swa_mask(ctx_len, window_size):
+        """
+        Creates/Retrieves a sliding window causal mask.
+        True where outside the window (used with torch.masked_fill)
+        Shape: (ctx_len, ctx_len)
+        """
+        key = (ctx_len, window_size)
+
+        if key not in GlobalBuffers._swa_buffer:
+            # causal: True were col > row (upper right triangle)
+            causal = torch.triu(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=1)
+            # window: True were col <= row - window_size
+            window = torch.tril(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=-window_size)
+            # combine to get sliding window causal mask
+            GlobalBuffers._swa_buffer[key] = causal | window
 
         return GlobalBuffers._swa_buffer[key]
