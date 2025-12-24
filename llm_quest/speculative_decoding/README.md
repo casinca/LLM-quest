@@ -18,8 +18,8 @@ prediction heads (similar to DeepSeek V3/R1 with their MTP modules
 &nbsp;
 
 The underlying intuition of speculative decoding is that some tokens are easier to predict than others, therefore we
-can leverage a smaller model to generate these easier tokens accurately vs wasting on them the same compute as harder
-ones using a larger/SOTA model.  
+can leverage a smaller model to generate these easier tokens accurately vs wasting compute (compared to harder tokens)
+on them when using a larger/SOTA model.
 
 Without going into too many details, as it's already well explained and detailed in their blog post:
 https://research.google/blog/looking-back-at-speculative-decoding/, we are speeding up inference by using 2 models.
@@ -40,14 +40,17 @@ This comparison in the code is split into 2 cases, for readability, depending on
 ## Also worth noting
 
 The `draft_max_gen` ($γ$) is a very important hparam and the difference is noticeable when doing different runs with
-different values in `spec_decoding_generate.py`.  
-Being too greedy can lead to a significant slowdown (worse than simply generating with the target model and KVcache) where
+different values in `spec_decoding_generate.py`.
+
+If too high, it can lead to a significant slowdown (worse than simply generating with the target model and KVcache) where
 we will waste compute on some drafted tokens that will end up being discarded as soon as the first rejection is hit.  
-Too low, nerfed, is a waste of potential speed up and counterproductive with too many drafting steps per `max_gen` (or
+For example, if we draft 10 tokens and the 2nd token is rejected, we will have wasted compute for the 8 following tokens.
+
+Too low, nerfed, is a waste of potential speed up and counterproductive, with too many drafting steps per `max_gen` (or
 until EoS is hit).
 
-The delta/difference of size (number of parameters) and the alignment between the target and draft models is also important. Similar size and the overhead of
-doing speculative decoding will outweigh the speed-up.  
+The delta/difference of size (number of parameters) and the alignment between the target and draft models is also
+important. Similar size and the overhead of doing speculative decoding will outweigh the speed-up.  
 A large delta might introduce too much divergence between the draft and target model logits and therefore untimely
 rejections.  
 Here, we used as a simple test case: a GPT-2 Small (124M) for drafting and a GPT-2 Large (774M) for verification.
