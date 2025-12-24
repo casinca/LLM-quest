@@ -99,7 +99,8 @@ class DeepSeekV3Model(nn.Module):
 
         # Initialize buffers
         # Not using extended context length scaling(smooth_scaling_cfg) for pretraining
-        mask, cos, sin = GlobalBuffers.get_buffers(
+        mask = GlobalBuffers.get_causal_mask(cfg["context_length"])
+        cos, sin = GlobalBuffers.get_rope_params(
             cfg["context_length"],
             cfg["rope_base"],
             cfg["emb_dim"] // cfg["n_heads"] // 2,  # decoupled Q and K = head_dim / 2
