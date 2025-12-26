@@ -244,3 +244,30 @@ def max_violation_step(model=None):
             num_layers += 1
 
     return max_vios / num_layers
+
+
+# quick test
+if __name__ == "__main__":
+    torch.manual_seed(123)
+    # dummy cfg
+    cfg = {
+        "emb_dim": 64,
+        "hidden_dim": 128,
+        "dtype": torch.float32,
+    }
+
+    model = DeepSeekMoE(
+        cfg,
+        num_experts=10,
+        num_shared_experts=1,
+        top_k=4,
+        scaling_factor=1,
+    )
+
+    x = torch.randn(2, 16, 64)
+    output = model(x)
+
+    print(f"Input shape: {x.shape}")
+    print(f"Output shape: {output.shape}")
+    # print(f"Output: {output}")
+    print(f"Max violation: {model.max_vio.item():.4f}")
