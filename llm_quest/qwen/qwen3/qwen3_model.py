@@ -42,8 +42,9 @@ class Qwen3Model(nn.Module):
         else:
             self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
-        # Initialize buffers for RoPE and causal mask
-        mask, cos, sin = GlobalBuffers.get_buffers(
+        # Initialize buffers for RoPE and causal mask using separated methods
+        mask = GlobalBuffers.get_causal_mask(cfg["context_length"])
+        cos, sin = GlobalBuffers.get_rope_params(
             cfg["context_length"],
             cfg["rope_base"],
             cfg["head_dim"],

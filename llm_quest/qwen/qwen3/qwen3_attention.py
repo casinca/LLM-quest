@@ -169,7 +169,8 @@ if __name__ == "__main__":
     # context length/ seq length (b, s, emb_dim)
     ctx_len = input_batch.shape[1]
 
-    mask, cos, sin = GlobalBuffers().get_buffers(ctx_len, 10_000, 2)
+    mask = GlobalBuffers.get_causal_mask(ctx_len)
+    cos, sin = GlobalBuffers.get_rope_params(ctx_len, 10_000, 2)
 
     d_in = inputs.shape[-1]
     d_out = 12
