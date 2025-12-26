@@ -25,12 +25,23 @@ class FFN(nn.Module):
 class TransformerBlock(nn.Module):
     """
     Configurable/modular MiMO-V2-Flash Transformer Block.
-    TODO add complete arch like others
 
     Supports:
-    - Global Attention (GA as they call, it's the usual causal attention, not full attention like a ViT) 
+    - Global Attention (GA as they call, it's the usual causal attention, not full attention like a ViT)
     or Sliding Window Attention (SWA)
     - Dense FFN or Mixture of Experts (MoE)
+
+    args:
+        cfg (dict): Config dict containing hyperparams:
+            - emb_dim (int): Embedding dimension
+            - context_length (int): Context length for attention
+            - n_heads (int): Number of attention heads
+            - num_swa_kv_groups (int): Number of key-value groups for SWA
+            - num_ga_kv_groups (int): Number of key-value groups for GA
+            - head_dim (int): Head dimension for attention
+        layer_idx (int): Layer index
+        use_sliding_window (bool): Whether to use sliding window attention
+        use_moe (bool): Whether to use mixture of experts
     """
 
     def __init__(self, cfg, layer_idx, use_sliding_window=True, use_moe=True):
@@ -67,7 +78,7 @@ class TransformerBlock(nn.Module):
                 num_experts=cfg["num_experts"],
                 num_shared_experts=0,
                 top_k=cfg["top_k"],
-                scaling_factor=1.0,  # TODO adapt from DeepSeekMoE
+                scaling_factor=1.0, # we use hidden_dim provided in cfg as it is
             )
         else:
             self.feed_forward = FFN(cfg)
