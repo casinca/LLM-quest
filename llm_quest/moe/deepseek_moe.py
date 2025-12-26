@@ -137,17 +137,16 @@ class DeepSeekMoE(nn.Module):
         num_experts=8,
         num_shared_experts=1,
         top_k=3,
-        scaling_factor="auto",
+        scaling_factor: str | float = "auto",
         bias_update_rate=1e-3,
     ):
         super().__init__()
         # some basic checks
-        assert (
-            scaling_factor == "auto" or cfg["emb_dim"] % scaling_factor == 0
-        ), "emb_dim must be divisible by scaling_factor"
-        assert (
-            top_k != 1 and (num_shared_experts + top_k) % 2 == 0
-        ), "the total num of 'active' experts, shared+routed(topk), should be even"
+        if scaling_factor == "auto" or scaling_factor != 1:
+            assert (top_k + num_shared_experts) %2 == 0, (
+                f"Total 'active' experts: ({top_k} routed + {num_shared_experts} shared) must be even "
+                "for better hidden_dim alignment when scaling_factor != 1"
+            )
         assert 0 < top_k <= num_experts - num_shared_experts, "top_k must be > 0 and <= routed experts"
 
         if scaling_factor == "auto":
@@ -159,7 +158,8 @@ class DeepSeekMoE(nn.Module):
 
         # separate experts into shared and routed groups
         self.routed_experts = nn.ModuleList([Expert(cfg, scaling_factor) for _ in range(self.num_routed)])
-        self.shared_experts = VectorizedSharedExperts(self.num_shared, cfg, scaling_factor)
+        if self.num_shared > 0:
+            self.shared_experts = VectorizedSharedExperts(self.num_shared, cfg, scaling_factor)
 
         # init gate and biases for routed experts only
         self.gate = nn.Linear(cfg["emb_dim"], self.num_routed, bias=True)
@@ -172,12 +172,13 @@ class DeepSeekMoE(nn.Module):
         output = torch.zeros_like(x_2d)  # preallocating output
 
         # process shared experts (always active)
-        output += self.shared_experts(x).view(-1, emb_dim)
+        if self.num_shared > 0:
+            output += self.shared_experts(x).view(-1, emb_dim)
 
         # gating
         gate_logits = self.gate(x_2d)  # shape (b*s, num_routed)
         # NOTE: DeepSeek MoE and DeepSeek V2 used Softmax to normalize the gate logits which was the original
-        # implementation here but DeepSeek V3 uses Sigmoid+renormalize to 1.0 to get the probas.
+        # implementation here but DeepSeek V3 uses Sigmoid+renormalize to 1 to get the probas.
         # ex: gate_probas = torch.sigmoid(gate_logits)
         gate_probas = nn.functional.softmax(gate_logits, dim=-1)  # we want unbiased probas for weighting
         # adding biases for load balance and top-k experts selection
