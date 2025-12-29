@@ -62,8 +62,7 @@ class TransformerBlock(nn.Module):
             num_heads=cfg["n_heads"],
             num_kv_groups=num_kv_groups,
             head_dim=cfg["head_dim"],
-            use_sliding_window=use_sliding_window,
-            window_size=cfg["window_size"],
+            value_head_dim=cfg.get("value_head_dim", None),  # Use value_head_dim if provided, else default to head_dim
             dtype=cfg["dtype"],
             is_sliding_window=use_sliding_window,
         )
