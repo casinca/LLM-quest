@@ -15,7 +15,6 @@ class MTPModule(nn.Module):
 
     def __init__(self, cfg, main_emb_layer, main_output_head):
         super().__init__()
-        # being explicit but all tied: emb_layer = main_emb_layer = out_layer = main_output_head
         self.emb_layer = main_emb_layer
         self.out_layer = main_output_head
 
