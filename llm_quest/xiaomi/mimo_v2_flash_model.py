@@ -49,3 +49,78 @@ class MTPModule(nn.Module):
         return logits, h_curr
 
 
+class MainModel(nn.Module):
+    """
+    MiMO Main Model Backbone (without MTP).
+    Layer 0: GA + Dense FFN
+    Layers 1+: Hybrid Blocks (5 SWA + 1 GA) with MoE
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+
+        self.emb_layer = nn.Embedding(
+            num_embeddings=cfg["vocab_size"], embedding_dim=cfg["emb_dim"], dtype=cfg["dtype"]
+        )
+
+        self.layers = nn.ModuleList()
+        for i in range(cfg["n_layers"]):
+            if i == 0:
+                # First layer: GA + Dense FFN
+                use_sw = False
+                use_moe = False
+            else:
+                use_moe = True  # All hybrid layers use MoE
+                use_sw = True if (i + 1) % cfg["hybrid_ratio"] else False  # 5 SWA : 1 GA
+
+            self.layers.append(TransformerBlock(cfg, layer_idx=i, use_sliding_window=use_sw, use_moe=use_moe))
+
+        self.final_norm = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
+        self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
+
+        # Buffers for SWA and GA
+        # we need two sets of RoPE buffers: one for SWA (default base) and one for GA (high base)
+        self.rope_base_swa = cfg.get("rope_base", 10000)
+        self.rope_base_ga = cfg.get("rope_base_ga", 640000)  # default from paper for 32k training
+
+        mask_swa = GlobalBuffers.get_swa_mask(cfg["context_length"], cfg["window_size"])
+        cos_swa, sin_swa = GlobalBuffers.get_rope_params(
+            ctx_len=cfg["context_length"],
+            rope_base=self.rope_base_swa,
+            head_dim=cfg["head_dim"],
+            rotation_factor=cfg["partial_rope_factor"],
+        )
+        self.register_buffer("mask_swa", mask_swa)
+        self.register_buffer("cos_swa", cos_swa)
+        self.register_buffer("sin_swa", sin_swa)
+
+        mask_ga = GlobalBuffers.get_causal_mask(cfg["context_length"])
+        cos_ga, sin_ga = GlobalBuffers.get_rope_params(
+            ctx_len=cfg["context_length"],
+            rope_base=self.rope_base_ga,
+            head_dim=cfg["head_dim"],
+            rotation_factor=cfg["partial_rope_factor"],
+        )
+        self.register_buffer("mask_ga", mask_ga)
+        self.register_buffer("cos_ga", cos_ga)
+        self.register_buffer("sin_ga", sin_ga)
+
+    def forward(self, x, attn_mask=None):
+        x = self.emb_layer(x)
+
+        for i, layer in enumerate(self.layers):
+            if layer.use_sliding_window:
+                mask, cos, sin = self.mask_swa, self.cos_swa, self.sin_swa
+            else:
+                mask, cos, sin = self.mask_ga, self.cos_ga, self.sin_ga
+
+            x = layer(x, mask, cos, sin, attn_mask)
+
+        h_final = x
+        x = self.final_norm(x)
+        logits = self.out_head(x)
+
+        return logits, h_final
+
+
