@@ -50,7 +50,7 @@ class TransformerBlock(nn.Module):
         self.use_sliding_window = use_sliding_window
         self.use_moe = use_moe
 
-        # SWA uses different number of KV groups (8 heads) vs GA (4 heads) per the MiMo-V2-Flash paper
+        # SWA uses a different number of KV groups (8 heads) vs GA (4 heads) per the MiMo-V2-Flash paper
         # our cfg should include "num_swa_kv_groups" and "num_ga_kv_groups" the way we're doing the logic
         if use_sliding_window:
             num_kv_groups = cfg["num_swa_kv_groups"]
@@ -78,7 +78,7 @@ class TransformerBlock(nn.Module):
                 num_experts=cfg["num_experts"],
                 num_shared_experts=0,
                 top_k=cfg["top_k"],
-                scaling_factor=1.0, # we use hidden_dim provided in cfg as it is
+                scaling_factor=1.0,  # we use hidden_dim provided in cfg as it is
             )
         else:
             self.feed_forward = FFN(cfg)
