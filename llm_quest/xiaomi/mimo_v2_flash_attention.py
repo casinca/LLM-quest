@@ -68,7 +68,7 @@ class GroupedQueryAttentionWithSink(nn.Module):
 
         # Attention sink bias: learnable scalar per head
         if is_sliding_window:
-            self.sink = nn.Parameter(torch.normal(mean=0.0, std=0.02, size=num_heads, dtype=dtype))
+            self.sink = nn.Parameter(torch.normal(mean=0.0, std=0.02, size=(num_heads,), dtype=dtype))
 
     def forward(self, x, mask, cos, sin, attn_mask=None):
         """
