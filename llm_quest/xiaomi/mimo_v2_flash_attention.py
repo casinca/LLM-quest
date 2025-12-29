@@ -123,7 +123,6 @@ class GroupedQueryAttentionWithSink(nn.Module):
 
         att_weights = torch.softmax(att_scores, dim=-1)
 
-        # Remove sink dimension if it was added
         if self.is_sliding_window:
             att_weights = att_weights[..., :-1]  # removing back the sinks for proper matmul with Values
 
