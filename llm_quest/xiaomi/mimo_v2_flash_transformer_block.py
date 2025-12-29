@@ -65,6 +65,7 @@ class TransformerBlock(nn.Module):
             use_sliding_window=use_sliding_window,
             window_size=cfg["window_size"],
             dtype=cfg["dtype"],
+            is_sliding_window=use_sliding_window,
         )
 
         self.norm1 = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
