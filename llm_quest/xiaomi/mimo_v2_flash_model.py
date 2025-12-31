@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
 from llm_quest.xiaomi.mimo_v2_flash_transformer_block import TransformerBlock
 
@@ -13,9 +15,8 @@ class MTPModule(nn.Module):
     Shared embeddings and output head with Main Model.
     """
 
-    def __init__(self, cfg, main_emb_layer, main_output_head):
+    def __init__(self, cfg, main_output_head):
         super().__init__()
-        self.emb_layer = main_emb_layer
         self.out_layer = main_output_head
 
         # MTP norms
@@ -30,13 +31,12 @@ class MTPModule(nn.Module):
         # MTP uses SWA and Dense FFN
         self.trf_block = TransformerBlock(cfg, layer_idx=0, use_sliding_window=True, use_moe=False)
 
-    def forward(self, x, h_prev, mask, cos, sin):
+    def forward(self, x_embeds, h_prev, mask, cos, sin):
         """
-        x: input tokens for this MTP step (shifted) # TODO need to see if same as we did for DSV3 or not
+        x_embeds: input embeddings for this MTP step (shifted)
         h_prev: hidden states from previous step (Main Model or previous MTP)
         """
-        x = self.emb_layer(x)
-        x = self.rms_input(x)
+        x = self.rms_input(x_embeds)
         h_prev = self.rms_h_prev(h_prev)
 
         combined = torch.cat([x, h_prev], dim=-1)
@@ -51,7 +51,7 @@ class MTPModule(nn.Module):
 
 class MainModel(nn.Module):
     """
-    MiMO Main Model Backbone (without MTP).
+    MiMo Main Model Backbone (without MTP).
     Layer 0: GA + Dense FFN
     Layers 1+: Hybrid Blocks (5 SWA + 1 GA) with MoE
     """
