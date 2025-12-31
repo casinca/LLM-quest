@@ -124,3 +124,81 @@ class MainModel(nn.Module):
         return logits, h_final
 
 
+# NOTE: The MTP logic is slightly different from DSV3 MTP, but is more efficient:
+# Instead of having, on top of the main model input/target, k prepared pre-shifted inputs/targets pairs for each MTP,
+# here we just have one input/target pair that we sequentially shrink at each step for MTPs
+class MiMoModel(nn.Module):
+    """
+    Full MiMo-V2-Flash Model with MTP.
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.main_model = MainModel(cfg)
+        self.mtp_depth = cfg.get("mtp_depth", 0)
+        self.mtp_coeff = cfg.get("mtp_loss_coeff", 0.0)
+
+        self.mtp_modules = nn.ModuleList([MTPModule(cfg, self.main_model.out_head) for _ in range(self.mtp_depth)])
+
+    def forward(self, x, targets=None, training=True):
+        """
+        x: (b, s) input tokens
+        targets: (b, s) target tokens, should be already shifted by 1 (aligned with logits)
+        """
+
+        logits, h_prev = self.main_model(x)  # (b, s, vocab_size) and (b, s, emb_dim)
+
+        if not training or targets is None:
+            return logits
+
+        main_loss = F.cross_entropy(logits.flatten(0, 1), targets.flatten())
+
+        if self.mtp_depth == 0:
+            return main_loss
+
+        # --- MTP logic ---
+        # Buffers for MTP (always SWA)
+        mtp_mask = self.main_model.mask_swa
+        mtp_cos = self.main_model.cos_swa
+        mtp_sin = self.main_model.sin_swa
+
+        # retrieving input embeddings from the main model (tied with MTP modules)
+        x_embeds = self.main_model.emb_layer(x)
+
+        mtp_loss_total = 0
+        for i, mtp_module in enumerate(self.mtp_modules):
+            # Input embeddings prep:
+            k = i + 1  # MTP slicing index
+            # since mtp predicts t+k, we slice to start at k and remove the last token (no label for last token)
+            mtp_slice = x_embeds[:, k:-1]  # (b, s-k-1, emb_dim)
+            mtp_target = x[:, k + 1 :]  # aligning targets with mtp_slice
+
+            # Hidden states prep:
+            if k == 1:
+                # for the first MTP, h_prev is the main model h_states, so its shape is s, we remove the last 2 h_states
+                # to match mtp_slice shape (s-k-1)
+                h_slice = h_prev[:, :-2]
+                # for the rest, h_prev is from previous MTP h_states, so its shape is s-k, we just remove the last
+                # hidden state (no label, same as mtp_slice :-1)
+            else:
+                h_slice = h_prev[:, :-1]
+
+            seq_len = h_slice.shape[1]
+            if seq_len == 0:  # shouldn't happen quick break
+                print(f"sequence length is 0, breaking at k={k}")
+                break
+            # in DSV3 MTP we werent shrinking but had already same length preshifted but need investigation # TODO
+            # slice cos/sin to match shrinking sequence length at each step for MTPs attn block
+            curr_cos = mtp_cos[:seq_len]
+            curr_sin = mtp_sin[:seq_len]
+
+            mtp_logits, h_curr = mtp_module(mtp_slice, h_slice, mtp_mask, curr_cos, curr_sin)
+
+            mtp_loss = F.cross_entropy(mtp_logits.flatten(0, 1), mtp_target.flatten())
+            mtp_loss_total += mtp_loss
+
+            h_prev = h_curr  # passing hidden states to the next MTP module
+
+        total_loss = main_loss + (self.mtp_coeff / self.mtp_depth) * mtp_loss_total  # DeepSeekV3 style average mtp loss
+
+        return total_loss
