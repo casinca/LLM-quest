@@ -26,6 +26,7 @@ batch_size = 16
 device = config.auto_device
 deepseek_small_cfg = config.DEEPSEEK_SMALL_CONFIG
 
+# doesn't matter for quick pretraining/testing convergence, as long as both vocab size are the same
 tokenizer = tiktoken.get_encoding("gpt2")
 
 train_hf = HFDataset(config.fineweb_train, tokenizer=tokenizer, max_samples=3_200)
