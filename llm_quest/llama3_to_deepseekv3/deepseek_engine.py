@@ -61,7 +61,7 @@ def training_eval_loop_mtp(
 
             # eval (AMP disabled for evaluation with torch no grad in evaluate())
             if step == 1 or step % eval_freq == 0:
-                train_loss, val_loss = DS.evaluate(train_loader, val_loader, model, eval_iter, device)
+                train_loss, val_loss = DSEvaluator.evaluate(train_loader, val_loader, model, eval_iter, device)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
 
@@ -156,7 +156,7 @@ def training_eval_loop_simple_timing(
                 avg_tps = cumulative_tokens / cumulative_time if cumulative_time > 0 else 0
 
                 # eval
-                train_loss, val_loss = DS.evaluate(train_loader, val_loader, model, eval_iter, device)
+                train_loss, val_loss = DSEvaluator.evaluate(train_loader, val_loader, model, eval_iter, device)
                 train_losses.append(train_loss)
                 val_losses.append(val_loss)
 
@@ -179,7 +179,7 @@ def training_eval_loop_simple_timing(
     return train_losses, val_losses, track_tokens
 
 
-class DS:
+class DSEvaluator:
     """
     Wrapper of the evaluate() function, in order to adapt for DeepSeek V3 model architecture and multi token prediction.
     """
@@ -189,8 +189,8 @@ class DS:
 
         model.eval()
         with torch.no_grad():
-            train_loss = DS.calc_loss_loader(train_loader, model, device, num_batches=eval_iter)
-            val_loss = DS.calc_loss_loader(val_loader, model, device, num_batches=eval_iter)
+            train_loss = DSEvaluator.calc_loss_loader(train_loader, model, device, num_batches=eval_iter)
+            val_loss = DSEvaluator.calc_loss_loader(val_loader, model, device, num_batches=eval_iter)
         model.train()
 
         return train_loss, val_loss
