@@ -140,7 +140,7 @@ class MiMoModel(nn.Module):
 
         self.mtp_modules = nn.ModuleList([MTPModule(cfg, self.main_model.out_head) for _ in range(self.mtp_depth)])
 
-    def forward(self, x, targets=None, training=True):
+    def forward(self, x, targets=None):
         """
         x: (b, s) input tokens
         targets: (b, s) target tokens, should be already shifted by 1 (aligned with logits)
@@ -148,7 +148,7 @@ class MiMoModel(nn.Module):
 
         logits, h_prev = self.main_model(x)  # (b, s, vocab_size) and (b, s, emb_dim)
 
-        if not training or targets is None:
+        if not self.training or targets is None:
             return logits
 
         main_loss = F.cross_entropy(logits.flatten(0, 1), targets.flatten())
