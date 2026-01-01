@@ -144,7 +144,7 @@ MIMO_V2_SMALL_CONFIG = {
     "rope_base": 10_000,
     "rope_base_ga": 640_000,  # Different RoPE base for GA layers
     "partial_rope_factor": 0.33,
-    "mtp_depth": 2,
+    "mtp_depth": 2,  # scaled down from 3
     "mtp_loss_coeff": 0.3,
     "num_experts": 8,  # scaled down from 256
     "top_k": 2,  # scaled down from 8
