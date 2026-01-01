@@ -114,11 +114,13 @@ class DeepSeekV3Model(nn.Module):
         logits, h_prev = self.main_model(x, self.mask, self.cos, self.sin)
 
         # they didn't use MTPs as a form of speculative decoding for inference (unlike Xiaomi MiMo-V2-Flash)
-        if not self.training or y is None:
+        if not self.training and y is None:
             return logits
 
         main_loss = global_loss(logits, y, model=self.main_model)
-        if self.depth == 0:
+
+        # eval mode check: return main model loss only (no MTP losses)
+        if not self.training or self.depth == 0:
             return main_loss
 
         mtp_losses = 0

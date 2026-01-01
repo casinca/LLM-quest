@@ -198,7 +198,7 @@ class DSEvaluator:
     @staticmethod
     def calc_loss_loader(dataloader, model, device, num_batches=None):
 
-        total_loss = 0
+        total_loss = 0.0
         # checks for smaller num of batches in order to speed up evaluation
         if len(dataloader) == 0:
             return float("NaN")
@@ -209,7 +209,10 @@ class DSEvaluator:
 
         for i, (X, y, *_) in enumerate(dataloader):
             if i < num_batches:
-                loss = model(X.to(device), y.to(device), None, None, training=False)
-                total_loss += loss
+                X = X.to(device)
+                y = y.to(device)
+                # model returns main model loss only in eval mode (no MTP losses)
+                loss = model(X, y, None, None)
+                total_loss += loss.item()
         # returning mean
         return total_loss / num_batches
