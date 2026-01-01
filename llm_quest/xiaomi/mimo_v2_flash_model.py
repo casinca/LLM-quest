@@ -148,12 +148,18 @@ class MiMoModel(nn.Module):
 
         logits, h_prev = self.main_model(x)  # (b, s, vocab_size) and (b, s, emb_dim)
 
-        if not self.training or targets is None:
+        # simple inference logic from the main model, technically Xiaomi uses also MTPs for inference
+        if not self.training and targets is None:
             return logits
+
+        # At this point, targets must be provided (either training or eval with targets)
+        if targets is None:
+            raise ValueError("targets must be provided when computing loss")
 
         main_loss = F.cross_entropy(logits.flatten(0, 1), targets.flatten())
 
-        if self.mtp_depth == 0:
+        # eval mode check: return main model loss only (no MTP losses)
+        if not self.training or self.mtp_depth == 0:
             return main_loss
 
         # --- MTP logic ---
