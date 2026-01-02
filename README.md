@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- Xiaomi MiMo-V2-Flash architecture from scratch
 - DeepSeek V3.2 GRPO optimizations: Off-policy masking, Unbiased KL estimate
 - Nvidia LatentMoE from Nemotron 3 white paper
-- Qwen SAPO (Soft Adaptive Policy Optimization) loss implementation
 
 
 &nbsp;
@@ -40,10 +40,11 @@
 |:-------|:---------------|
 | **GPT-2**\* | • MHA<br>• LayerNorm<br>• FFN<br>• GeLU<br>• KVCache |
 | **GPT to Llama 3.2**\* | • GQA<br>• RoPE + YaRN<br>• RMS Norm<br>• SwiGLU |
-| **Llama 3.2 to DeepSeek V3/R1** | • MLA<br>• MTP<br>• DeepSeek MoE |
+| **Llama 3.2 to DeepSeek V3/R1** | • MLA<br>• MTP modules<br>• DeepSeek MoE |
 | **Llama 3.2 to Gemma 3** *(text-only)* | • GeGLU<br>• Local/Global attention<br>• SWA<br>• QK norm<br> • Pre+Post RMSNorm<br>• Logit softcapping (*Gemma 2*) |
 | **Qwen3** *(dense and MoE)* | — |
-| **Qwen3-Next** | • Gated DeltaNet<br>• Gated Attention<br>• Zero-Centered RMSNorm<br>• Weighted shared expert<br>• Partial RoPE |
+| **Qwen3-Next** (hybrid attention) | • Gated DeltaNet<br>• Gated Attention<br>• Zero-Centered RMSNorm<br>• Weighted shared expert<br>• Partial RoPE |
+| **Xiaomi MiMo-V2-Flash** (hybrid attention) | • SWA+GA<br>• Attention Sink<br>• DeepSeek MoE without shared experts<br>• SWA MTP modules<br> |
 
 &nbsp;
 
