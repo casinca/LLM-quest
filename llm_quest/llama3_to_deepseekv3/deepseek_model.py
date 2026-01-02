@@ -99,7 +99,8 @@ class DeepSeekV3Model(nn.Module):
 
         # Initialize buffers
         # Not using extended context length scaling(smooth_scaling_cfg) for pretraining
-        mask, cos, sin = GlobalBuffers.get_buffers(
+        mask = GlobalBuffers.get_causal_mask(cfg["context_length"])
+        cos, sin = GlobalBuffers.get_rope_params(
             cfg["context_length"],
             cfg["rope_base"],
             cfg["emb_dim"] // cfg["n_heads"] // 2,  # decoupled Q and K = head_dim / 2
@@ -108,12 +109,18 @@ class DeepSeekV3Model(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x, y, shifted_x, shifted_y, training=True):
+    def forward(self, x, y, shifted_x, shifted_y):
 
         logits, h_prev = self.main_model(x, self.mask, self.cos, self.sin)
+
+        # they didn't use MTPs as a form of speculative decoding for inference (unlike Xiaomi MiMo-V2-Flash)
+        if not self.training and y is None:
+            return logits
+
         main_loss = global_loss(logits, y, model=self.main_model)
 
-        if not training:  # we don't want auxiliary losses for evaluation
+        # eval mode check: return main model loss only (no MTP losses)
+        if not self.training or self.depth == 0:
             return main_loss
 
         mtp_losses = 0

@@ -9,21 +9,39 @@ class GlobalBuffers:
     computations across different transformer blocks.
 
     Attributes:
-        _buffer (dict):
-            A class-level dictionary that stores the precomputed attention mask, cos, and sin values
+        _mask_buffer (dict):
+            A class-level dictionary that stores the precomputed causal attention masks
+        _rope_buffer (dict):
+            A class-level dictionary that stores the precomputed RoPE cos and sin values
         _swa_buffer (dict):
             A class-level dictionary that stores the precomputed sliding window attention mask.
     """
 
-    _buffer = {}
-    _swa_buffer = {}
+    _mask_buffer = {}
+    _rope_buffer = {}
+    _swa_buffer = {} # same dict is used for both SWA
 
     @staticmethod
-    def get_buffers(ctx_len, rope_base, head_dim, smooth_scaling_cfg=None, rotation_factor=1.0):
-        key = (ctx_len, rope_base, head_dim)
+    def get_causal_mask(ctx_len):
+        """
+        Creates/Retrieves a causal attention mask.
+        Returns mask where True = upper right triangle, (will be used with torch.masked_fill)
+        Shape: (ctx_len, ctx_len)
+        """
+        key = ctx_len
 
-        if key not in GlobalBuffers._buffer:
+        if key not in GlobalBuffers._mask_buffer:
             mask = torch.triu(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=1)
+            GlobalBuffers._mask_buffer[key] = mask
+
+        return GlobalBuffers._mask_buffer[key]
+
+    @staticmethod
+    def get_rope_params(ctx_len, rope_base, head_dim, smooth_scaling_cfg=None, rotation_factor=1.0):
+        """Creates/Retrieves RoPE angles (cos and sin)."""
+        key = (ctx_len, rope_base, head_dim, smooth_scaling_cfg, rotation_factor)
+
+        if key not in GlobalBuffers._rope_buffer:
             cos, sin = RoPE.compute_angles(
                 base=rope_base,
                 head_dim=head_dim,
@@ -31,14 +49,13 @@ class GlobalBuffers:
                 smooth_scaling_cfg=smooth_scaling_cfg,
                 rotation_factor=rotation_factor,
             )
+            GlobalBuffers._rope_buffer[key] = (cos, sin)
 
-            GlobalBuffers._buffer[key] = (mask, cos, sin)
-
-        return GlobalBuffers._buffer[key]
+        return GlobalBuffers._rope_buffer[key]
 
     @staticmethod
     def get_swa_buffers(ctx_len, window_size):
-
+        """used for the Gemma3 SWA"""
         key = (ctx_len, window_size)
 
         if key not in GlobalBuffers._swa_buffer:
@@ -47,5 +64,24 @@ class GlobalBuffers:
             swa_mask = k_range < (window_size - 1 - i_range)
 
             GlobalBuffers._swa_buffer[key] = swa_mask
+
+        return GlobalBuffers._swa_buffer[key]
+
+    @staticmethod
+    def get_swa_mask(ctx_len, window_size):
+        """
+        Creates/Retrieves a sliding window causal mask.
+        True where outside the window (used with torch.masked_fill)
+        Shape: (ctx_len, ctx_len)
+        """
+        key = (ctx_len, window_size)
+
+        if key not in GlobalBuffers._swa_buffer:
+            # causal: True were col > row (upper right triangle)
+            causal = torch.triu(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=1)
+            # window: True were col <= row - window_size
+            window = torch.tril(torch.ones(ctx_len, ctx_len, dtype=torch.bool), diagonal=-window_size)
+            # combine to get sliding window causal mask
+            GlobalBuffers._swa_buffer[key] = causal | window
 
         return GlobalBuffers._swa_buffer[key]

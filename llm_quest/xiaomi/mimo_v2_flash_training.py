@@ -5,11 +5,10 @@ import torch
 from torch.utils.data import DataLoader
 
 import config
-from llm_quest.dataset import HFDataset
+from llm_quest.dataset import HFDataset, collate_function
 from llm_quest.engine import LearningRateScheduler
-from llm_quest.llama3_to_deepseekv3.custom_collate_mtp import collate_function_mtp
-from llm_quest.llama3_to_deepseekv3.deepseek_engine import training_eval_loop_mtp
-from llm_quest.llama3_to_deepseekv3.deepseek_model import DeepSeekV3Model
+from llm_quest.xiaomi.mimo_v2_flash_engine import training_eval_loop_mimo
+from llm_quest.xiaomi.mimo_v2_flash_model import MiMoModel
 
 torch.manual_seed(123)
 
@@ -22,9 +21,9 @@ decay = "cosine"
 eval_freq = 5
 eval_iter = 5
 weight_decay = 0.1
-batch_size = 16
+batch_size = 8
 device = config.auto_device
-deepseek_small_cfg = config.DEEPSEEK_SMALL_CONFIG
+mimo_small_cfg = config.MIMO_V2_SMALL_CONFIG
 
 # doesn't matter for quick pretraining/testing convergence, as long as both vocab size are the same
 tokenizer = tiktoken.get_encoding("gpt2")
@@ -32,7 +31,8 @@ tokenizer = tiktoken.get_encoding("gpt2")
 train_hf = HFDataset(config.fineweb_train, tokenizer=tokenizer, max_samples=3_200)
 val_hf = HFDataset(config.fineweb_val, tokenizer=tokenizer, max_samples=3_200 * 0.1)
 
-custom_collate = partial(collate_function_mtp, custom_max_len=deepseek_small_cfg["context_length"], device="cpu")
+# We use standard collate function, simplified MTP logic no need to use custom_collate_mtp here
+custom_collate = partial(collate_function, custom_max_len=mimo_small_cfg["context_length"], device="cpu")
 
 train_loader = DataLoader(
     train_hf,
@@ -54,8 +54,8 @@ val_loader = DataLoader(
     pin_memory=False,
 )
 
-torch.set_float32_matmul_precision("high")
-model = DeepSeekV3Model(deepseek_small_cfg)
+# torch.set_float32_matmul_precision("high")
+model = MiMoModel(mimo_small_cfg)
 model.bfloat16().to(device)
 
 # no need to set optimizer's lr, the LR scheduler will init optimizer's lr
@@ -73,7 +73,7 @@ lr_scheduler = LearningRateScheduler(
     decay=decay,
 )
 
-train_loss, val_loss = training_eval_loop_mtp(
+train_losses, val_losses = training_eval_loop_mimo(
     train_loader,
     val_loader,
     model=model,
@@ -85,3 +85,5 @@ train_loss, val_loss = training_eval_loop_mtp(
     device=device,
     use_amp=False,
 )
+
+print(f"Final train loss: {train_losses[-1]:.5f}, Final val loss: {val_losses[-1]:.5f}")

@@ -132,7 +132,8 @@ if __name__ == "__main__":
     ctx_len = input_batch.shape[1]
     num_heads = 4
     # decoupled head dim: d_out must be divisible by num_heads, decoup_head_dim must be divisible by 2 for RoPE.
-    mask, cos, sin = GlobalBuffers().get_buffers(ctx_len, 10_000, d_out // num_heads // 2)
+    mask = GlobalBuffers.get_causal_mask(ctx_len)
+    cos, sin = GlobalBuffers.get_rope_params(ctx_len, 10_000, d_out // num_heads // 2)
 
     mla = MultiLatentAttention(d_in=d_in, d_out=d_out, num_heads=num_heads)
     print(mla(input_batch, mask, cos, sin))

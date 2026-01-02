@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from llm_quest.common.rope import RoPE
 
-
 # - add:
 #   - SWA
 #   - adapt GQA for SWA
@@ -262,7 +261,8 @@ if __name__ == "__main__":
     ctx_len = input_batch.shape[1]
 
     swa_mask = GlobalBuffers().get_swa_buffers(ctx_len, 3)
-    mask, cos, sin = GlobalBuffers().get_buffers(ctx_len, 10_000, 2)
+    mask = GlobalBuffers.get_causal_mask(ctx_len)
+    cos, sin = GlobalBuffers.get_rope_params(ctx_len, 10_000, 2)
 
     d_in = inputs.shape[-1]
     d_out = 12

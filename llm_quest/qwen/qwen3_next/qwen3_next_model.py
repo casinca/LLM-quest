@@ -32,7 +32,8 @@ class Qwen3NextModel(nn.Module):
         self.final_norm = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
-        mask, cos, sin = GlobalBuffers.get_buffers(
+        mask = GlobalBuffers.get_causal_mask(cfg["context_length"])
+        cos, sin = GlobalBuffers.get_rope_params(
             ctx_len=cfg["context_length"],
             rope_base=cfg["rope_base"],
             head_dim=cfg["head_dim"],

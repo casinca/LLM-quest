@@ -120,11 +120,34 @@ DEEPSEEK_SMALL_CONFIG = {
     "rope_base": 10_000,
     "rope_freq": {
         "factor": 32.0,
-        "alpha": 1.0,
-        "beta": 32.0,
+        "alpha": 1.0,  # also called beta slow
+        "beta": 32.0,  # also called beta fast
         "og_ctx_len": 4096,
         "ctx_len": 8192,
     },
+    "dtype": torch.float32,
+}
+
+MIMO_V2_SMALL_CONFIG = {
+    "vocab_size": 50304,
+    "context_length": 512,
+    "emb_dim": 768,
+    "n_layers": 12,  # small version (default: 48) 2 hybrid blocks: first= GA + 4 SWA + GA then = 5 SWA + GA
+    "n_heads": 12,  # Q heads (same for SWA and GA)
+    "num_swa_kv_groups": 4,  # ratio 3
+    "num_ga_kv_groups": 2,  # ratio 6
+    "head_dim": 64,
+    "value_head_dim": 32,
+    "hidden_dim": 4 * 768,
+    "window_size": 128,
+    "hybrid_ratio": 6,  # every 6th layer=GA, except the first layer which is also GA
+    "rope_base": 10_000,
+    "rope_base_ga": 640_000,  # Different RoPE base for GA layers
+    "partial_rope_factor": 0.33,
+    "mtp_depth": 2,  # scaled down from 3
+    "mtp_loss_coeff": 0.3,
+    "num_experts": 8,  # scaled down from 256
+    "top_k": 2,  # scaled down from 8
     "dtype": torch.float32,
 }
 
