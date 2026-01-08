@@ -11,6 +11,9 @@ class HyperConnectionRes(nn.Module):
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 3 and 5): https://arxiv.org/abs/2512.24880
     - Hyper-Connections (HC) paper: https://arxiv.org/abs/2409.19606
 
+    This class is basically returning the residual hyperconnection output of H_res @ x described in eq 3 of the mHC
+    paper.
+
     Args:
         emb_dim (int): The dimension of the embeddings
         expansion_rate (int): The number of expanded streams, ("n" in the paper), can be seen as the width of the
