@@ -21,22 +21,33 @@ class HyperConnectionRes(nn.Module):
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
         norm_cls (nn.Module): The normalization function class, default is RMSNorm per the mHC paper
+        device (torch.device):
+        dtype (torch.dtype):
 
     Returns:
         x: The mixed residual streams, shape: (b, seq_len, exps_rate, emb_dim)
     """
 
-    def __init__(self, emb_dim, expansion_rate=4, add_static_mapping=True, activation_cls=nn.Tanh, norm_cls=nn.RMSNorm):
+    def __init__(
+        self,
+        emb_dim,
+        expansion_rate=4,
+        add_static_mapping=True,
+        activation_cls=nn.Tanh,
+        norm_cls=nn.RMSNorm,
+        device=None,
+        dtype=None,
+    ):
         super().__init__()
 
-        self.norm = norm_cls(emb_dim)
+        self.norm = norm_cls(emb_dim, device=device, dtype=dtype)  # TODO recheck dtype for norm
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
-        self.factor = nn.Parameter(torch.tensor([0.01]))
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
         # dynamic mapping (theta_res): project to n streams
-        self.linear = nn.Linear(emb_dim, expansion_rate, bias=False)
+        self.linear = nn.Linear(emb_dim, expansion_rate, bias=False, device=device, dtype=dtype)
         # The HC paper init dynamic mapping weights for theta_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
         # is doing Kaiming init by default so we need to zero init
         nn.init.zeros_(self.linear.weight)
@@ -44,7 +55,9 @@ class HyperConnectionRes(nn.Module):
         # static mapping (biases b_res) are initialized as the identity matrix (HC paper), since dynamic mapping weights
         # are initialized to 0, overall, this makes the hyper-connection start with an untouched stream (like a classic
         # residual connection): (0 + I) @ xl = xl
-        self.bias = nn.Parameter(torch.eye(expansion_rate)) if add_static_mapping else None  # (exps_rate, exps_rate)
+        self.bias = (
+            nn.Parameter(torch.eye(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
+        )  # shape (exps_rate, exps_rate)
 
     # TODO mention diff with DeepSeek: expansion stream are flattened, (n, emb_dim) -> (n*emb_dim) no need for transpose
     def residual_matrix(self, x):
