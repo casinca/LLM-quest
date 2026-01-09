@@ -219,7 +219,7 @@ class HyperConnectionPost(nn.Module):
     This class is basically broadcasting the single stream output of the trf block back to the n expanded streams
     weighted by their H_post weights. This is done in order to mix/add it with the other n streams from the main
     branch (output from H_res @ x).
-    It returns the output of (H_post @ output trf block), described in eq 3 of the mHC paper.
+    It returns the output of (H_post^T @ output trf block), described in eq 3 of the mHC paper.
 
     Since we are operating with n streams and the trf block had to be a single stream (to match traditional LLM
     implementation and not increase the time complexity), H_post weights serve to scale how much each broadcasted trf
