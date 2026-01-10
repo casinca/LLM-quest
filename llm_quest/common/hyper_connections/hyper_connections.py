@@ -4,10 +4,8 @@ import torch.nn as nn
 # separating each hyper-connection to 3 separate classes (Res, Pre, Post) instead of one class because
 # they are all initialized differently and there is 3 different forward passes for each of them
 
-# TODO the norms are duplicated, it should be a single norm for all 3 HC per layer, either we do it in the model
-# forward or we wrap into a HyperConnection class
-# TODO the input doc says n untouched/identity/residual streams input but it's only for the first layer, rest are modified
-# streams for previous layers so not identity anymore
+# The paper mentions untouched/identity/residual streams which is only the case for a single layer or before the first
+# trf block), afterward the streams are modified from previous layers and not "identity" anymore
 
 
 class HyperConnectionRes(nn.Module):
@@ -25,7 +23,6 @@ class HyperConnectionRes(nn.Module):
                             residual stream
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
-        norm_cls (nn.Module): The normalization function class, default is RMSNorm per the mHC paper
         device (torch.device):
         dtype (torch.dtype):
 
@@ -39,13 +36,11 @@ class HyperConnectionRes(nn.Module):
         expansion_rate=4,
         add_static_mapping=True,
         activation_cls=nn.Tanh,
-        norm_cls=nn.RMSNorm,
         device=None,
         dtype=None,
     ):
         super().__init__()
 
-        self.norm = norm_cls(emb_dim, device=device, dtype=dtype)  # TODO recheck dtype for norm
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
@@ -65,19 +60,19 @@ class HyperConnectionRes(nn.Module):
         )  # shape (exps_rate, exps_rate)
 
     # TODO mention diff with DeepSeek: expansion stream are flattened, (n, emb_dim) -> (n*emb_dim) no need for transpose
-    def residual_matrix(self, x):
+    def residual_matrix(self, x_norm):
         """
         Generates the residual mapping/matrix H_res
         This is our small "HyperNet" where we generate on the fly the weights H_res to mix with the residual stream
 
         Args:
-            x: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (pre-trf block), used to generate H_res,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The residual mapping/matrix H_res, shape: (b, seq_len, exps_rate, exps_rate)
         """
-        x = self.norm(x)
-        x = self.linear(x)  # apply dynamic mapping
+        x = self.linear(x_norm)  # apply dynamic mapping
         # Pytorch nn.linear is doing Wx (as XW^T) but we want WX^T (eq 5), therefore we need to transpose the linear
         # output as (XW^T)^T = WX^T
         x = x.mT
@@ -90,17 +85,19 @@ class HyperConnectionRes(nn.Module):
 
         return x
 
-    def forward(self, x):
+    def forward(self, x, x_norm):
         """
         Apply/mix the residual mapping/matrix H_res to the residual stream
 
         Args:
-            x: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (pre-trf block), used to generate H_res,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The n mixed streams after applying the residual mapping H_res, shape: (b, seq_len, exps_rate, emb_dim)
         """
-        x = self.residual_matrix(x) @ x
+        x = self.residual_matrix(x_norm) @ x
 
         return x
 
@@ -124,7 +121,6 @@ class HyperConnectionPre(nn.Module):
                             residual stream
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
-        norm_cls (nn.Module): The normalization function class, default is RMSNorm per the mHC paper
         device (torch.device):
         dtype (torch.dtype):
 
@@ -139,13 +135,11 @@ class HyperConnectionPre(nn.Module):
         expansion_rate=4,
         add_static_mapping=True,
         activation_cls=nn.Tanh,
-        norm_cls=nn.RMSNorm,
         device=None,
         dtype=None,
     ):
         super().__init__()
 
-        self.norm = norm_cls(emb_dim, device=device, dtype=dtype)  # TODO recheck dtype for norm
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
@@ -169,21 +163,21 @@ class HyperConnectionPre(nn.Module):
             else None
         )  # shape (exps_rate,)
 
-    def pre_mapping_matrix(self, x):
+    def pre_mapping_matrix(self, x_norm):
         """
         Generates the pre trf block mapping/matrix H_pre
         This is our small "HyperNet" where we generate on the fly the weights H_pre. A weight for each of the n expanded
         streams that will determine/scale their contribution to the aggregated single stream for the trf block.
 
         Args:
-            x: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (pre-trf block), used to generate H_pre,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The pre mapping/matrix H_pre as a row vector, shape: (b, seq_len, 1, exps_rate)
         """
-        x = self.norm(x)
         # shape (b, seq_len, exps_rate, emb_dim) → (b, seq_len, exps_rate, 1) → (b, seq_len, exps_rate)
-        x = self.linear(x).squeeze(-1)  # apply dynamic mapping
+        x = self.linear(x_norm).squeeze(-1)  # apply dynamic mapping
         x = self.activation(x) * self.factor
 
         if self.bias is not None:  # add static mapping if enabled
@@ -191,20 +185,22 @@ class HyperConnectionPre(nn.Module):
 
         return x.unsqueeze(-2)
 
-    def forward(self, x):
+    def forward(self, x, x_norm):
         """
         Aggregate/collapse the n expanded streams to a single stream with the pre mapping matrix H_pre weights
 
         This ends up being a weighted sum of the n streams using the dynamically generated H_pre weights.
 
         Args:
-            x: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (pre-trf block), used to generate H_pre,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The aggregated single stream ready for the trf block, shape: (b, seq_len, emb_dim)
         """
 
-        x = self.pre_mapping_matrix(x) @ x
+        x = self.pre_mapping_matrix(x_norm) @ x
         x = x.squeeze(-2)  # shape (b, seq_len, 1, emb_dim) → (b, seq_len, emb_dim)
 
         return x
@@ -232,7 +228,6 @@ class HyperConnectionPost(nn.Module):
                             residual stream
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
-        norm_cls (nn.Module): The normalization function class, default is RMSNorm per the mHC paper
         device (torch.device):
         dtype (torch.dtype):
 
@@ -247,13 +242,11 @@ class HyperConnectionPost(nn.Module):
         expansion_rate=4,
         add_static_mapping=True,
         activation_cls=nn.Tanh,
-        norm_cls=nn.RMSNorm,
         device=None,
         dtype=None,
     ):
         super().__init__()
 
-        self.norm = norm_cls(emb_dim, device=device, dtype=dtype)  # TODO recheck dtype for norm
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
@@ -271,7 +264,7 @@ class HyperConnectionPost(nn.Module):
             nn.Parameter(torch.ones(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
         )  # shape (exps_rate,)
 
-    def post_mapping_matrix(self, x):
+    def post_mapping_matrix(self, x_norm):
         """
         Generates the post mapping/matrix H_post
         This is our small "HyperNet" where we generate on the fly the weights H_post. A weight for each of the n
@@ -279,14 +272,14 @@ class HyperConnectionPost(nn.Module):
         expanded streams.
 
         Args:
-            x: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (post-trf block), used to generate H_post,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The transposed post mapping/matrix H_post^T as a column vector, shape: (b, seq_len, exps_rate, 1)
         """
-        x = self.norm(x)
         # shape (b, seq_len, exps_rate, emb_dim) → (b, seq_len, exps_rate, 1) → (b, seq_len, exps_rate)
-        x = self.linear(x).squeeze(-1)  # apply dynamic mapping
+        x = self.linear(x_norm).squeeze(-1)  # apply dynamic mapping
         x = self.activation(x) * self.factor
 
         if self.bias is not None:  # add static mapping if enabled
@@ -294,21 +287,21 @@ class HyperConnectionPost(nn.Module):
 
         return x.unsqueeze(-1)  # unsqueeze serve as transpose here H_post^T making it a column vector
 
-    def forward(self, x, main_stream):
+    def forward(self, x, x_norm):
         """
         Broadcast the trf block output back to the n expanded streams and scaled with the post mapping matrix H_post
         weights.
 
         Args:
             x: The single stream output of the trf block, shape: (b, seq_len, emb_dim)
-            main_stream: The n untouched/identity/residual streams input, shape: (b, seq_len, exps_rate, emb_dim)
-                        This is used to generate the post mapping matrix H_post.
+            x_norm: The n streams normalized input (post-trf block), used to generate H_post,
+                    shape: (b, seq_len, exps_rate, emb_dim)
 
         Returns:
             The n mixed streams, shape: (b, seq_len, exps_rate, emb_dim)
         """
 
-        x = self.post_mapping_matrix(main_stream) @ x.unsqueeze(-2)
+        x = self.post_mapping_matrix(x_norm) @ x.unsqueeze(-2)
         return x
 
 
@@ -321,12 +314,13 @@ if __name__ == "__main__":
     dtype = torch.bfloat16
 
     test_x = torch.randn(1, 10, 4, 128, device=device, dtype=dtype)
+    test_x_norm = torch.nn.functional.normalize(test_x, dim=-1)
     test_hc_res = HyperConnectionRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
     test_hc_pre = HyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
     test_hc_post = HyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_output_res = test_hc_res(test_x)
-    test_output_pre = test_hc_pre(test_x)
-    test_output_post = test_hc_post(test_output_pre, test_x)
+    test_output_res = test_hc_res(test_x, test_x_norm)
+    test_output_pre = test_hc_pre(test_x, test_x_norm)
+    test_output_post = test_hc_post(test_output_pre, test_x_norm)
     print(test_output_res.shape)
     print(test_output_pre.shape)
     print(test_output_post.shape)
