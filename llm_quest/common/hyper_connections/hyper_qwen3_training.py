@@ -24,8 +24,7 @@ nano_qwen_config = {
     "num_kv_groups": 4,
     "hidden_dim": 2048,
     "context_length": 512,
-    # TODO need to check if high start is reasonably normal or if there is a problem during training with Tie=True
-    "tie_embeddings": False,
+    "tie_embeddings": True,
 }
 
 hparams = {

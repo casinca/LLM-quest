@@ -39,6 +39,11 @@ class Qwen3Model(nn.Module):
                 self.tie_embeddings and self.emb_dict.weight.shape == self.out_head.weight.shape
             ), "Shape mismatch for weight tying"
             self.out_head.weight = self.emb_dict.weight  # weights tying
+            # for pretraining: with tied weights, the out_head weights aren't Linear init (Kaiming) since they inherit
+            # nn.Embedding init (N(mean=0, std=1)), which is too high for Linears: compromise reinit as Xavier
+            # (quick test gave best results among Kaiming, Xavier, N(mean=0, std=0.02))
+            with torch.no_grad():
+                nn.init.xavier_uniform_(self.out_head.weight)
         else:
             self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
