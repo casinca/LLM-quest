@@ -1,36 +1,74 @@
-TODO
+# Hyper-connections
 
-TODO Check latex on github rendering
+Table of content
+- [Classic (unconstrained) Hyper-connections](#classic-unconstrained-hyper-connections)
+  - [What is the meaning of "Hyper-connections" and example with $\mathcal{H}_l^{\text{res}}$?](#what-is-the-meaning-of-hyper-connections-and-example-with-mathcalh_lres)
+  - [Problems with unconstrained hyper-connections](#problems-with-unconstrained-hyper-connections)
 
 
-## Hyper-connections
+- [Acknowledgements](#acknowledgements)
+  
 
-Hyper-connections is an alternative to the traditional residual/skip connections that we've seen in transformers since
-it's introduction in the ResNet paper.
+## Classic (unconstrained) Hyper-connections
 
-For example instead of having for a single layer of a transformer block the usual output as:
+Hyper-connections are an alternative to the traditional residual/skip connections that are now standard in transformer
+architectures, originally introduced in ResNet.
+
+<div align="center">
+    <img src="_hyper_connections_img/_hyper_connections_img1.png" width="500">
+    <p>Fig 1 from the DeepSeek mHC paper</p>
+</div>
+
+&nbsp;
+
+For example instead of having for a single sub-layer/part (Attention or ffn/MoE) of a transformer block the usual output as:
 
 $$\mathbf{x}_{l+1} = \mathbf{x}_l + \mathcal{F}(\mathbf{x}_l, \mathcal{W}_l)$$
 
 with:
-*   **$\mathbf{x}_l$**: the untouched input residual/skip connection (the identity mapping as DeepSeek says)
-*   **$\mathcal{F}(\mathbf{x}_l, \mathcal{W}_l)$**: the residual/layer modifications from the trf block (Attention,
-    ffn/MoE...)
-
-The untouched input is replaced by a "hyper-connection" $\mathcal{H}_l^{\text{res}}\mathbf{x}_l$, which is
-basically a learnable matrix/weight $\mathcal{H}_l^{\text{res}}$ scaling the untouched input $\mathbf{x}_l$ (*mixes features within the residual stream* as DeepSeek
-put it).
-
-TODO mention Hpost Hpre
-
-$$\mathbf{x}_{l+1} = \mathcal{H}_l^{\text{res}}\mathbf{x}_l + \mathcal{H}_l^{\text{post} \top} \mathcal{F}(\mathcal{H}_l^{\text{pre}} \mathbf{x}_l, \mathcal{W}_l),$$
+*   **$\mathbf{x}_l$**: the untouched input residual/skip connection (the *identity mapping* as DeepSeek says)
+*   **$\mathcal{F}(\mathbf{x}_l, \mathcal{W}_l)$**: the residual function/layer modifications from the Attention or
+    ffn/MoE in the trf block
 
 &nbsp;
 
-### To begin with, why is it called Hyper-connections and what is $\mathcal{H}_l^{\text{res}}$?
+Hyper connections add "width" to the stream. The main stream is expanded into n (hyperparameter `expansion_rate`)
+expanded streams and the untouched input is replaced by a "hyper-connection" $\mathcal{H}_l^{\text{res}}\mathbf{x}_l$.
 
-The term is derived from HyperNetworks, which as the original paper abtracts mentions: Hypernets are neural networks
-that generate the weights of other neural networks.
+$H_l^{\text{res}}$ is a dynamically generated matrix/weights that will determine how much each of the n expanded streams
+contributes to each other.  
+For instance with n=4 expanded streams, for S1, we need to know how much of S1, S2, S3, and S4 to include 
+(*mixes features within the residual stream* as DeepSeek put it). 
+This is why $H_l^{\text{res}} \in \mathbb{R}^{n \times n}$
+
+For a single sub-layer/part (Attention or ffn/MoE) of a transformer block, we get:
+
+
+$$
+\mathbf{x}_{l+1} = \underbrace{\mathcal{H}_l^{\text{res}} \mathbf{x}_l}_{\text{Residual Mapping}} +
+\underbrace{{\mathcal{H}_l^{\text{post}}}^\top \mathcal{F}(\mathcal{H}_l^{\text{pre}} \mathbf{x}_l,
+\mathcal{W}_l)}_{\text{sub-layer transformation Mapping}}
+$$
+
+&nbsp;
+
+Since we can't just pass these n streams to the attention (or ffn/MoE) sub-layer as it would increase the time complexity by a factor
+of n, we have 2 additional hyper-connections to handle the residual function/layer modifications branch:
+- the contraction (pre-mapping $\mathcal{H}_l^{\text{pre}}$) which collapses the n expanded streams into a single stream
+  for the transformer block input.  
+  This is a weighted sum of the n streams using the dynamically generated $\mathcal{H}_l^{\text{pre}}$ weights.
+
+- and expansion (post-mapping $\mathcal{H}_l^{\text{post}}$) which broadcasts the single stream output of the
+  residual/sub-layer (attention or ffn/MoE) branch back to the n expanded streams.  
+  $\mathcal{H}_l^{\text{post}}$ will weight how much the residual/sub-layer branch output contributes to each of the n expanded streams.
+
+
+&nbsp;
+
+### Where does the term "Hyper-connections" come from and example with $\mathcal{H}_l^{\text{res}}$?
+
+The term "hyper-connection" is derived from HyperNetworks, as the original HyperNetworks paper abstracts mentions:
+*Hypernets are neural networks that generate the weights of other neural networks.*
 
 Let's take the example of a traditional single linear layer without bias, we have:
 
@@ -38,37 +76,73 @@ $$
 y = W \cdot x
 $$
 
-- During training, the weights in $\mathbf{W}$ are not fixed (they are learned through backprop) but during
+- During training, the weights in $W$ are not fixed (they are learned through backprop) but during
   inference, they are set in stones. So we have fixed weights.
 
-For an "HyperLinear" layer, instead of having a fixed weight matrix $\mathbf{W}$, we have a 2nd small linear layer
-$H(x)$ that learns to generate a weight matrix $W$ on the fly during inference.
+For a "HyperLinear" layer, instead of having a fixed weight matrix $W$, we have a 2nd small linear layer
+$H(x)$ that learns to generate a weight matrix $W$ on the fly based on the input $x$.
 
 so we end up with:
 
 $$y = H(x) \cdot x$$
 
-- whether during training or inference, the weights $W$ here are not fixed, they are generated by $H(x)$
+- Whether during training or inference, the weights here are not fixed, a new $W$ is generated by $H(x)$ on the fly.
 
 &nbsp;
 
-To make the parallel with hyper-connections, In our case $H(x)$ is $\mathcal{H}_l^{\text{res}}$ from the mHC paper eq 5.
+To make the parallel with hyper-connections here, In our case $H(x)$ can be $\mathcal{H}_l^{\text{res}}$ from the mHC paper eq 5.
 
-Which is the result of a single layer ffn that is tanh activated, with a scaling factor $\alpha$ and a bias $\mathbf{b}$:
+Which is the result of a single layer ffn that is Tanh activated, with a scaling factor $\alpha$ and a bias $\mathbf{b}$:
  $$\mathcal{H}^{\text{res}} = \alpha \cdot \tanh(\theta \mathbf{x}^\top) + \mathbf{b}$$
 
 &nbsp;
 
 Hence the term hyperconnections, instead of having a fixed weight matrix $W$ that could have scaled/mixed features
-within the residual stream as $\mathbf{x}_{l+1} = W \cdot \mathbf{x}_l$, we have a small neural network that
+within the residual stream as $\mathbf{x}_{l+1} = W \cdot \mathbf{x}_l$, we have a small "neural network" (1 layer) that
 generates the weights $\mathcal{H}_l^{\text{res}}$ on the fly $\mathbf{x}_{l+1} = \mathcal{H}_l^{\text{res}} \cdot \mathbf{x}_l$
 
-A good? analogy would be to compare it with LoRA (omitting the goal efficiency of LoRA), where we can manually swap the
-fixed low rank weights $BA$ for another set without retraining the model. Here similarly the weights are dynamically
-changed/generated on the fly during inference based on the tokens and what has been learned during training.
+&nbsp;
 
-TODO need to better reformulate the loRA analogy
+An analogy could be a comparison with LoRA (omitting the goal efficiency of LoRA), we can think of Hyper-Connections as dynamic or context-aware LoRA.  
+In standard LoRA, we can swap manually the adapters, but these are fixed set of low-rank matrices that apply the
+same modification to every input during inference. With Hyper-Connections, we essentially generate/swap a
+custom LoRA adapter on the fly, tailoring the weights specifically to the current context.  
+(Unlike LoRA, though, which adds a correction to existing static weights ($W + \Delta W$), these dynamic matrices here act as the standalone weights)
 
+&nbsp;
+
+### Problems with unconstrained hyper-connections
+
+A typical transformer block is composed of the attention and ffn/MoE parts, and a model has multiple sequential
+transformer blocks. Therefore the output $\mathbf{x}_L$ of a given sub-layer/part (Attention or ffn/MoE) of a transformer block is the
+addition of $\mathbf{x}_l$ the identity mapping or "untouched input" and the cumulative sum of residual functions/layer
+modifications $\mathcal{F}$ from previous layers (or sub-layer if within the same trf block).  
+
+$$x_L = x_l + \sum_{i=l}^{L-1} \mathcal{F}(x_i, W_i),$$
+
+Ex: 
+$$x_1 = x_0 + \mathcal{F}(x_0)\\
+x_2 = (\underbrace{x_0 + \mathcal{F}(x_0)}_{ x_1}) + \mathcal{F}(x_1)\\
+x_3 = \mathbf{x}_0 + \sum_{i=0}^{2} \mathcal{F}(x_i)\\...
+$$
+
+As we can see with a classic residual connection, these sequential modifications aren't a problem, the identity mapping is
+kept intact and only modified by the cumulative sum of residual function/layer modifications $\mathcal{F}$. 
+
+TODO mention it's not a problem when deriving/gradient vs HC
+
+Whereas with hyperconnections, the dynamic weights $\mathcal{H}_l^{\text{res}}$ modify the identity mapping $x_l$
+for each of the n streams every iteration:
+
+$$x_L = \left( \prod_{i=l}^{L-1} \mathcal{H}_{L-i}^{\text{res}} \right) x_l + \sum_{i=l}^{L-1} \left(
+\prod_{j=1}^{L-1-i} \mathcal{H}_{L-j}^{\text{res}} \right) \mathcal{H}_i^{\text{post} \top}
+\mathcal{F}(\mathcal{H}_i^{\text{pre}} x_i, W_i),$$
+
+These cumulative modifications during training can deviate from the initial goal of having a "untouched" residual/skip
+connection $x_l$, which can lead to instability and degradation in large scale training as DeepSeek mentions.
+
+This is this very problem that DeepSeek wants to improve with their mHC paper. Hence the term *"unconstrained"
+hyper-connections* in regards to the *DeepSeek manifold-"constrained" hyper-connections*.
 
 &nbsp;
 
