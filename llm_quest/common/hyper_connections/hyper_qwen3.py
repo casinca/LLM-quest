@@ -13,7 +13,40 @@ from llm_quest.qwen.qwen3.qwen3_transformer_block import TransformerBlock
 
 class HyperQwen3TransformerBlock(TransformerBlock):
     """
-    TODO: make a cool ascii art diagram that represents the flow if possible/enough space
+        Qwen3Transformer Block with classic Hyper-Connections
+        Flow for either Attention or FFN part of the trf block: in total done twice (attn+ffn) per trf block
+
+                Input Stream x [B, S, n, emb]
+                        ║
+            ╔═══════════╬═════════════╗
+            ║           ║             ║
+            ║           ▼            ║
+            ║      ┌───────────┐      ║
+            ║      │  Routing  │      ║
+            ║      │   Norm    │      ║
+            ║      └─────┬─────┘      ║
+            ▼           ║            ▼
+        ┌─────────┐      ║       ┌─────────┐
+        │ H_res @ x ◄═══╬════► │ H_pre @ x
+        │ (Mix n) │      ║       │(Down n) │
+        └───┬─────┘      ║       └────┬────┘
+            ║            ║            │       [B, S, emb]
+            ║            ║      ┌─────▼─────┐
+            ║            ║      │ usual PreNorm
+            ║            ║      │     +      │
+            ║            ║      │ Attn or FFN│
+            ║            ║      └─────┬──────┘
+            ║            ║            │       [B, S, emb]
+            ║            ║      ┌─────▼────┐
+            ║            ╚════►│ H_post @ F(trf output)
+            ║                   │  (expand back)
+            ║                   └─────┬─────┘
+            ║                         ║
+            ╚════════════╦════════════╝       [B, S, n, emb]
+                        ▼
+                        +
+                        ║
+                    Output Stream
 
     Args:
         cfg (dict): Config dict containing hyperparams:
