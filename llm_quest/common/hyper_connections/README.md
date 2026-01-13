@@ -1,8 +1,8 @@
 # Hyper-connections
 
-Table of content
+Table of Contents:
 - [Classic (unconstrained) Hyper-connections](#classic-unconstrained-hyper-connections)
-  - [What is the meaning of "Hyper-connections" and example with $\mathcal{H}_l^{\text{res}}$?](#what-is-the-meaning-of-hyper-connections-and-example-with-mathcalh_lres)
+  - [What are Hyper-connections and example with H_res?](#what-are-hyper-connections-and-example-with-h_res)
   - [Problems with unconstrained hyper-connections](#problems-with-unconstrained-hyper-connections)
 
 
@@ -32,10 +32,10 @@ with:
 
 &nbsp;
 
-Hyper connections add "width" to the stream. The main stream is expanded into n (hyperparameter `expansion_rate`)
-expanded streams and the untouched input is replaced by a "hyper-connection" $\mathcal{H}_l^{\text{res}}\mathbf{x}_l$.
+Hyper-connections add "width" to the stream. The main stream is expanded into n (hyperparameter `expansion_rate`)
+expanded streams and the residual connection/untouched input is replaced by a "hyper-connection" $\mathcal{H}_l^{\text{res}}\mathbf{x}_l$.
 
-$H_l^{\text{res}}$ is a dynamically generated matrix/weights that will determine how much each of the n expanded streams
+$H_l^{\text{res}}$ (residual mapping) is a dynamically generated matrix/weights that will determine how much each of the n expanded streams
 contributes to each other.  
 For instance with n=4 expanded streams, for S1, we need to know how much of S1, S2, S3, and S4 to include 
 (*mixes features within the residual stream* as DeepSeek put it). 
@@ -43,29 +43,29 @@ This is why $H_l^{\text{res}} \in \mathbb{R}^{n \times n}$
 
 For a single sub-layer/part (Attention or ffn/MoE) of a transformer block, we get:
 
-
 $$
-\mathbf{x}_{l+1} = \underbrace{\mathcal{H}_l^{\text{res}} \mathbf{x}_l}_{\text{Residual Mapping}} +
+\mathbf{x}_{l+1} = \underbrace{\mathcal{H}_l^{\text{res}} \mathbf{x}_l}_{\text{Residual stream branch}} +
 \underbrace{{\mathcal{H}_l^{\text{post}}}^\top \mathcal{F}(\mathcal{H}_l^{\text{pre}} \mathbf{x}_l,
-\mathcal{W}_l)}_{\text{sub-layer transformation Mapping}}
+\mathcal{W}_l)}_{\text{Residual function branch}}
 $$
 
 &nbsp;
 
-Since we can't just pass these n streams to the attention (or ffn/MoE) sub-layer as it would increase the time complexity by a factor
-of n, we have 2 additional hyper-connections to handle the residual function/layer modifications branch:
+Since we can't just pass these n streams to the attention (or ffn/MoE) sub-layer as it would increase the time
+complexity by a factor of n, we have 2 additional hyper-connections to handle the residual function/layer transformation
+branch $\mathcal{F}$:
 - the contraction (pre-mapping $\mathcal{H}_l^{\text{pre}}$) which collapses the n expanded streams into a single stream
-  for the transformer block input.  
+  for the transformer block input (attention input or ffn/MoE input to be specific).  
   This is a weighted sum of the n streams using the dynamically generated $\mathcal{H}_l^{\text{pre}}$ weights.
 
 - and expansion (post-mapping $\mathcal{H}_l^{\text{post}}$) which broadcasts the single stream output of the
-  residual/sub-layer (attention or ffn/MoE) branch back to the n expanded streams.  
-  $\mathcal{H}_l^{\text{post}}$ will weight how much the residual/sub-layer branch output contributes to each of the n expanded streams.
+  residual function/sub-layer (attention or ffn/MoE) branch back to the n expanded streams.  
+  $\mathcal{H}_l^{\text{post}}$ will weight how much the residual function/sub-layer transformation (output from $\mathcal{F}$) contributes to each of the n expanded streams.
 
 
 &nbsp;
 
-### Where does the term "Hyper-connections" come from and example with $\mathcal{H}_l^{\text{res}}$?
+### Where does the term "Hyper-connections" come from and example with H_res?
 
 The term "hyper-connection" is derived from HyperNetworks, as the original HyperNetworks paper abstracts mentions:
 *Hypernets are neural networks that generate the weights of other neural networks.*
@@ -77,7 +77,7 @@ y = W \cdot x
 $$
 
 - During training, the weights in $W$ are not fixed (they are learned through backprop) but during
-  inference, they are set in stones. So we have fixed weights.
+  inference, they are set in stone. So we have fixed weights.
 
 For a "HyperLinear" layer, instead of having a fixed weight matrix $W$, we have a 2nd small linear layer
 $H(x)$ that learns to generate a weight matrix $W$ on the fly based on the input $x$.
@@ -95,16 +95,19 @@ To make the parallel with hyper-connections here, In our case $H(x)$ can be $\ma
 Which is the result of a single layer ffn that is Tanh activated, with a scaling factor $\alpha$ and a bias $\mathbf{b}$:
  $$\mathcal{H}^{\text{res}} = \alpha \cdot \tanh(\theta \mathbf{x}^\top) + \mathbf{b}$$
 
+ TODO mention init as identity matrix
+
 &nbsp;
 
-Hence the term hyperconnections, instead of having a fixed weight matrix $W$ that could have scaled/mixed features
+Hence the term "hyper-connections", instead of having a fixed weight matrix $W$ that could have scaled/mixed features
 within the residual stream as $\mathbf{x}_{l+1} = W \cdot \mathbf{x}_l$, we have a small "neural network" (1 layer) that
-generates the weights $\mathcal{H}_l^{\text{res}}$ on the fly $\mathbf{x}_{l+1} = \mathcal{H}_l^{\text{res}} \cdot \mathbf{x}_l$
+generates the weights $\mathcal{H}_l^{\text{res}}$ on the fly 
+$\mathbf{x}\_{l+1} = \mathcal{H}_l^{\text{res}} \cdot \mathbf{x}_l$
 
 &nbsp;
 
 An analogy could be a comparison with LoRA (omitting the goal efficiency of LoRA), we can think of Hyper-Connections as dynamic or context-aware LoRA.  
-In standard LoRA, we can swap manually the adapters, but these are fixed set of low-rank matrices that apply the
+In standard LoRA, we can manually swap the adapters, but these are fixed set of low-rank matrices that apply the
 same modification to every input during inference. With Hyper-Connections, we essentially generate/swap a
 custom LoRA adapter on the fly, tailoring the weights specifically to the current context.  
 (Unlike LoRA, though, which adds a correction to existing static weights ($W + \Delta W$), these dynamic matrices here act as the standalone weights)
@@ -120,10 +123,14 @@ modifications $\mathcal{F}$ from previous layers (or sub-layer if within the sam
 
 $$x_L = x_l + \sum_{i=l}^{L-1} \mathcal{F}(x_i, W_i),$$
 
-Ex: 
-$$x_1 = x_0 + \mathcal{F}(x_0)\\
-x_2 = (\underbrace{x_0 + \mathcal{F}(x_0)}_{ x_1}) + \mathcal{F}(x_1)\\
-x_3 = \mathbf{x}_0 + \sum_{i=0}^{2} \mathcal{F}(x_i)\\...
+Ex:
+
+$$
+\begin{aligned}
+x_1 &= x_0 + \mathcal{F}(x_0) \\
+x_2 &= (\underbrace{x_0 + \mathcal{F}(x_0)}_{ x_1}) + \mathcal{F}(x_1) \\
+x_3 &= \mathbf{x}_0 + \sum_{i=0}^{2} \mathcal{F}(x_i)
+\end{aligned}
 $$
 
 As we can see with a classic residual connection, these sequential modifications aren't a problem, the identity mapping is
@@ -131,18 +138,20 @@ kept intact and only modified by the cumulative sum of residual function/layer m
 
 TODO mention it's not a problem when deriving/gradient vs HC
 
-Whereas with hyperconnections, the dynamic weights $\mathcal{H}_l^{\text{res}}$ modify the identity mapping $x_l$
+Whereas with hyper-connections, the dynamic weights $\mathcal{H}_l^{\text{res}}$ modify the identity mapping $x_l$
 for each of the n streams every iteration:
 
-$$x_L = \left( \prod_{i=l}^{L-1} \mathcal{H}_{L-i}^{\text{res}} \right) x_l + \sum_{i=l}^{L-1} \left(
+$$
+x_L = \left( \prod_{i=l}^{L-1} \mathcal{H}_{L-i}^{\text{res}} \right) x_l + \sum_{i=l}^{L-1} \left(
 \prod_{j=1}^{L-1-i} \mathcal{H}_{L-j}^{\text{res}} \right) \mathcal{H}_i^{\text{post} \top}
-\mathcal{F}(\mathcal{H}_i^{\text{pre}} x_i, W_i),$$
+\mathcal{F}(\mathcal{H}_i^{\text{pre}} x_i, W_i)
+$$
 
-These cumulative modifications during training can deviate from the initial goal of having a "untouched" residual/skip
+These cumulative modifications during training can deviate from the initial goal of having an "untouched" residual/skip
 connection $x_l$, which can lead to instability and degradation in large scale training as DeepSeek mentions.
 
-This is this very problem that DeepSeek wants to improve with their mHC paper. Hence the term *"unconstrained"
-hyper-connections* in regards to the *DeepSeek manifold-"constrained" hyper-connections*.
+This is the very problem that DeepSeek wants to improve with their mHC paper. Hence the term *"unconstrained"
+hyper-connections* with regard to the *DeepSeek manifold-"constrained" hyper-connections*.
 
 &nbsp;
 
