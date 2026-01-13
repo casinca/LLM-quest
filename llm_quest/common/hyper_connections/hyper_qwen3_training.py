@@ -15,7 +15,7 @@ torch.manual_seed(123)
 nano_qwen_config = {
     "vocab_size": 151936,  # 151936 # 50304
     "rope_base": 1_000_000,
-    "dtype": torch.float32,
+    "dtype": torch.bfloat16,
     "model_type": "dense",
     "emb_dim": 512,
     "head_dim": 64,
@@ -78,6 +78,7 @@ val_loader = DataLoader(
 
 device = config.auto_device
 model = HyperQwen3Model(nano_qwen_config, expansion_rate=hparams["expansion_rate"])
+# For simplicity casting the whole model to bf16, technically hyperconnections should be in fp32
 model.bfloat16().to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), weight_decay=hparams["weight_decay"], fused=True)

@@ -3,9 +3,11 @@ import torch.nn as nn
 
 # separating each hyper-connection to 3 separate classes (Res, Pre, Post) instead of one class because
 # they are all initialized differently and there is 3 different forward passes for each of them
-
-# The paper mentions untouched/identity/residual streams which is only the case for a single layer or before the first
-# trf block), afterward the streams are modified from previous layers and not "identity" anymore
+#
+# NOTE: For reference, per the mHC paper p.10:
+# - inputs (xl and xl_norm) are in bf16
+# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
+# - dynamic mappings (theta_res, theta_pre, theta_post) are in tf32 (Nvidia TensorFloat-32)
 
 
 class HyperConnectionRes(nn.Module):
