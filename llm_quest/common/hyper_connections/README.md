@@ -2,7 +2,7 @@
 
 Table of Contents:
 - [Classic (unconstrained) Hyper-connections](#classic-unconstrained-hyper-connections)
-  - [What are Hyper-connections and example with H_res?](#what-are-hyper-connections-and-example-with-h_res)
+  - [Where does the term "Hyper-connections" come from and example with H_res?](#what-are-hyper-connections-and-example-with-h_res)
   - [Problems with unconstrained hyper-connections](#problems-with-unconstrained-hyper-connections)
 
 
@@ -95,7 +95,9 @@ To make the parallel with hyper-connections here, In our case $H(x)$ can be $\ma
 Which is the result of a single layer ffn that is Tanh activated, with a scaling factor $\alpha$ and a bias $\mathbf{b}$:
  $$\mathcal{H}^{\text{res}} = \alpha \cdot \tanh(\theta \mathbf{x}^\top) + \mathbf{b}$$
 
- TODO mention init as identity matrix
+It's also important to note that the scaling factor, dynamic mapping ($\theta$) and static mapping (bias) are all
+specifically initialized to make $\mathcal{H}_l^{\text{res}}$ start as an identity matrix 
+(ie $\mathcal{H}_l^{\text{res}}= I$). This is done to mimic the behavior of a classic residual connection at the start of training for stability ($I \cdot x_l = x_l$).
 
 &nbsp;
 
