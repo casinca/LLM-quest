@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- Classic (unconstrained) Hyper-connections from scratch (alternative to residual connections) + test HC Qwen3
 - Xiaomi MiMo-V2-Flash architecture from scratch
 - DeepSeek V3.2 GRPO optimizations: Off-policy masking, Unbiased KL estimate
-- Nvidia LatentMoE from Nemotron 3 white paper
 
 
 &nbsp;
@@ -91,10 +91,11 @@
 
 &nbsp;
 
-### Other Model-Agnostic Techniques and Papers
+### Other Model-Agnostic Techniques and Papers (common folder)
 
 |           | Notes |
 |:----------|:------------|
+| **Hyper-connections** | Classic (unconstrained) Hyper-connections (alternative to residual connections) and test on "hyper-connected" Qwen3 for convergence |
 | **QK-Clip** | Query-Key clipping (naive & per head + GQA compatible) from [Moonshot.ai](https://www.moonshot.ai/)'s MuonClip and experimental "Magnitude" variant. |
 | **Speculative Decoding** | Google's original version |
 | **Dynamic Tanh** | Normalization-free alternative to RMSNorm/LayerNorm ([Zhu et al., 2025](https://arxiv.org/abs/2503.10622)) |
