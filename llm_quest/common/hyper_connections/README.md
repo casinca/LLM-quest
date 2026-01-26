@@ -237,6 +237,30 @@ hyper-connections* with regard to $H_l^{\text{res}}$ and the *DeepSeek manifold-
 
 &nbsp;
 
+## DeepSeek Manifold-Constrained Hyper-connections (mHC)
+
+*note2: We are now calling the original hyper-connections $H_l^{\text{res}}$, $\mathcal{H}_l^{\text{pre}}$ and
+$\mathcal{H}_l^{\text{post}}$ as $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$
+and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ to match the mHC paper notation.  
+This is done to avoid confusion between unconstrained and constrained hyper-connections.*
+
+TODO
+
+Even if the main problem being with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it's not the only matrix being
+constrained, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
+constrained to be non-negative (They are being mapped by a sigmoid function).
+
+The reason, quoting the mHC paper, is *"this constrain prevents signal cancellation arising from the composition of
+positive and negative coefficients, which can also be considered as a special manifold projection."*
+
+diff: 
+
+- flattening the n expanded streams to a row vector $\mathbb{R}^{n \times C} \to \mathbb{R}^{1 \times nC}$
+- all constrained
+
+
+
+
 ## Acknowledgements
 
 - [Hyper-connections](https://arxiv.org/abs/2409.19606)
