@@ -1,3 +1,9 @@
+# This Manifold-Constrained Hyper-Connections (mHC) is based on the hyper_connections.py file, where we add the mHC
+# modifications:
+# Even if the global logic is the same, DeepSeek flatten the n expanded streams from a matrix (n x C) to a
+# row vector (1 x nC) therefore we need to change the projections for all the hyper-connections.
+# They mention doing that to "preserve full context information".
+#
 # separating each hyper-connection to 3 separate classes (Res, Pre, Post) instead of one class because
 # they are all initialized differently and there is 3 different forward passes for each of them
 #
