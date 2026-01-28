@@ -10,7 +10,7 @@
 # NOTE: For reference, per the mHC paper p.10:
 # - inputs (xl and xl_norm) are in bf16
 # - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
-# - dynamic mappings (theta_res, theta_pre, theta_post) are in tf32 (Nvidia TensorFloat-32)
+# - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32)
 
 import torch
 import torch.nn as nn
@@ -54,9 +54,9 @@ class HyperConnectionRes(nn.Module):
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
-        # dynamic mapping (theta_res): project to n streams
+        # dynamic mapping (phi_res): project to n streams
         self.linear = nn.Linear(emb_dim, expansion_rate, bias=False, device=device, dtype=dtype)
-        # The HC paper init dynamic mapping weights for theta_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
+        # The HC paper init dynamic mapping weights for phi_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
         # is doing Kaiming init by default so we need to zero init
         nn.init.zeros_(self.linear.weight)
 
@@ -74,15 +74,15 @@ class HyperConnectionRes(nn.Module):
         This is our small "HyperNet" where we generate on the fly the weights H_res to mix with the residual stream
 
         Args:
-            x_norm: The n streams normalized input (pre-trf block), used to generate H_res,
-                    shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n flattened streams, normalized input (pre-trf block), used to generate H_res,
+                    shape: (b, seq_len, 1, n*emb_dim)
 
         Returns:
             The residual mapping/matrix H_res, shape: (b, seq_len, exps_rate, exps_rate)
         """
         x = self.linear(x_norm)  # apply dynamic mapping
         # Pytorch nn.linear is doing Wx (as XW^T) but we want WX^T (eq 5), therefore we need to transpose the linear
-        # output as (XW^T)^T = WX^T
+        # output as (XW^T)^T = (W^T)^T X^T = WX^T
         x = x.mT
 
         # activate and scale
@@ -110,11 +110,11 @@ class HyperConnectionRes(nn.Module):
         return x
 
 
-class HyperConnectionPre(nn.Module):
+class MCHyperConnectionPre(nn.Module):
     """
-    Classic Hyper-connection for the entry of the residual branch/pre-transformer block, as depicted in:
+    TODO changing comments
+    Manifold-Constrained Hyper-connection for the entry of the residual branch/pre-transformer block, as depicted in:
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 3 and 5): https://arxiv.org/abs/2512.24880
-    - Hyper-Connections (HC) paper: https://arxiv.org/abs/2409.19606
 
     This class is basically downprojecting the n expanded streams to a single stream, in order to pass into the
     transformer block, returning the output of H_pre @ x, described in eq 3 of the mHC paper.
@@ -142,7 +142,7 @@ class HyperConnectionPre(nn.Module):
         emb_dim,
         expansion_rate=4,
         add_static_mapping=True,
-        activation_cls=nn.Tanh,
+        activation_cls=nn.Sigmoid,
         device=None,
         dtype=None,
     ):
@@ -153,18 +153,15 @@ class HyperConnectionPre(nn.Module):
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
-        # dynamic mapping (theta_pre): downproject the emb dim to a scalar:
+        # dynamic mapping (phi_pre): downproject the emb dim to a scalar:
         # This determines how much the trf block output contributes to each of the n expanded streams
-        self.linear = nn.Linear(emb_dim, 1, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=dtype)
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
 
         # static mapping (biases b_pre) initialization:
-        # There is a disagreement between the HC paper (p.4 eq 14) and mHC paper (table 1 p.6)
-        # - HC paper: One hot like, selecting 1 stream out of n depending on the trf layer, not mixed
-        #           hence the use of modulo which cycles through the streams with the layer index (layer_idx % n)
-        # - mHC paper: uniform averaged weights 1/n, mixed
-        # We follow DeepSeek
+        # - mHC paper (table 1 p.6): uniform averaged weights 1/n, mixed
+        # TODO might need to rescale because of the sigmoid
         self.bias = (
             nn.Parameter(torch.ones(expansion_rate, device=device, dtype=dtype) / expansion_rate)
             if add_static_mapping
@@ -178,18 +175,19 @@ class HyperConnectionPre(nn.Module):
         streams that will determine/scale their contribution to the aggregated single stream for the trf block.
 
         Args:
-            x_norm: The n streams normalized input (pre-trf block), used to generate H_pre,
-                    shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n flattened streams, normalized input (pre-trf block), used to generate H_pre,
+                    shape: (b, seq_len, 1, exps_rate*emb_dim)
 
         Returns:
             The pre mapping/matrix H_pre as a row vector, shape: (b, seq_len, 1, exps_rate)
         """
-        # shape (b, seq_len, exps_rate, emb_dim) → (b, seq_len, exps_rate, 1) → (b, seq_len, exps_rate)
-        x = self.linear(x_norm).squeeze(-1)  # apply dynamic mapping
-        x = self.activation(x) * self.factor
+        # shape (b, seq_len, 1, exps_rate*emb_dim) → (b, seq_len, exps_rate)
+        x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
+
+        x = self.activation(x)  # constrain with sigmoid
 
         return x.unsqueeze(-2)
 
@@ -202,7 +200,7 @@ class HyperConnectionPre(nn.Module):
         Args:
             x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
             x_norm: The n streams normalized input (pre-trf block), used to generate H_pre,
-                    shape: (b, seq_len, exps_rate, emb_dim)
+                    shape: (b, seq_len, exps_rate*emb_dim)
 
         Returns:
             The aggregated single stream ready for the trf block, shape: (b, seq_len, emb_dim)
@@ -260,7 +258,7 @@ class HyperConnectionPost(nn.Module):
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
-        # dynamic mapping (theta_post), same logic as theta_pre:
+        # dynamic mapping (phi_post), same logic as phi_pre:
         # This determines how much the trf block output contributes to each of the n expanded streams
         self.linear = nn.Linear(emb_dim, 1, bias=False, device=device, dtype=dtype)
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
@@ -322,13 +320,13 @@ if __name__ == "__main__":
     dtype = torch.bfloat16
 
     test_x = torch.randn(1, 10, 4, 128, device=device, dtype=dtype)
-    test_x_norm = torch.nn.functional.normalize(test_x, dim=-1)
-    test_hc_res = HyperConnectionRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_hc_pre = HyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_hc_post = HyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_output_res = test_hc_res(test_x, test_x_norm)
+    test_x_norm = torch.nn.functional.normalize(test_x.view(1, 10, -1), dim=-1)
+    # test_hc_res = HyperConnectionRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    test_hc_pre = MCHyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    # test_hc_post = HyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    # test_output_res = test_hc_res(test_x, test_x_norm)
     test_output_pre = test_hc_pre(test_x, test_x_norm)
-    test_output_post = test_hc_post(test_output_pre, test_x_norm)
-    print(test_output_res.shape)
+    # test_output_post = test_hc_post(test_output_pre, test_x_norm)
+    # print(test_output_res.shape)
     print(test_output_pre.shape)
-    print(test_output_post.shape)
+    # print(test_output_post.shape)

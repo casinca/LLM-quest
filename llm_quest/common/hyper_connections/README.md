@@ -248,7 +248,9 @@ TODO
 
 Even if the main problem being with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it's not the only matrix being
 constrained, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
-constrained to be non-negative (They are being mapped by a sigmoid function).
+constrained to be non-negative (They are being mapped by a sigmoid function instead of a tanh function.
+
+Previously in HC, only $\theta_l \tilde{\mathbf{x}}_l^\top$ (see eq. 5) was mapped, in mHC, both the biases and the scaling factors $\alpha_l$ are also mapped.
 
 The reason, quoting the mHC paper, is *"this constrain prevents signal cancellation arising from the composition of
 positive and negative coefficients, which can also be considered as a special manifold projection."*
@@ -257,6 +259,9 @@ diff:
 
 - flattening the n expanded streams to a row vector $\mathbb{R}^{n \times C} \to \mathbb{R}^{1 \times nC}$
 - all constrained
+-
+
+mhC lite if needs to be mentioned https://arxiv.org/abs/2601.05732
 
 
 

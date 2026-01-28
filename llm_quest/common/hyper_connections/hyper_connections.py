@@ -76,7 +76,7 @@ class HyperConnectionRes(nn.Module):
         """
         x = self.linear(x_norm)  # apply dynamic mapping
         # Pytorch nn.linear is doing Wx (as XW^T) but we want WX^T (eq 5), therefore we need to transpose the linear
-        # output as (XW^T)^T = WX^T
+        # output as (XW^T)^T = (W^T)^T X^T = WX^T
         x = x.mT
 
         # activate and scale
