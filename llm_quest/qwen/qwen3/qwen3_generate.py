@@ -113,7 +113,7 @@ print(tokenizer.decode(output[0].tolist(), skip_special_tokens=False))
 print("\n\n ######## Testing batch generation with left padding or right padding ######## \n\n")
 
 tokenizer = AutoTokenizer.from_pretrained(qwen3_cfg["model_path"], padding_side=pad_side)
-batch_encoded = tokenizer.batch_encode_plus(
+batch_encoded = tokenizer(
     formatted_batch_prompts,
     return_tensors="pt",
     add_special_tokens=True,

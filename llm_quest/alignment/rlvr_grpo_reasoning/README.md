@@ -12,7 +12,7 @@ This RLVR implementation is not based on a specific paper, but a mix of techniqu
 - Dataset: https://huggingface.co/datasets/openai/gsm8k
 
 *Unlike RLHF with GRPO from scratch, where only `tiktoken` was a dependency, here I'm using HuggingFace's tokenizer, for
-its efficient `batch_decode` method.*
+its efficient `decode` method.*
 
 
 # Pipeline

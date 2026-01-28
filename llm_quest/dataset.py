@@ -645,14 +645,17 @@ class RPTStructuredDataset(Dataset):
 
         if self.apply_chat_template:
             self.instruction = instruction
-            self.instruct_len = len(
-                self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": instruction}],
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    enable_thinking=True,
-                )
+            output = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": instruction}],
+                tokenize=True,
+                add_generation_prompt=True,
+                enable_thinking=True,
             )
+            # Handle Transformers v5 returning BatchEncoding (dict-like)
+            if hasattr(output, "keys") and "input_ids" in output:
+                output = output["input_ids"]
+
+            self.instruct_len = len(output)
         else:
             self.instruction = self.tokenizer.encode(instruction)
             self.instruct_len = len(self.instruction)
