@@ -148,7 +148,7 @@ class HyperConnectionPre(nn.Module):
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
         # dynamic mapping (theta_pre): downproject the emb dim to a scalar:
-        # This determines how much the trf block output contributes to each of the n expanded streams
+        # (will get a single weight for each of the n expanded streams)
         self.linear = nn.Linear(emb_dim, 1, bias=False, device=device, dtype=dtype)
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)

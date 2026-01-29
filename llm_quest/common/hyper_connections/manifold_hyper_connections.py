@@ -112,9 +112,8 @@ class HyperConnectionRes(nn.Module):
 
 class MCHyperConnectionPre(nn.Module):
     """
-    TODO changing comments
     Manifold-Constrained Hyper-connection for the entry of the residual branch/pre-transformer block, as depicted in:
-    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 3 and 5): https://arxiv.org/abs/2512.24880
+    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
 
     This class is basically downprojecting the n expanded streams to a single stream, in order to pass into the
     transformer block, returning the output of H_pre @ x, described in eq 3 of the mHC paper.
@@ -128,7 +127,7 @@ class MCHyperConnectionPre(nn.Module):
         expansion_rate (int): The number of expanded streams, ("n" in the paper), can be seen as the width of the
                             residual stream
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
-        activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
+        activation_cls (nn.Module): The activation function class, use a sigmoid for constraining (non-negative)
         device (torch.device):
         dtype (torch.dtype):
 
@@ -153,8 +152,8 @@ class MCHyperConnectionPre(nn.Module):
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
-        # dynamic mapping (phi_pre): downproject the emb dim to a scalar:
-        # This determines how much the trf block output contributes to each of the n expanded streams
+        # dynamic mapping (phi_pre): downproject the flattened/mixed streams to exps_rate
+        # (will get a single weight for each of the n expanded streams)
         self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=dtype)
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
@@ -187,7 +186,7 @@ class MCHyperConnectionPre(nn.Module):
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
 
-        x = self.activation(x)  # constrain with sigmoid
+        x = self.activation(x)  # constrain H_pre_tilde with sigmoid
 
         return x.unsqueeze(-2)
 
@@ -199,8 +198,8 @@ class MCHyperConnectionPre(nn.Module):
 
         Args:
             x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
-            x_norm: The n streams normalized input (pre-trf block), used to generate H_pre,
-                    shape: (b, seq_len, exps_rate*emb_dim)
+            x_norm: The n flattened streams normalized input (pre-trf block), used to generate H_pre,
+                    shape: (b, seq_len, 1, exps_rate*emb_dim)
 
         Returns:
             The aggregated single stream ready for the trf block, shape: (b, seq_len, emb_dim)
