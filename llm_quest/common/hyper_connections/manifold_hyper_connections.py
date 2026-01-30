@@ -12,6 +12,8 @@
 # - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
 # - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32)
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -160,9 +162,12 @@ class MCHyperConnectionPre(nn.Module):
 
         # static mapping (biases b_pre) initialization:
         # - mHC paper (table 1 p.6): uniform averaged weights 1/n, mixed
-        # TODO might need to rescale because of the sigmoid
+        # Here, in order to make sigmoid(H_pre_tilde) = 1/n, with H_pre_tilde = bias (since phi_pre is 0 init)
+        # we need to solve for sigmoid(b) = 1/n, which gives b = -ln(n-1)
+        # edge case: can't do ln(0)
+        init_val = -math.log(expansion_rate - 1) if expansion_rate > 1 else 10  # sigmoid(10) ~ 1
         self.bias = (
-            nn.Parameter(torch.ones(expansion_rate, device=device, dtype=dtype) / expansion_rate)
+            nn.Parameter(torch.full(size=(expansion_rate,), fill_value=init_val, device=device, dtype=dtype))
             if add_static_mapping
             else None
         )  # shape (exps_rate,)
@@ -262,11 +267,12 @@ class MCHyperConnectionPost(nn.Module):
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
 
-        # TODO sigmoid rescale
         # static mapping (biases b_post) initialization:
         # uniform weights of 1s
+        # Here, in order to make sigmoid(H_post_tilde) = 1, with H_post_tilde = bias (since phi_post is 0 init)
+        # we need to solve for 2*sigmoid(b) = 1, which gives b = -ln(1) = 0
         self.bias = (
-            nn.Parameter(torch.ones(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
+            nn.Parameter(torch.zeros(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
         )  # shape (exps_rate,)
 
     def post_mapping_matrix(self, x_norm):
