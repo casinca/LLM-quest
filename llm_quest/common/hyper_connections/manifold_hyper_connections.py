@@ -211,11 +211,10 @@ class MCHyperConnectionPre(nn.Module):
         return x
 
 
-class HyperConnectionPost(nn.Module):
+class MCHyperConnectionPost(nn.Module):
     """
-    Classic Hyper-connection for the exit of the residual branch/post-transformer block, as depicted in:
-    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 3 and 5): https://arxiv.org/abs/2512.24880
-    - Hyper-Connections (HC) paper: https://arxiv.org/abs/2409.19606
+    Manifold-Constrained Hyper-connection for the exit of the residual branch/post-transformer block, as depicted in:
+    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
 
     This class is basically broadcasting the single stream output of the trf block back to the n expanded streams
     weighted by their H_post weights. This is done in order to mix/add it with the other n streams from the main
@@ -232,7 +231,7 @@ class HyperConnectionPost(nn.Module):
         expansion_rate (int): The number of expanded streams, ("n" in the paper), can be seen as the width of the
                             residual stream
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
-        activation_cls (nn.Module): The activation function class, default is Tanh per the mHC paper
+        activation_cls (nn.Module): The activation function class, use a sigmoid for constraining (non-negative)
         device (torch.device):
         dtype (torch.dtype):
 
@@ -246,7 +245,7 @@ class HyperConnectionPost(nn.Module):
         emb_dim,
         expansion_rate=4,
         add_static_mapping=True,
-        activation_cls=nn.Tanh,
+        activation_cls=nn.Sigmoid,
         device=None,
         dtype=None,
     ):
@@ -259,10 +258,11 @@ class HyperConnectionPost(nn.Module):
 
         # dynamic mapping (phi_post), same logic as phi_pre:
         # This determines how much the trf block output contributes to each of the n expanded streams
-        self.linear = nn.Linear(emb_dim, 1, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=dtype)
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
 
+        # TODO sigmoid rescale
         # static mapping (biases b_post) initialization:
         # uniform weights of 1s
         self.bias = (
@@ -277,18 +277,19 @@ class HyperConnectionPost(nn.Module):
         expanded streams.
 
         Args:
-            x_norm: The n streams normalized input (post-trf block), used to generate H_post,
-                    shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n flattened streams normalized input (post-trf block), used to generate H_post,
+                    shape: (b, seq_len, 1, exps_rate*emb_dim)
 
         Returns:
             The transposed post mapping/matrix H_post^T as a column vector, shape: (b, seq_len, exps_rate, 1)
         """
-        # shape (b, seq_len, exps_rate, emb_dim) → (b, seq_len, exps_rate, 1) → (b, seq_len, exps_rate)
-        x = self.linear(x_norm).squeeze(-1)  # apply dynamic mapping
-        x = self.activation(x) * self.factor
+        # shape (b, seq_len, 1, exps_rate*emb_dim) → (b, seq_len, exps_rate)
+        x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
+
+        x = self.activation(x) * 2  # constrain H_post_tilde with sigmoid and rescale
 
         return x.unsqueeze(-1)  # unsqueeze serve as transpose here H_post^T making it a column vector
 
@@ -299,8 +300,8 @@ class HyperConnectionPost(nn.Module):
 
         Args:
             x: The single stream output of the trf block, shape: (b, seq_len, emb_dim)
-            x_norm: The n streams normalized input (post-trf block), used to generate H_post,
-                    shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n flattened streams normalized input (post-trf block), used to generate H_post,
+                    shape: (b, seq_len, 1, exps_rate*emb_dim)
 
         Returns:
             The n mixed streams, shape: (b, seq_len, exps_rate, emb_dim)
@@ -322,10 +323,10 @@ if __name__ == "__main__":
     test_x_norm = torch.nn.functional.normalize(test_x.view(1, 10, -1), dim=-1)
     # test_hc_res = HyperConnectionRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
     test_hc_pre = MCHyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    # test_hc_post = HyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    test_hc_post = MCHyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
     # test_output_res = test_hc_res(test_x, test_x_norm)
     test_output_pre = test_hc_pre(test_x, test_x_norm)
-    # test_output_post = test_hc_post(test_output_pre, test_x_norm)
+    test_output_post = test_hc_post(test_output_pre, test_x_norm)
     # print(test_output_res.shape)
     print(test_output_pre.shape)
-    # print(test_output_post.shape)
+    print(test_output_post.shape)
