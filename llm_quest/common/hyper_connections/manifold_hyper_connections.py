@@ -175,12 +175,12 @@ class MCHyperConnectionPre(nn.Module):
 
         Args:
             x_norm: The n flattened streams, normalized input (pre-trf block), used to generate H_pre,
-                    shape: (b, seq_len, 1, exps_rate*emb_dim)
+                    shape: (b, seq_len, exps_rate*emb_dim)
 
         Returns:
             The pre mapping/matrix H_pre as a row vector, shape: (b, seq_len, 1, exps_rate)
         """
-        # shape (b, seq_len, 1, exps_rate*emb_dim) → (b, seq_len, exps_rate)
+        # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, exps_rate)
         x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
         if self.bias is not None:  # add static mapping if enabled
@@ -199,7 +199,7 @@ class MCHyperConnectionPre(nn.Module):
         Args:
             x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
             x_norm: The n flattened streams normalized input (pre-trf block), used to generate H_pre,
-                    shape: (b, seq_len, 1, exps_rate*emb_dim)
+                    shape: (b, seq_len, exps_rate*emb_dim)
 
         Returns:
             The aggregated single stream ready for the trf block, shape: (b, seq_len, emb_dim)
@@ -278,12 +278,12 @@ class MCHyperConnectionPost(nn.Module):
 
         Args:
             x_norm: The n flattened streams normalized input (post-trf block), used to generate H_post,
-                    shape: (b, seq_len, 1, exps_rate*emb_dim)
+                    shape: (b, seq_len, exps_rate*emb_dim)
 
         Returns:
             The transposed post mapping/matrix H_post^T as a column vector, shape: (b, seq_len, exps_rate, 1)
         """
-        # shape (b, seq_len, 1, exps_rate*emb_dim) → (b, seq_len, exps_rate)
+        # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, exps_rate)
         x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
         if self.bias is not None:  # add static mapping if enabled
@@ -301,7 +301,7 @@ class MCHyperConnectionPost(nn.Module):
         Args:
             x: The single stream output of the trf block, shape: (b, seq_len, emb_dim)
             x_norm: The n flattened streams normalized input (post-trf block), used to generate H_post,
-                    shape: (b, seq_len, 1, exps_rate*emb_dim)
+                    shape: (b, seq_len, exps_rate*emb_dim)
 
         Returns:
             The n mixed streams, shape: (b, seq_len, exps_rate, emb_dim)
