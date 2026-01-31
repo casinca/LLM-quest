@@ -272,3 +272,4 @@ mhC lite if needs to be mentioned https://arxiv.org/abs/2601.05732
 - [mHC: Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880)
 - [HyperNetworks](https://arxiv.org/abs/1609.09106)
 - [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385)
+- [Reference Sinkhorn-Knopp Implementation](https://github.com/btaba/sinkhorn_knopp)
