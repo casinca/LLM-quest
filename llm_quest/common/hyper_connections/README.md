@@ -273,3 +273,4 @@ mhC lite if needs to be mentioned https://arxiv.org/abs/2601.05732
 - [HyperNetworks](https://arxiv.org/abs/1609.09106)
 - [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385)
 - [Reference Sinkhorn-Knopp Implementation](https://github.com/btaba/sinkhorn_knopp)
+- [Sinkhorn-Knopp: Concerning Nonnegative Matrices and Doubly Stochastic Matrices](http://msp.org/pjm/1967/21-2/pjm-v21-n2-p14-s.pdf)

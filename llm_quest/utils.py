@@ -522,6 +522,7 @@ class SinkhornKnopp:
     """
     Sinkhorn-Knopp Algorithm implemented in PyTorch.
     This implementation is adapted from this NumPy version by @btaba: https://github.com/btaba/sinkhorn_knopp
+    Original paper: http://msp.org/pjm/1967/21-2/pjm-v21-n2-p14-s.pdf
 
     2 changes made:
     - Supports batch dimensions >=2D (e.g., (N, N), (B, N, N), (B, S, N, N) ...).
