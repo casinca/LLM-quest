@@ -6,6 +6,11 @@ from llm_quest.common.hyper_connections.hyper_connections import (
     HyperConnectionPre,
     HyperConnectionRes,
 )
+from llm_quest.common.hyper_connections.manifold_hyper_connections import (
+    MCHyperConnectionPost,
+    MCHyperConnectionPre,
+    MCHyperConnectionRes,
+)
 from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
 from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 from llm_quest.qwen.qwen3.qwen3_transformer_block import TransformerBlock
@@ -23,6 +28,19 @@ def _create_hyper_connection_set(emb_dim, expansion_rate, dtype):
     )
 
 
+def _create_mhc_hyper_connection_set(emb_dim, expansion_rate, dtype):
+    """Bundle for DeepSeek's Manifold-Constrained Hyper-Connections: norm + res + pre + post for one sub-block (attn or
+    ffn)."""
+    return nn.ModuleDict(
+        {
+            "norm": PytorchRMSNorm(expansion_rate * emb_dim, dtype=dtype),
+            "res": MCHyperConnectionRes(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "pre": MCHyperConnectionPre(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "post": MCHyperConnectionPost(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+        }
+    )
+
+
 class HyperQwen3TransformerBlock(TransformerBlock):
     """
         Qwen3Transformer Block with classic Hyper-Connections
@@ -32,6 +50,8 @@ class HyperQwen3TransformerBlock(TransformerBlock):
                         ║
             ╔═══════════╬═════════════╗
             ║           ║             ║
+            ║       if mhc:           ║
+            ║        [B, S, n*emb]    ║
             ║           ▼            ║
             ║      ┌───────────┐      ║
             ║      │  Routing  │      ║
@@ -69,21 +89,33 @@ class HyperQwen3TransformerBlock(TransformerBlock):
             - head_dim (int): Head dimension for GQA
             - dtype (torch.dtype): Dtype of the weights, to change precision
         layer_idx (int): Layer index (used here for the KV cache)
+        hc_type (str): Type of hyperconnections to use, "classic" or "mhc"
         expansion_rate (int): Expansion rate for the hyperconnections
     """
 
-    def __init__(self, cfg, layer_idx, expansion_rate=4):
+    def __init__(self, cfg, layer_idx, hc_type, expansion_rate=4):
         super().__init__(cfg, layer_idx)
-        self.hc_attn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
-        self.hc_ffn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+        self.hc_type = hc_type
+
+        if self.hc_type == "mhc":
+            self.hc_attn = _create_mhc_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+            self.hc_ffn = _create_mhc_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+        elif self.hc_type == "classic":
+            self.hc_attn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+            self.hc_ffn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+        else:
+            raise ValueError(f"Invalid Hyper-Connections type: {self.hc_type}, must be 'mhc' or 'classic'")
 
     def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
-        # x shape (b, s, exps_rate, emb_dim)
+        b, s, exp_rate, emb_dim = x.shape
 
         # --- Attention part ---
         # the normalized input is used for the hyperconnections: generating H_res, H_pre, H_post
         # and is an addition/different from the usual pre-Norms from a classic trf block (that we also keep)
-        x_norm_attn = self.hc_attn["norm"](x)
+
+        # DeepSeek mHC is flattening the n streams, (exp_rate, emb_dim) → (exp_rate*emb_dim)
+        # (it seems not contiguous, .view() throws an error, for now we use reshape at a small optim cost)
+        x_norm_attn = self.hc_attn["norm"](x.reshape(b, s, -1)) if self.hc_type == "mhc" else self.hc_attn["norm"](x)
         # residual mixing
         residual = self.hc_attn["res"](x, x_norm_attn)
 
@@ -98,7 +130,7 @@ class HyperQwen3TransformerBlock(TransformerBlock):
         x = x + residual
 
         # --- FFN part ---
-        x_norm_ffn = self.hc_ffn["norm"](x)
+        x_norm_ffn = self.hc_ffn["norm"](x.reshape(b, s, -1)) if self.hc_type == "mhc" else self.hc_ffn["norm"](x)
         residual = self.hc_ffn["res"](x, x_norm_ffn)
 
         x = self.hc_ffn["pre"](x, x_norm_ffn)  # shape (b, s, exps_rate, emb_dim) → (b, s, emb_dim)
@@ -117,17 +149,18 @@ class HyperQwen3Model(Qwen3Model):
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
+        hc_type (str): Type of hyperconnections to use, "classic" or "mhc"
         expansion_rate (int): Expansion rate for the hyperconnections
     """
 
-    def __init__(self, cfg, expansion_rate=4):
+    def __init__(self, cfg, hc_type, expansion_rate=4):
         super().__init__(cfg)
         self.expansion_rate = expansion_rate
 
         # Override the transformer blocks with the HyperQwen3TransformerBlock
         self.trf_blocks = nn.ModuleList(
             [
-                HyperQwen3TransformerBlock(cfg, layer_idx, expansion_rate=self.expansion_rate)
+                HyperQwen3TransformerBlock(cfg, layer_idx, hc_type=hc_type, expansion_rate=self.expansion_rate)
                 for layer_idx in range(cfg["n_layers"])
             ]
         )
@@ -199,8 +232,9 @@ if __name__ == "__main__":
     }
 
     batch_size, seq_len = 2, 10
+    hc_type = "mhc"  # classic HC or DeepSeek's mHC
 
-    model = HyperQwen3Model(test_cfg, expansion_rate=4)
+    model = HyperQwen3Model(test_cfg, hc_type=hc_type, expansion_rate=4)
     model.to(device=device, dtype=dtype)
 
     input_ids = torch.randint(0, test_cfg["vocab_size"], (batch_size, seq_len), device=device)
