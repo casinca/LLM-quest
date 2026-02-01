@@ -11,6 +11,18 @@ from llm_quest.qwen.qwen3.qwen3_model import Qwen3Model
 from llm_quest.qwen.qwen3.qwen3_transformer_block import TransformerBlock
 
 
+def _create_hyper_connection_set(emb_dim, expansion_rate, dtype):
+    """Bundle for Classic Hyper-Connections: norm + res + pre + post for one sub-block (attn or ffn)."""
+    return nn.ModuleDict(
+        {
+            "norm": PytorchRMSNorm(emb_dim, dtype=dtype),
+            "res": HyperConnectionRes(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "pre": HyperConnectionPre(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "post": HyperConnectionPost(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+        }
+    )
+
+
 class HyperQwen3TransformerBlock(TransformerBlock):
     """
         Qwen3Transformer Block with classic Hyper-Connections
@@ -62,18 +74,8 @@ class HyperQwen3TransformerBlock(TransformerBlock):
 
     def __init__(self, cfg, layer_idx, expansion_rate=4):
         super().__init__(cfg, layer_idx)
-
-        # attention part hyperconnections
-        self.hc_norm_attn = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
-        self.hc_res_attn = HyperConnectionRes(cfg["emb_dim"], expansion_rate=expansion_rate)
-        self.hc_pre_attn = HyperConnectionPre(cfg["emb_dim"], expansion_rate=expansion_rate)
-        self.hc_post_attn = HyperConnectionPost(cfg["emb_dim"], expansion_rate=expansion_rate)
-
-        # ffn part hyperconnections
-        self.hc_norm_ffn = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
-        self.hc_res_ffn = HyperConnectionRes(cfg["emb_dim"], expansion_rate=expansion_rate)
-        self.hc_pre_ffn = HyperConnectionPre(cfg["emb_dim"], expansion_rate=expansion_rate)
-        self.hc_post_ffn = HyperConnectionPost(cfg["emb_dim"], expansion_rate=expansion_rate)
+        self.hc_attn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+        self.hc_ffn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
 
     def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
         # x shape (b, s, exps_rate, emb_dim)
@@ -81,32 +83,30 @@ class HyperQwen3TransformerBlock(TransformerBlock):
         # --- Attention part ---
         # the normalized input is used for the hyperconnections: generating H_res, H_pre, H_post
         # and is an addition/different from the usual pre-Norms from a classic trf block (that we also keep)
-        x_norm_attn = self.hc_norm_attn(x)
+        x_norm_attn = self.hc_attn["norm"](x)
         # residual mixing
-        residual = self.hc_res_attn(x, x_norm_attn)
+        residual = self.hc_attn["res"](x, x_norm_attn)
 
         # pre-mapping (down-project to a single stream for the trf block)
-        x = self.hc_pre_attn(x, x_norm_attn)  # shape (b, s, exps_rate, emb_dim) → (b, s, emb_dim)
+        x = self.hc_attn["pre"](x, x_norm_attn)  # shape (b, s, exps_rate, emb_dim) → (b, s, emb_dim)
 
         x = self.norm1(x)
         x = self.att(x, mask, cos, sin, attn_mask, kv_cache, position_ids)
 
         # post-mapping (broadcast back to expanded streams)
-        x = self.hc_post_attn(x, x_norm_attn)  # shape (b, s, emb_dim) → (b, s, exps_rate, emb_dim)
-
+        x = self.hc_attn["post"](x, x_norm_attn)  # shape (b, s, emb_dim) → (b, s, exps_rate, emb_dim)
         x = x + residual
 
         # --- FFN part ---
-        x_norm_ffn = self.hc_norm_ffn(x)
-        residual = self.hc_res_ffn(x, x_norm_ffn)
+        x_norm_ffn = self.hc_ffn["norm"](x)
+        residual = self.hc_ffn["res"](x, x_norm_ffn)
 
-        x = self.hc_pre_ffn(x, x_norm_ffn)  # shape (b, s, exps_rate, emb_dim) → (b, s, emb_dim)
+        x = self.hc_ffn["pre"](x, x_norm_ffn)  # shape (b, s, exps_rate, emb_dim) → (b, s, emb_dim)
 
         x = self.norm2(x)
         x = self.ffn(x)
 
-        x = self.hc_post_ffn(x, x_norm_ffn)  # shape (b, s, emb_dim) → (b, s, exps_rate, emb_dim)
-
+        x = self.hc_ffn["post"](x, x_norm_ffn)  # shape (b, s, emb_dim) → (b, s, exps_rate, emb_dim)
         x = x + residual
         return x
 

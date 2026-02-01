@@ -9,7 +9,7 @@
 #
 # NOTE: For reference, per the mHC paper p.10:
 # - inputs (xl and xl_norm) are in bf16
-# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
+# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32. TODO
 # - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32)
 
 import math

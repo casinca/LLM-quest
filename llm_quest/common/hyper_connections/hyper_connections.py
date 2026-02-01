@@ -3,7 +3,7 @@
 #
 # NOTE: For reference, per the mHC paper p.10:
 # - inputs (xl and xl_norm) are in bf16
-# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
+# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32. TODO
 # - dynamic mappings (theta_res, theta_pre, theta_post) are in tf32 (Nvidia TensorFloat-32)
 
 import torch
@@ -61,7 +61,6 @@ class HyperConnectionRes(nn.Module):
             nn.Parameter(torch.eye(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
         )  # shape (exps_rate, exps_rate)
 
-    # TODO mention diff with DeepSeek: expansion stream are flattened, (n, emb_dim) -> (n*emb_dim) no need for transpose
     def residual_matrix(self, x_norm):
         """
         Generates the residual mapping/matrix H_res
