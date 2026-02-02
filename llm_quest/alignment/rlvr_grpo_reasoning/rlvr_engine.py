@@ -22,7 +22,7 @@ class VerifiableRewardCalculator:
     Reward calculator for a batch of responses, based on simple heuristics.
 
     Args:
-        tokenizer (Tokenizer): The tokenizer to decode the responses (needs a batch_decode method).
+        tokenizer (Tokenizer): The HuggingFace tokenizer to decode the responses.
         good_answer_reward (float): The reward value for a correct answer.
         wrong_answer_reward (float): The penalty for an incorrect answer (should be ≤ 0).
         unfinished_answer_reward (float): The penalty for an unfinished answer (should be ≤ 0).
@@ -105,7 +105,7 @@ class VerifiableRewardCalculator:
             (total_rewards = answer_rewards atm)
 
         """
-        decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
+        decoded_responses = self.tokenizer.decode(model_responses, skip_special_tokens=True)
         answer_rewards = self._calc_answer_reward(decoded_responses, correct_answers)
 
         return torch.tensor(answer_rewards, dtype=self.dtype, device=model_responses.device)

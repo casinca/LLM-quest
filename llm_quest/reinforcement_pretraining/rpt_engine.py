@@ -137,7 +137,7 @@ class PrefixMatchingReward:
         Returns:
             torch.Tensor: The total rewards for a batch of responses, shape (B,)
         """
-        decoded_responses = self.tokenizer.batch_decode(model_responses, skip_special_tokens=True)
+        decoded_responses = self.tokenizer.decode(model_responses, skip_special_tokens=True)
         rewards_list = self._calc_reward(decoded_responses, labels)
 
         return torch.tensor(rewards_list, dtype=self.dtype, device=model_responses.device)
