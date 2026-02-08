@@ -70,9 +70,15 @@ class MCHyperConnectionRes(nn.Module):
         # static mapping (biases b_res) are initialized as the identity matrix (mHC & HC paper), since dynamic mapping
         # weights are initialized to 0, overall, this makes the hyper-connection start with an untouched stream (like a
         # classic residual connection): (0 + I) @ xl = xl
-        self.bias = (
-            nn.Parameter(torch.eye(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
-        )  # shape (exps_rate, exps_rate)
+        if add_static_mapping:
+            # since we use exponential to make values > 0 for SK, if bias is left as default init as I, the
+            # identity property will be lost after torch.exp().
+            # Therefore we re-init bias so that it approximates I after torch.exp()
+            # values: 0 for diags / -8 for the rest (why -8? inspired from mHC-lite paper init, exp^(-8) ~ 0)
+            init_bias = torch.eye(expansion_rate, device=device, dtype=dtype) * 8 - 8
+            self.bias = nn.Parameter(init_bias)  # shape (exps_rate, exps_rate)
+        else:
+            self.bias = None
 
     def residual_matrix(self, x_norm):
         """
