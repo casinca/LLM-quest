@@ -22,7 +22,6 @@ from llm_quest.utils import SinkhornKnopp
 
 class MCHyperConnectionRes(nn.Module):
     """
-    TODO comments and maybe change "activation" arg specifically here, for SK algo
     Manifold-Constrained Hyper-connection for residual stream as depicted in:
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
 
@@ -47,7 +46,7 @@ class MCHyperConnectionRes(nn.Module):
         emb_dim,
         expansion_rate=4,
         add_static_mapping=True,
-        activation_cls=SinkhornKnopp,
+        constraint_cls=SinkhornKnopp,
         sk_max_iter=20,
         sk_epsilon=1e-6,
         sk_iter_check=3,
@@ -56,7 +55,7 @@ class MCHyperConnectionRes(nn.Module):
     ):
         super().__init__()
         self.expansion_rate = expansion_rate
-        self.sinkhorn_knopp = activation_cls(max_iter=sk_max_iter, epsilon=sk_epsilon, iter_check=sk_iter_check)
+        self.sinkhorn_knopp = constraint_cls(max_iter=sk_max_iter, epsilon=sk_epsilon, iter_check=sk_iter_check)
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
@@ -101,7 +100,7 @@ class MCHyperConnectionRes(nn.Module):
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
 
-        x = torch.exp(x)
+        x = torch.exp(x)  # map to positive range for SK
         x = self.sinkhorn_knopp(x)
 
         return x
@@ -346,11 +345,11 @@ if __name__ == "__main__":
     test_output_res = test_mhc_res(test_x, test_x_norm)
     test_output_pre = test_mhc_pre(test_x, test_x_norm)
     test_output_post = test_mhc_post(test_output_pre, test_x_norm)
-    print(test_output_res.shape)
-    print(test_output_pre.shape)
-    print(test_output_post.shape)
+    print("res: ", test_output_res.shape)
+    print("pre: ", test_output_pre.shape)
+    print("post: ", test_output_post.shape)
 
-    # check if the residual mixing matrix is doubly stochastic
+    print("\n\n# Check if the residual mixing matrix is doubly stochastic with mHC SK")
     H_res = test_mhc_res.residual_matrix(test_x_norm)  # (b, seq_len, exp_rate, exp_rate)
     row_sums = H_res.sum(dim=-1)  # sum over columns, shape: (b, seq_len, exp_rate)
     col_sums = H_res.sum(dim=-2)  # sum over rows,    shape: (b, seq_len, exp_rate)
