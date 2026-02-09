@@ -511,3 +511,154 @@ class KVCache:
             self.keys_cache[layer_idx][:, :, : self.end_pos, :],
             self.values_cache[layer_idx][:, :, : self.end_pos, :],
         )
+
+
+# NOTE:
+# - since we check for "all" matrices convergence, one outlier/slow convergence matrix will force extra iterations
+# for the whole batch
+# - probably some other optimizations log
+# TODO: check for a good iter_check, clamp values and training stability
+class SinkhornKnopp:
+    """
+    Sinkhorn-Knopp Algorithm implemented in PyTorch.
+    This implementation is adapted from this NumPy version by @btaba: https://github.com/btaba/sinkhorn_knopp
+    Original paper: http://msp.org/pjm/1967/21-2/pjm-v21-n2-p14-s.pdf
+
+    2 changes made:
+    - Supports batch dimensions >=2D (e.g., (N, N), (B, N, N), (B, S, N, N) ...).
+        Operations are performed on the last two dimensions.
+    - Optional check for convergence every "iter_check" iterations
+
+    Takes a non-negative square matrix P, where P =/= 0 and iterates through
+    Sinkhorn Knopp's algorithm to convert P to a doubly stochastic matrix.
+    Guaranteed convergence if P has total support.
+
+    Parameters
+    ----------
+    max_iter : int, default=20
+        The maximum number of iterations.
+    epsilon : float, default=1e-6
+        Convergence threshold. Algorithm stops when all row and column sums
+        are within epsilon of 1. Must be between 0 and 1.
+    iter_check : int, default=3
+        Check convergence every iter_check iterations, set to 0 to check every iteration.
+
+    Attributes
+    ----------
+    iterations : int
+        Number of iterations from the last call.
+    stopping_condition : str
+        Either "max_iter" or "epsilon", describing why the algorithm stopped.
+
+    Examples
+    --------
+    >>> P = torch.tensor([[0.011, 0.15], [1.71, 0.1]])
+    >>> sk = SinkhornKnopp(max_iter=20, epsilon=1e-6)
+    >>> P_ds = sk(P)
+    >>> print(P_ds)
+    >>> print(P_ds.sum(dim=-1))  # Row sums ≈ 1
+    >>> print(P_ds.sum(dim=-2))  # Column sums ≈ 1
+
+    >>> # 4D tensor example (batch, seq_len, N , N)
+    >>> P_4d = torch.rand(2, 10, 4, 4) + 0.1
+    >>> P_ds_4d = sk(P_4d)
+    """
+
+    def __init__(self, max_iter=20, epsilon=1e-6, iter_check=3):
+        assert max_iter > 0, f"max_iter must be positive, got {max_iter}"
+        assert 0 < epsilon < 1, f"epsilon must be in (0, 1), got {epsilon}"
+
+        self.max_iter = max_iter
+        self.epsilon = epsilon
+        self.iter_check = iter_check
+        self.iterations = 0
+        self.stopping_condition = None
+        self._r = None
+        self._c = None
+
+    def __call__(self, P):
+        """
+        Transform a matrix (or batch of matrices) to doubly stochastic form
+
+        Parameters
+        ----------
+        P : torch.Tensor
+            Non-negative square matrix of shape >=2D (..., N, N).
+
+
+        Returns
+        -------
+        torch.Tensor
+            Doubly stochastic matrix (or batch) of the same shape as input.
+        """
+        return self.fit(P)
+
+    def fit(self, P):
+        """
+        Fit and transform a matrix (or batch of matrices) to doubly stochastic form.
+
+        Parameters
+        ----------
+        P : torch.Tensor
+            Non-negative square matrix of shape >=2D (..., N, N).
+            Operations are performed on the last two dimensions.
+
+        Returns
+        -------
+        torch.Tensor
+            Doubly stochastic matrix (or batch of matrices) of the same shape as input.
+        """
+        assert P.dim() >= 2, f"Expected at least 2D tensor, got {P.dim()}D"
+
+        N, M = P.shape[-2:]  # get matrix dimensions from last two dims
+        assert N == M, f"Matrix must be square, got shape ({N}, {M})"
+        assert (P >= 0).all(), "Matrix must be non-negative"
+
+        min_thresh = 1.0 - self.epsilon
+        max_thresh = 1.0 + self.epsilon
+
+        # Save original shape and flatten leading dimensions (bs, N, N) with bs = product of all leading dims
+        original_shape = P.shape
+        P_2d = P.view(-1, N, M)
+        bs = P_2d.shape[0]
+
+        # Initialize scaling vectors for each matrix in the batch
+        # r scales rows: (bs, N, 1)
+        # c scales columns: (bs, 1, M)
+        r = torch.ones(bs, N, 1, dtype=P.dtype, device=P.device)
+        c = torch.ones(bs, 1, M, dtype=P.dtype, device=P.device)
+
+        self.iterations = 0
+        self.stopping_condition = None
+
+        for self.iterations in range(1, self.max_iter + 1):
+            # Column normalization: c_j = 1 / sum_i(r_i * P_ij)
+            # Sum over rows (dim=1) gives shape (bs, 1, M)
+            c = 1.0 / (P_2d * r).sum(dim=1, keepdim=True).clamp(min=1e-10)
+
+            # Row normalization: r_i = 1 / sum_j(P_ij * c_j)
+            # Sum over columns (dim=2) gives shape (bs, N, 1)
+            r = 1.0 / (P_2d * c).sum(dim=2, keepdim=True).clamp(min=1e-10)
+
+            # Check convergence every "iter_check" iterations
+            if self.iterations % self.iter_check == 0:
+                P_scaled = r * P_2d * c
+                row_sums = P_scaled.sum(dim=-1)  # (bs, N)
+                col_sums = P_scaled.sum(dim=-2)  # (bs, M)
+
+                row_converged = (row_sums >= min_thresh) & (row_sums <= max_thresh)
+                col_converged = (col_sums >= min_thresh) & (col_sums <= max_thresh)
+
+                if row_converged.all() and col_converged.all():
+                    self.stopping_condition = "epsilon"
+                    break
+
+        if self.stopping_condition is None:
+            self.stopping_condition = "max_iter"
+
+        self._r = r
+        self._c = c
+
+        # final scaled matrix and reshape back to original shape (bs, N, N) → (..., N, N)
+        P_ds = r * P_2d * c
+        return P_ds.view(original_shape)

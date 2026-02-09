@@ -28,6 +28,7 @@ nano_qwen_config = {
 }
 
 hparams = {
+    "hc_type": "mhc",  # "classic" HC or DeepSeek's "mhc"
     "expansion_rate": 4,
     "num_epoch": 1,
     "peak_lr": 5e-4,
@@ -77,7 +78,7 @@ val_loader = DataLoader(
 )
 
 device = config.auto_device
-model = HyperQwen3Model(nano_qwen_config, expansion_rate=hparams["expansion_rate"])
+model = HyperQwen3Model(nano_qwen_config, hc_type=hparams["hc_type"], expansion_rate=hparams["expansion_rate"])
 # For simplicity casting the whole model to bf16, technically hyperconnections should be in fp32
 model.bfloat16().to(device)
 
