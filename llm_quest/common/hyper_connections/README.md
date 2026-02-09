@@ -247,11 +247,10 @@ hyper-connections* with regard to $H_l^{\text{res}}$ and the *DeepSeek manifold-
     <p>Fig 1 from the DeepSeek mHC paper</p>
 </div>
 
-*note2: We are now calling the original hyper-connections $H_l^{\text{res}}$, $\mathcal{H}_l^{\text{pre}}$ and
-$\mathcal{H}_l^{\text{post}}$ as $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$
-and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ to match the mHC paper notation. This is done to avoid confusion between unconstrained and constrained hyper-connections.*  
-*note3: DeepSeek made heavy use of custom kernels to reduce overhead, these are not
-implemented.*
+*note2: We are now calling the original hyper-connections* $H_l^{\text{res}}$*,* $\mathcal{H}_l^{\text{pre}}$ *and*
+$\mathcal{H}_l^{\text{post}}$ *as* $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$*,*
+$\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ *and* $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ *to match the mHC paper notation. This is done to avoid confusion between unconstrained and constrained hyper-connections.*  
+*note3: DeepSeek made heavy use of custom kernels to reduce overhead, these are not implemented.*
 
 &nbsp;
 
@@ -259,7 +258,7 @@ Even if the main problem is with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it'
 constrained: $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
 constrained to be non-negative (they are mapped by a sigmoid function instead of a tanh function).
 
-*(A little detail, previously in HC, only $\theta_l \tilde{\mathbf{x}}_l^\top$ (see eq. 5) were mapped. In mHC, both the biases and the scaling factors $\alpha_l$ are also mapped.)*
+*(A little detail, previously in HC, only* $\theta_l \tilde{\mathbf{x}}_l^\top$ *(see eq. 5) were mapped. In mHC, both the biases and the scaling factors* $\alpha_l$ *are also mapped.)*
 
 The reason, quoting the mHC paper, is *"this constraint prevents signal cancellation arising from the composition of
 positive and negative coefficients, which can also be considered as a special manifold projection."*
@@ -302,7 +301,11 @@ Why does it help?
 DeepSeek uses the Sinkhorn-Knopp (SK) algorithm to make the matrices $\mathcal{H}^{\text{res}}$ doubly stochastic. We
 use a PyTorch adaptation of the NumPy implementation mentioned in the Acknowledgements section.
 
-It is worth noting that we apply the exponential function to $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$ to obtain a strictly positive matrix, since SK requires this to guarantee convergence to a doubly stochastic matrix.
+It is worth noting that we apply the exponential function to $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$ to obtain a
+strictly positive matrix, since SK requires this to guarantee convergence to a doubly stochastic matrix.
+
+Switching from a classic residual connection to mHC from scratch in Pytorch has some overhead here, hence
+why DeepSeek dedicate a rigorous section (4.3. Efficient Infrastructure Design) to how they optimized it.
 
 **technically, "non-negative" is the condition for convex combinations, but since we map via the exponential function
 here, I use strictly positive.* 
