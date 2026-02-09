@@ -17,7 +17,7 @@ import math
 import torch
 import torch.nn as nn
 
-from llm_quest.utils import SinkhornKnopp
+from llm_quest.utils import BirkhoffvonNeumann, SinkhornKnopp
 
 
 class MCHyperConnectionRes(nn.Module):
@@ -102,6 +102,107 @@ class MCHyperConnectionRes(nn.Module):
 
         x = torch.exp(x)  # map to positive range for SK
         x = self.sinkhorn_knopp(x)
+
+        return x
+
+    def forward(self, x, x_norm):
+        """
+        Apply/mix the residual mapping/matrix H_res to the residual stream
+
+        Args:
+            x: The n streams input, shape: (b, seq_len, exps_rate, emb_dim)
+            x_norm: The n streams normalized input (pre-trf block), used to generate H_res,
+                    shape: (b, seq_len, exps_rate*emb_dim)
+
+        Returns:
+            The n mixed streams after applying the residual mapping H_res, shape: (b, seq_len, exps_rate, emb_dim)
+        """
+        x = self.residual_matrix(x_norm) @ x
+
+        return x
+
+
+class MHCLiteRes(nn.Module):
+    """
+    TODO comments
+    Manifold-Constrained Hyper-connection for residual stream as depicted in:
+    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
+
+    This class is basically returning the residual constrained hyperconnection output of H_res @ x described in eq 3 of
+    the mHC paper.
+
+    Args:
+        emb_dim (int): The dimension of the embeddings
+        expansion_rate (int): The number of expanded streams, ("n" in the paper), can be seen as the width of the
+                            residual stream
+        add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
+        constraint_cls (nn.Module): The constraint class instance to make the residual matrix doubly stochastic
+        device (torch.device):
+        dtype (torch.dtype):
+
+    Returns:
+        x: The mixed residual streams, shape: (b, seq_len, exps_rate, emb_dim)
+    """
+
+    def __init__(
+        self,
+        emb_dim,
+        expansion_rate=4,
+        add_static_mapping=True,
+        constraint_cls=BirkhoffvonNeumann,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.expansion_rate = expansion_rate
+        self.num_permuts = math.factorial(expansion_rate)
+        self.bvn = constraint_cls(expansion_rate=self.expansion_rate).to(device)
+
+        # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
+
+        # dynamic mapping (W_res): project to n! streams
+        self.linear = nn.Linear(emb_dim * expansion_rate, self.num_permuts, bias=False, device=device, dtype=dtype)
+        # The HC paper init dynamic mapping weights for phi_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
+        # is doing Kaiming init by default so we need to zero init
+        nn.init.zeros_(self.linear.weight)
+
+        # static mapping (biases b_res) are scalars in a vector, not a matrix (1 weight for each of the n! permutations)
+        # Per the mHC-lite paper, p.5:
+        # They are all init to -8 for getting a small value after softmax, except the identity permutation
+        # (ex: if n=4, the identity permutation is (0,1,2,3)) which is set to 0.
+        if add_static_mapping:
+            self.bias = nn.Parameter(torch.full(size=(self.num_permuts,), fill_value=-8, device=device, dtype=dtype))
+            with torch.no_grad():
+                print(self.bias)
+                self.bias[self.bvn.identity_permut_index] = 0  # set the identity permutation to 0
+                print(self.bias)
+        else:
+            self.bias = None
+
+    def residual_matrix(self, x_norm):
+        """
+        Generates the residual mapping/matrix H_res
+        This is our small "HyperNet" where we generate on the fly the weights H_res to mix with the residual stream
+
+        Args:
+            x_norm: The n flattened streams, normalized input (pre-trf block), used to generate H_res,
+                    shape: (b, seq_len, exps_rate*emb_dim)
+
+        Returns:
+            The residual mapping/matrix H_res, shape: (b, seq_len, exps_rate, exps_rate)
+        """
+        b, seq_len, _ = x_norm.shape
+        # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, n!)
+        x = self.linear(x_norm)  # apply dynamic mapping
+
+        x = x * self.factor
+
+        if self.bias is not None:  # add static mapping if enabled
+            x += self.bias
+
+        x = torch.softmax(x, dim=-1)
+        x = self.bvn(x)
 
         return x
 
@@ -342,12 +443,16 @@ if __name__ == "__main__":
     test_mhc_pre = MCHyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
     test_mhc_post = MCHyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
 
+    test_mhc_lite_res = MHCLiteRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+
     test_output_res = test_mhc_res(test_x, test_x_norm)
     test_output_pre = test_mhc_pre(test_x, test_x_norm)
     test_output_post = test_mhc_post(test_output_pre, test_x_norm)
+    test_output_lite_res = test_mhc_lite_res(test_x, test_x_norm)
     print("res: ", test_output_res.shape)
     print("pre: ", test_output_pre.shape)
     print("post: ", test_output_post.shape)
+    print("lite_res: ", test_output_lite_res.shape)
 
     print("\n\n# Check if the residual mixing matrix is doubly stochastic with mHC SK")
     H_res = test_mhc_res.residual_matrix(test_x_norm)  # (b, seq_len, exp_rate, exp_rate)
@@ -355,3 +460,10 @@ if __name__ == "__main__":
     col_sums = H_res.sum(dim=-2)  # sum over rows,    shape: (b, seq_len, exp_rate)
     print("Row sums (should be ~1):", row_sums)
     print("Col sums (should be ~1):", col_sums)
+
+    print("\n\n# Check if the residual mixing matrix is doubly stochastic with mHC Lite BVN")
+    H_res_lite = test_mhc_lite_res.residual_matrix(test_x_norm)  # (b, seq_len, exp_rate, exp_rate)
+    row_sums_lite = H_res_lite.sum(dim=-1)  # sum over columns, shape: (b, seq_len, exp_rate)
+    col_sums_lite = H_res_lite.sum(dim=-2)  # sum over rows,    shape: (b, seq_len, exp_rate)
+    print("Row sums (should be ~1):", row_sums_lite)
+    print("Col sums (should be ~1):", col_sums_lite)
