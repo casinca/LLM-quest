@@ -4,6 +4,8 @@ Table of Contents:
 - [Classic (unconstrained) Hyper-connections](#classic-unconstrained-hyper-connections)
   - [Where does the term "Hyper-connections" come from and example with H_res?](#where-does-the-term-hyper-connections-come-from-and-example-with-h_res)
   - [Problems with classic (unconstrained) hyper-connections](#problems-with-classic-unconstrained-hyper-connections)
+- [DeepSeek Manifold-Constrained Hyper-connections (mHC)](#deepseek-manifold-constrained-hyper-connections-mhc)
+  - [Constraining H_res](#constraining-h_res)
 
 
 - [Acknowledgements](#acknowledgements)
@@ -239,32 +241,74 @@ hyper-connections* with regard to $H_l^{\text{res}}$ and the *DeepSeek manifold-
 
 ## DeepSeek Manifold-Constrained Hyper-connections (mHC)
 
+
+<div align="center">
+    <img src="_hyper_connections_img/_hyper_connections_img2.png" width="500">
+    <p>Fig 1 from the DeepSeek mHC paper</p>
+</div>
+
 *note2: We are now calling the original hyper-connections $H_l^{\text{res}}$, $\mathcal{H}_l^{\text{pre}}$ and
 $\mathcal{H}_l^{\text{post}}$ as $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$
-and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ to match the mHC paper notation.  
-This is done to avoid confusion between unconstrained and constrained hyper-connections.*
+and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ to match the mHC paper notation. This is done to avoid confusion between unconstrained and constrained hyper-connections.*  
+*note3: DeepSeek made heavy use of custom kernels to reduce overhead, these are not
+implemented.*
 
-TODO
+&nbsp;
 
-Even if the main problem being with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it's not the only matrix being
-constrained, $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
-constrained to be non-negative (They are being mapped by a sigmoid function instead of a tanh function.
+Even if the main problem is with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it's not the only matrix being
+constrained: $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
+constrained to be non-negative (they are mapped by a sigmoid function instead of a tanh function).
 
-Previously in HC, only $\theta_l \tilde{\mathbf{x}}_l^\top$ (see eq. 5) was mapped, in mHC, both the biases and the scaling factors $\alpha_l$ are also mapped.
+*(A little detail, previously in HC, only $\theta_l \tilde{\mathbf{x}}_l^\top$ (see eq. 5) were mapped. In mHC, both the biases and the scaling factors $\alpha_l$ are also mapped.)*
 
-The reason, quoting the mHC paper, is *"this constrain prevents signal cancellation arising from the composition of
+The reason, quoting the mHC paper, is *"this constraint prevents signal cancellation arising from the composition of
 positive and negative coefficients, which can also be considered as a special manifold projection."*
 
-diff: 
+Another implementation detail with mHC is that the input used to generate all the mappings ($\mathcal{H}$ matrices) is flattened to a row
+vector $\mathbb{R}^{n \times C} \to \mathbb{R}^{1 \times nC}$ *to preserve full context information*, as
+DeepSeek put it.
 
-- flattening the n expanded streams to a row vector $\mathbb{R}^{n \times C} \to \mathbb{R}^{1 \times nC}$
-- all constrained
--
+<div align="center">
+    <img src="_hyper_connections_img/_hyper_connections_img3.png" width="800">
+    <p>Mapping changes, from classic HC to DeepSeek mHC</p>
+</div>
 
-mhC lite if needs to be mentioned https://arxiv.org/abs/2601.05732
+&nbsp;
+
+### Constraining H_res
+
+How does DeepSeek keep the best of both worlds? Stability from classic residual connection and the mixing benefits of
+hyper-connections?  
+They constrain the residual mapping/matrix $\mathcal{H}_l^{\text{res}}$ to be doubly stochastic (i.e., a matrix where
+each row and each column sums to 1 and all values are non-negative). We can see it as a matrix where both rows and
+columns were softmax'ed/sum to 1 in both directions.
+
+Why does it help?
+
+- If rows are convex combinations (scalars sum to 1 and each >0*) then, in the forward pass, the output of
+  $\mathcal{H}_l^{\text{res}} \mathbf{x}_l$ becomes a weighted average of the input $\mathbf{x}_l$, thus the output will
+  always be bounded between the min and max scalars of the input $\mathbf{x}_l$. The same holds for columns in the
+  backward pass and helps keep gradients bounded.  
+  More importantly, both conditions guarantee that the $\mathcal{H}_l^{\text{res}}$ matrix will not increase the
+  magnitude (L2 norm) of the input vector, nor the propagated gradients (i.e. it's non-expansive, spectral norm ≤ 1).
+
+- Another good property that helps with the problem of cumulative products
+  $\prod_{i=L-1}^{l}\mathcal{H}_{i}^{\text{res}}$ across layers, that we mentioned in the previous section, is that if
+  we multiply 2 doubly stochastic matrices, the result is also a doubly stochastic matrix.  
+  This is the "Compositional Closure" that DeepSeek mentions on p. 8.
+
+&nbsp;
+
+DeepSeek uses the Sinkhorn-Knopp (SK) algorithm to make the matrices $\mathcal{H}^{\text{res}}$ doubly stochastic. We
+use a PyTorch adaptation of the NumPy implementation mentioned in the Acknowledgements section.
+
+It is worth noting that we apply the exponential function to $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$ to obtain a strictly positive matrix, since SK requires this to guarantee convergence to a doubly stochastic matrix.
+
+**technically, "non-negative" is the condition for convex combinations, but since we map via the exponential function
+here, I use strictly positive.* 
 
 
-
+&nbsp;
 
 ## Acknowledgements
 
@@ -272,5 +316,5 @@ mhC lite if needs to be mentioned https://arxiv.org/abs/2601.05732
 - [mHC: Manifold-Constrained Hyper-Connections](https://arxiv.org/abs/2512.24880)
 - [HyperNetworks](https://arxiv.org/abs/1609.09106)
 - [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385)
-- [Reference Sinkhorn-Knopp Implementation](https://github.com/btaba/sinkhorn_knopp)
+- [Reference Sinkhorn-Knopp NumPy Implementation](https://github.com/btaba/sinkhorn_knopp)
 - [Sinkhorn-Knopp: Concerning Nonnegative Matrices and Doubly Stochastic Matrices](http://msp.org/pjm/1967/21-2/pjm-v21-n2-p14-s.pdf)
