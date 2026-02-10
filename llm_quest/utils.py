@@ -667,11 +667,20 @@ class SinkhornKnopp:
 
 class BirkhoffvonNeumann(torch.nn.Module):
     """
-    This class is used to build and make the H_res matrix doubly stochastic for the DeepSeek mHC optimization:
+    This class is used to build the doubly stochastic H_res matrix for the DeepSeek mHC optimization:
     "mHC-lite"
 
-    We are building H_res as a convex combination/ weighted sum(a_k * P_k) from the Birkhoff–von Neumann
-    decomposition/theorem depicted in the mHC-lite paper https://arxiv.org/abs/2601.05732
+    We are building H_res as a convex combination/weighted average from the Birkhoff–von Neumann
+    decomposition/theorem depicted in p.4 of the mHC-lite paper https://arxiv.org/abs/2601.05732
+
+    H_res = sum(a_k * P_k)
+
+    with:
+        k from 1 to n!
+        n is the expansion rate in mHC and mHC-lite
+        P_k as a permutation matrix (n x n)
+        a_k is a weight scalar from the `weight_a` softmaxed vector (each scalar is >0 and the total sum to 1)
+
     """
 
     def __init__(self, expansion_rate):
@@ -697,7 +706,7 @@ class BirkhoffvonNeumann(torch.nn.Module):
         Returns the index (int) of the identity permutation in the list of permutations
         """
         # The identity permutation should be the first one (index 0) since itertools.permutations should always return
-        # the range(n) as the first permutation but for safety we can iter anyways
+        # the range(n) as the first permutation but for safety we can iter anyway
         identity_perm = tuple(range(self.exps_rate))
         try:
             identity_index = self.permutations.index(identity_perm)
@@ -711,7 +720,7 @@ class BirkhoffvonNeumann(torch.nn.Module):
         Get the flattened permutation matrices P_k
 
         We are not returning the permutation matrices as shape (n!, n, n) because we will be doing a matmul, for
-        efficiency, to compute the convex combination/ weighted sum(a_k * P_k) to get H_res in the forward
+        efficiency, to compute the convex combination/ weighted average sum(a_k * P_k) to get H_res in the forward
         (bvn_composition) method.
 
         Args:
@@ -730,22 +739,26 @@ class BirkhoffvonNeumann(torch.nn.Module):
 
     def bvn_composition(self, weight_a):
         """
-        Compose H_res from the Birkhoff–von Neumann theorem H_res = sum(a_k * P_k)
+        Compose H_res from the Birkhoff–von Neumann theorem H_res = sum(a_k * P_k) with k from 1 to n!
         See Theorem 3.1 p.4 in the mHC-lite paper
 
-        Doing a weighted sum of the permutation matrices P_k with the weights in weight_a, computed as a matmul.
+        For efficiency, we are doing a weighted average of the permutation matrices P_k with the weights in `weight_a`,
+        computed as a matmul.
 
-        For example n = 2 flattened and stacked P_k matrices:
+        For example n = 2, flattened and stacked P_k matrices:
 
             self.permut_matrices_flat = [[ --P_1(flat)-- ]
                                         [ --P_2(flat)-- ]]
 
-        weight_a vector [a, b], which contains the weights for each permutation, we compute the convex combination as a
-        vector matrix product (for a single weight_a, otherwise as a matmul with multiple weight_a vectors in seq_len)
+        `weight_a` vector [a, b], which contains the weights for each permutation, we compute the convex combination as
+        a vector matrix product
+        (vm product here for a single `weight_a`, otherwise as a matmul with multiple seq_len `weight_a` vectors)
+
             [a, b] x [[ --P1(flat)-- ]
                     [ --P2(flat)-- ]]
 
-        which gives a weighted sum to form H_res as a doubly stochastic matrix.
+        which gives a vector of shape (n*n) [a*P1_1 + b*P2_1, a*P1_2 + b*P2_2, ...]
+        reshaped back to (n, n) to get H_res as a doubly stochastic matrix.
 
         Args:
             weight_a (torch.Tensor): A weight_a vector for each token, with scalar weights for each of the permutation
@@ -753,7 +766,7 @@ class BirkhoffvonNeumann(torch.nn.Module):
             weight_a scalars must be >=0 and sum to 1 (this is done via softmax in MHCLiteRes class)
 
         Returns:
-            The bi/doubly stochastic matrix H_res for each seq, shape: (b, seq_len, n, n)
+            The bi/doubly stochastic matrix H_res for each token, shape: (b, seq_len, n, n)
         """
         b, seq_len, _ = weight_a.shape
 

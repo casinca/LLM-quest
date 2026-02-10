@@ -63,7 +63,7 @@ class HyperQwen3TransformerBlock(TransformerBlock):
                         ║
             ╔═══════════╬═════════════╗
             ║           ║             ║
-            ║       if mhc/lite:      ║
+            ║  if mhc/lite shape is:  ║
             ║        [B, S, n*emb]    ║
             ║           ▼            ║
             ║      ┌───────────┐      ║
