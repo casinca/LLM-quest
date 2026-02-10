@@ -28,7 +28,7 @@ def _create_hyper_connection_set(emb_dim, expansion_rate, dtype):
     )
 
 
-def _create_mhc_hyper_connection_set(emb_dim, expansion_rate, dtype):
+def _create_mhc_set(emb_dim, expansion_rate, dtype):
     """Bundle for DeepSeek's Manifold-Constrained Hyper-Connections: norm + res + pre + post for one sub-block (attn or
     ffn)."""
     return nn.ModuleDict(
@@ -98,8 +98,8 @@ class HyperQwen3TransformerBlock(TransformerBlock):
         self.hc_type = hc_type
 
         if self.hc_type == "mhc":
-            self.hc_attn = _create_mhc_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
-            self.hc_ffn = _create_mhc_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+            self.hc_attn = _create_mhc_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
+            self.hc_ffn = _create_mhc_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
         elif self.hc_type == "classic":
             self.hc_attn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
             self.hc_ffn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
