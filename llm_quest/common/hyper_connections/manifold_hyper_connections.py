@@ -124,9 +124,13 @@ class MCHyperConnectionRes(nn.Module):
 
 class MHCLiteRes(nn.Module):
     """
-    TODO comments
-    Manifold-Constrained Hyper-connection for residual stream as depicted in:
-    - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
+    This is the residual mapping from the mHC-lite paper: https://arxiv.org/abs/2601.05732
+
+    Main changes vs DeepSeek mHC:
+    - Compute doubly stochastic matrix H_res directly from convex combination (Birkhoff-von Neumann theorem)
+    - dynamic mapping is projeted to n! streams instead of n² streams
+    - static mapping are init differently to take into account that we deal with a vector of size n! instead of a matrix
+    of size n²
 
     This class is basically returning the residual constrained hyperconnection output of H_res @ x described in eq 3 of
     the mHC paper.
@@ -161,10 +165,8 @@ class MHCLiteRes(nn.Module):
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
         self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
 
-        # dynamic mapping (W_res): project to n! streams
+        # dynamic mapping (W_res in mHC-lite paper): project to n! streams
         self.linear = nn.Linear(emb_dim * expansion_rate, self.num_permuts, bias=False, device=device, dtype=dtype)
-        # The HC paper init dynamic mapping weights for phi_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
-        # is doing Kaiming init by default so we need to zero init
         nn.init.zeros_(self.linear.weight)
 
         # static mapping (biases b_res) are scalars in a vector, not a matrix (1 weight for each of the n! permutations)
@@ -174,9 +176,7 @@ class MHCLiteRes(nn.Module):
         if add_static_mapping:
             self.bias = nn.Parameter(torch.full(size=(self.num_permuts,), fill_value=-8, device=device, dtype=dtype))
             with torch.no_grad():
-                print(self.bias)
                 self.bias[self.bvn.identity_permut_index] = 0  # set the identity permutation to 0
-                print(self.bias)
         else:
             self.bias = None
 
@@ -201,8 +201,8 @@ class MHCLiteRes(nn.Module):
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
 
-        x = torch.softmax(x, dim=-1)
-        x = self.bvn(x)
+        x = torch.softmax(x, dim=-1)  # logits to `weight_a` (coeffs/weights to positive range for BVN)
+        x = self.bvn(x)  # apply our convex combination/weighted average from the BVN theorem
 
         return x
 
