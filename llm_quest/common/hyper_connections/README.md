@@ -6,8 +6,8 @@ Table of Contents:
   - [Problems with classic (unconstrained) hyper-connections](#problems-with-classic-unconstrained-hyper-connections)
 - [DeepSeek Manifold-Constrained Hyper-connections (mHC)](#deepseek-manifold-constrained-hyper-connections-mhc)
   - [Constraining H_res](#constraining-h_res)
-
-
+  - [mHC-lite: Optimizing mHC to get faster and exact doubly stochasticity](#mhc-lite-optimizing-mhc-to-get-faster-and-exact-doubly-stochasticity)
+  - [Quick throughput comparison](#quick-throughput-comparison)
 - [Acknowledgements](#acknowledgements)
   
 
@@ -258,7 +258,7 @@ Even if the main problem is with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it'
 constrained: $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
 constrained to be non-negative (they are mapped by a sigmoid function instead of a tanh function).
 
-*(A little detail, previously in HC, only* $\theta_l \tilde{\mathbf{x}}_l^\top$ *(see eq. 5) were mapped. In mHC, both the biases and the scaling factors* $\alpha_l$ *are also mapped.)*
+*(A little detail, previously in HC, only* $\theta_l \tilde{\mathbf{x}}_l^\top$ *(see eq. 5 and mapping changes figure below) were mapped. In mHC, both the biases and the scaling factors* $\alpha_l$ *are also mapped.)*
 
 The reason, quoting the mHC paper, is *"this constraint prevents signal cancellation arising from the composition of
 positive and negative coefficients, which can also be considered as a special manifold projection."*
@@ -269,7 +269,7 @@ DeepSeek put it.
 
 <div align="center">
     <img src="_hyper_connections_img/_hyper_connections_img3.png" width="800">
-    <p>Mapping changes, from classic HC to DeepSeek mHC</p>
+    <p>Mapping changes, from classic HC to DeepSeek mHC to mHC-lite</p>
 </div>
 
 &nbsp;
@@ -307,9 +307,56 @@ strictly positive matrix, since SK requires this to guarantee convergence to a d
 Switching from a classic residual connection to mHC from scratch in Pytorch has some overhead here, hence
 why DeepSeek dedicate a rigorous section (4.3. Efficient Infrastructure Design) to how they optimized it.
 
+&nbsp;
+
+### mHC-lite: Optimizing mHC to get faster and exact doubly stochasticity
+
+Instead of using SK to make $\exp(\widetilde{\mathcal{H}}^{\mathrm{res}})$ doubly stochastic, 2 researchers had the
+great idea to leverage the Birkhoff-von Neumann (BVN) theorem to compute $\mathcal{H}^{\mathrm{res}}$ directly from a
+convex combination of permutation matrices (DeepSeek does mention that the Birkhoff polytope is the convex hull of
+permutation matrices, but doesn't explicitly exploit this for the parameterization).
+
+As the name of the paper suggests, *"you don't need 20 Sinkhorn-Knopp iterations"*, 20 being the default hyperparameter
+DeepSeek used for SK.
+
+A problem with SK is that it's an approximation compared to BVN, so there's always a risk of a residual mapping
+$\mathcal{H}^{\mathrm{res}}$ not being exactly doubly stochastic. Another issue is applying the exponential function, it
+increases the distance (exponentially) between values which can slow down the convergence/requires more iterations.
+
+&nbsp;
+
+In the code, we pass the `weight_a` vectors $\in \mathbb{R}^{seq\_len \times n!}$ (with $n$ being the expansion rate),
+resulting from 
+$\mathrm{softmax}\left(\alpha_l^{\mathrm{res}} \hat{\mathbf{x}}_l' W_l^{\mathrm{res}} +b_l^{\mathrm{res}}\right)$ 
+in `MHCLiteRes`, to the `BirkhoffvonNeumann` object, in order to get our doubly stochastic
+matrix $\mathcal{H}^{\mathrm{res}}$
+
+&nbsp;
+
+### Quick throughput comparison
+
+Comparing quickly locally in 200 steps our HC, mHC and mHC-lite, the results seem in line with the papers/expectations:
+
+```bash
+2.9 steps/s # mHC-lite
+2.5 steps/s # mHC (iter_check=3)
+2.7 steps/s # mHC (iter_check=1)
+1.4 steps/s # mHC (iter_check=20) # case where all convergences are slow and take 20 iters
+2.9 steps/s # HC
+```
+
+`iter_check` is a hparam of the `SinkhornKnopp` class that checks for convergence every `iter_check` iterations and
+break early from SK if doubly stochastic vs checking after 20 steps. It's not mentioned in the DeepSeek mHC paper, but
+they surely have thought about it, 20 iters is just the upper limit to find convergence.
+
+<div align="center">
+    <img src="_hyper_connections_img/_hyper_connections_img4.png" width="300">
+    <p>Figure 5 token throughput of the mHC-lite paper</p>
+</div>
+
+
 **technically, "non-negative" is the condition for convex combinations, but since we map via the exponential function
 here, I use strictly positive.* 
-
 
 &nbsp;
 
@@ -321,3 +368,4 @@ here, I use strictly positive.*
 - [Deep Residual Learning for Image Recognition](https://arxiv.org/abs/1512.03385)
 - [Reference Sinkhorn-Knopp NumPy Implementation](https://github.com/btaba/sinkhorn_knopp)
 - [Sinkhorn-Knopp: Concerning Nonnegative Matrices and Doubly Stochastic Matrices](http://msp.org/pjm/1967/21-2/pjm-v21-n2-p14-s.pdf)
+- [mHC-lite: You Don't Need 20 Sinkhorn-Knopp Iterations](https://arxiv.org/abs/2601.05732)

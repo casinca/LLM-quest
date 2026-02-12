@@ -1,4 +1,5 @@
 import functools
+import itertools
 import math
 import re
 import time
@@ -662,3 +663,117 @@ class SinkhornKnopp:
         # final scaled matrix and reshape back to original shape (bs, N, N) → (..., N, N)
         P_ds = r * P_2d * c
         return P_ds.view(original_shape)
+
+
+class BirkhoffvonNeumann(torch.nn.Module):
+    """
+    This class is used to build the doubly stochastic H_res matrix for the DeepSeek mHC optimization:
+    "mHC-lite"
+
+    We are building H_res as a convex combination/weighted average from the Birkhoff–von Neumann
+    decomposition/theorem depicted in p.4 of the mHC-lite paper https://arxiv.org/abs/2601.05732
+
+    H_res = sum(a_k * P_k)
+
+    with:
+        k from 1 to n!
+        n is the expansion rate in mHC and mHC-lite
+        P_k as a permutation matrix (n x n)
+        a_k is a weight scalar from the `weight_a` softmaxed vector (each scalar is >0 and the total sum to 1)
+
+    """
+
+    def __init__(self, expansion_rate):
+        """
+        Args:
+            expansion_rate (int): The number of expanded streams in the case of DeepSeek mHC/mHC-lite
+                                This is the dimension n of the (n x n) square matrices P_k in the mHC-lite paper
+        """
+        super().__init__()
+        # since expansion_rate is small from HC and mHC, we are caching the permutation matrices for efficiency
+        assert expansion_rate <= 8, "Expansion rate must be <= 8 to avoid memory issues, with more than 8! matrices"
+
+        self.num_permut = math.factorial(expansion_rate)
+        self.exps_rate = expansion_rate
+        self.permutations = list(itertools.permutations(range(self.exps_rate)))
+        self.identity_permut_index = self._get_identity_permutation_index()
+
+        flat_permut_matrices = self._get_permut_matrices(dtype=torch.float32)  # TODO for now we dtype .to(weight_a)
+        self.register_buffer("flat_permut_matrices", flat_permut_matrices, persistent=False)
+
+    def _get_identity_permutation_index(self):
+        """
+        Returns the index (int) of the identity permutation in the list of permutations
+        """
+        # The identity permutation should be the first one (index 0) since itertools.permutations should always return
+        # the range(n) as the first permutation but for safety we can iter anyway
+        identity_perm = tuple(range(self.exps_rate))
+        try:
+            identity_index = self.permutations.index(identity_perm)
+        except ValueError:
+            raise ValueError("Identity permutation not found")  #  shouldn't happen though
+
+        return identity_index
+
+    def _get_permut_matrices(self, dtype=None):
+        """
+        Get the flattened permutation matrices P_k
+
+        We are not returning the permutation matrices as shape (n!, n, n) because we will be doing a matmul, for
+        efficiency, to compute the convex combination/ weighted average sum(a_k * P_k) to get H_res in the forward
+        (bvn_composition) method.
+
+        Args:
+            dtype (torch.dtype): The dtype of the permutation matrices, default: None
+
+        Returns:
+            The flattened permutation matrices P_k, shape: (n!, n * n)
+        """
+        # we create permutation matrices P_k by re-arranging rows of the identity matrices created from torch.eye()
+        indices = torch.tensor(self.permutations, dtype=torch.long)
+        # same as doing:
+        # self.permut_matrices = F.one_hot(indices, num_classes=self.exps_rate).to(dtype=dtype, device=device)
+        permut_matrices = torch.eye(self.exps_rate, dtype=dtype)[indices]
+        # flatten P_k matrices to list of vectors (n!, n, n) → (n!, n*n)
+        return permut_matrices.view(self.num_permut, -1)
+
+    def bvn_composition(self, weight_a):
+        """
+        Compose H_res from the Birkhoff–von Neumann theorem H_res = sum(a_k * P_k) with k from 1 to n!
+        See Theorem 3.1 p.4 in the mHC-lite paper
+
+        For efficiency, we are doing a weighted average of the permutation matrices P_k with the weights in `weight_a`,
+        computed as a matmul.
+
+        For example n = 2, flattened and stacked P_k matrices:
+
+            self.permut_matrices_flat = [[ --P_1(flat)-- ]
+                                        [ --P_2(flat)-- ]]
+
+        `weight_a` vector [a, b], which contains the weights for each permutation, we compute the convex combination as
+        a vector matrix product
+        (vm product here for a single `weight_a`, otherwise as a matmul with multiple seq_len `weight_a` vectors)
+
+            [a, b] x [[ --P1(flat)-- ]
+                    [ --P2(flat)-- ]]
+
+        which gives a vector of shape (n*n) [a*P1_1 + b*P2_1, a*P1_2 + b*P2_2, ...]
+        reshaped back to (n, n) to get H_res as a doubly stochastic matrix.
+
+        Args:
+            weight_a (torch.Tensor): A weight_a vector for each token, with scalar weights for each of the permutation
+            matrices, shape: (b, seq_len, n!)
+            weight_a scalars must be >=0 and sum to 1 (this is done via softmax in MHCLiteRes class)
+
+        Returns:
+            The bi/doubly stochastic matrix H_res for each token, shape: (b, seq_len, n, n)
+        """
+        b, seq_len, _ = weight_a.shape
+
+        H_res = weight_a @ self.flat_permut_matrices.to(weight_a.dtype)
+        H_res = H_res.view(b, seq_len, self.exps_rate, self.exps_rate)
+
+        return H_res
+
+    def __call__(self, weight_a):
+        return self.bvn_composition(weight_a)
