@@ -7,7 +7,7 @@ Table of Contents:
 - [DeepSeek Manifold-Constrained Hyper-connections (mHC)](#deepseek-manifold-constrained-hyper-connections-mhc)
   - [Constraining H_res](#constraining-h_res)
   - [mHC-lite: Optimizing mHC to get faster and exact doubly stochasticity](#mhc-lite-optimizing-mhc-to-get-faster-and-exact-doubly-stochasticity)
-
+  - [Quick throughput comparison](#quick-throughput-comparison)
 - [Acknowledgements](#acknowledgements)
   
 
@@ -327,9 +327,33 @@ increases the distance (exponentially) between values which can slow down the co
 
 In the code, we pass the `weight_a` vectors $\in \mathbb{R}^{seq\_len \times n!}$ (with $n$ being the expansion rate),
 resulting from 
-$\operatorname{softmax}\left(\alpha_l^{\mathrm{res}} \hat{\mathbf{x}}_l' W_l^{\mathrm{res}} +b_l^{\mathrm{res}}\right)$ 
-in `MHCLiteRes` to the `BirkhoffvonNeumann` object, in order to get our doubly stochastic
+$\mathrm{softmax}\left(\alpha_l^{\mathrm{res}} \hat{\mathbf{x}}_l' W_l^{\mathrm{res}} +b_l^{\mathrm{res}}\right)$ 
+in `MHCLiteRes`, to the `BirkhoffvonNeumann` object, in order to get our doubly stochastic
 matrix $\mathcal{H}^{\mathrm{res}}$
+
+&nbsp;
+
+### Quick throughput comparison
+
+Comparing quickly locally in 200 steps our HC, mHC and mHC-lite, the results seem in line with the papers/expectations:
+
+```bash
+2.9 steps/s # mHC-lite
+2.5 steps/s # mHC (iter_check=3)
+2.7 steps/s # mHC (iter_check=1)
+1.4 steps/s # mHC (iter_check=20) # case where all convergences are slow and take 20 iters
+2.9 steps/s # HC
+```
+
+`iter_check` is a hparam of the `SinkhornKnopp` class that checks for convergence every `iter_check` iterations and
+break early from SK if doubly stochastic vs checking after 20 steps. It's not mentioned in the DeepSeek mHC paper, but
+they surely have thought about it, 20 iters is just the upper limit to find convergence.
+
+<div align="center">
+    <img src="_hyper_connections_img/_hyper_connections_img4.png" width="300">
+    <p>Figure 5 token throughput of the mHC-lite paper</p>
+</div>
+
 
 **technically, "non-negative" is the condition for convex combinations, but since we map via the exponential function
 here, I use strictly positive.* 
