@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)
 - DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp
 - Classic (unconstrained) Hyper-connections (HC) from scratch (alternative to residual connections) + test HC Qwen3
-- Xiaomi MiMo-V2-Flash architecture from scratch
 
 
 &nbsp;
@@ -95,7 +95,7 @@
 
 |           | Notes |
 |:----------|:------------|
-| **Hyper-connections** |• DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp and Qwen3 convergence test<br>• Classic (unconstrained) Hyper-connections (alternative to residual connections) and test on "hyper-connected" Qwen3 for convergence |
+| **Hyper-connections** | • mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)<br>• DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp and Qwen3 convergence test<br>• Classic (unconstrained) Hyper-connections (alternative to residual connections) and test on "hyper-connected" Qwen3 for convergence |
 | **QK-Clip** | Query-Key clipping (naive & per head + GQA compatible) from [Moonshot.ai](https://www.moonshot.ai/)'s MuonClip and experimental "Magnitude" variant. |
 | **Speculative Decoding** | Google's original version |
 | **Dynamic Tanh** | Normalization-free alternative to RMSNorm/LayerNorm ([Zhu et al., 2025](https://arxiv.org/abs/2503.10622)) |

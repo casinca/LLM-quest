@@ -258,7 +258,7 @@ Even if the main problem is with $\widetilde{\mathcal{H}}_l^{\mathrm{res}}$, it'
 constrained: $\widetilde{\mathcal{H}}_l^{\mathrm{pre}}$ and $\widetilde{\mathcal{H}}_l^{\mathrm{post}}$ are also
 constrained to be non-negative (they are mapped by a sigmoid function instead of a tanh function).
 
-*(A little detail, previously in HC, only* $\theta_l \tilde{\mathbf{x}}_l^\top$ *(see eq. 5) were mapped. In mHC, both the biases and the scaling factors* $\alpha_l$ *are also mapped.)*
+*(A little detail, previously in HC, only* $\theta_l \tilde{\mathbf{x}}_l^\top$ *(see eq. 5 and mapping changes figure below) were mapped. In mHC, both the biases and the scaling factors* $\alpha_l$ *are also mapped.)*
 
 The reason, quoting the mHC paper, is *"this constraint prevents signal cancellation arising from the composition of
 positive and negative coefficients, which can also be considered as a special manifold projection."*
