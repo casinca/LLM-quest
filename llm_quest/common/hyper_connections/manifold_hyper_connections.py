@@ -11,6 +11,8 @@
 # - inputs (xl and xl_norm) are in bf16
 # - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32. TODO
 # - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32)
+#
+# NOTE: Often switching between "n" and "exps_rate" notation, same thing for number of expanded streams
 
 import math
 
@@ -201,7 +203,7 @@ class MHCLiteRes(nn.Module):
         if self.bias is not None:  # add static mapping if enabled
             x += self.bias
 
-        x = torch.softmax(x, dim=-1)  # logits to `weight_a` (coeffs/weights to positive range for BVN)
+        x = torch.softmax(x, dim=-1)  # logits to `weight_a` (ie. the coeffs/weights of the convex combination for BVN)
         x = self.bvn(x)  # apply our convex combination/weighted average from the BVN theorem
 
         return x

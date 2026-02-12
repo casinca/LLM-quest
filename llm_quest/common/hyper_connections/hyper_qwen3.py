@@ -102,7 +102,7 @@ class HyperQwen3TransformerBlock(TransformerBlock):
             - head_dim (int): Head dimension for GQA
             - dtype (torch.dtype): Dtype of the weights, to change precision
         layer_idx (int): Layer index (used here for the KV cache)
-        hc_type (str): Type of hyperconnections to use, "classic", "mhc" or "mhc-lite"
+        hc_type (str): Type of hyperconnections to use, "hc", "mhc" or "mhc-lite"
         expansion_rate (int): Expansion rate for the hyperconnections
     """
 
@@ -116,11 +116,11 @@ class HyperQwen3TransformerBlock(TransformerBlock):
         elif self.hc_type == "mhc-lite":
             self.hc_attn = _create_mhc_lite_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
             self.hc_ffn = _create_mhc_lite_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
-        elif self.hc_type == "classic":
+        elif self.hc_type == "hc":
             self.hc_attn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
             self.hc_ffn = _create_hyper_connection_set(cfg["emb_dim"], expansion_rate, cfg["dtype"])
         else:
-            raise ValueError(f"Invalid Hyper-Connections type: {self.hc_type}, must be 'mhc', 'mhc-lite' or 'classic'")
+            raise ValueError(f"Invalid Hyper-Connections type: {self.hc_type}, must be 'mhc', 'mhc-lite' or 'hc'")
 
     def forward(self, x, mask, cos, sin, attn_mask=None, kv_cache=None, position_ids=None):
         b, s, exp_rate, emb_dim = x.shape
@@ -171,7 +171,7 @@ class HyperQwen3Model(Qwen3Model):
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
-        hc_type (str): Type of hyperconnections to use, "classic", "mhc" or "mhc-lite"
+        hc_type (str): Type of hyperconnections to use, "hc", "mhc" or "mhc-lite"
         expansion_rate (int): Expansion rate for the hyperconnections
     """
 
@@ -254,7 +254,7 @@ if __name__ == "__main__":
     }
 
     batch_size, seq_len = 2, 10
-    hc_type = "mhc-lite"  # classic HC or DeepSeek's mHC or mHC-lite
+    hc_type = "mhc-lite"  # classic "hc"  or DeepSeek's "mhc" or "mhc-lite"
 
     model = HyperQwen3Model(test_cfg, hc_type=hc_type, expansion_rate=4)
     model.to(device=device, dtype=dtype)

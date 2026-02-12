@@ -28,7 +28,7 @@ nano_qwen_config = {
 }
 
 hparams = {
-    "hc_type": "mhc",  # "classic" HC or DeepSeek's "mhc"
+    "hc_type": "mhc-lite",  # "hc" or DeepSeek's "mhc" or "mhc-lite"
     "expansion_rate": 4,
     "num_epoch": 1,
     "peak_lr": 5e-4,
