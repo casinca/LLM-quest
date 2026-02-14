@@ -2,53 +2,58 @@ import torch
 import torch.nn as nn
 
 
-# TODO impl weight merging for inference optimization?
+# NOTE: Paper does W' = Wx + BAx, in pytorch we do W' = xW^T + x @ A^T @ B^T for x coming from the left
+# Here we store A and B already transposed, so xW^T + xAB
 class LoRALinearLayer(nn.Module):
     """
     LoRA changes the default linear layers (paper mentions Attention weights, but any learnable weights) to add 2
-    lower rank matrices BA for learning (instead of directly updating W of shape (d_in, d_out) with a ∆W of same size).
-    The update isn't done to W (frozen) but separately learned through BA.
+    lower rank matrices AB for learning (instead of directly updating W of shape (d_in, d_out or d, k) with a ∆W of same
+    size).
+    The update isn't done to W (frozen) but separately learned through AB.
 
     The intuition is that we can replace a full weight update matrix ∆W by approximating it with 2 low-rank matrices.
     That's because fine-tuning updates are generally close to low-rank, hence we can explicitly learn these updates to
     the original model in their factorized form.
 
-    ie, our new forward pass becomes Wx → Wx + BAx where W is frozen and gradient flows through BA instead of ∆W.
-    with W of shape (d, k) and B, A of respective shapes (d, r) and (r, k)
+    ie, our new forward pass becomes xW^T → xW^T + xAB where W is frozen and gradient flows through AB instead of ∆W.
+    with W of shape (d, k) and A, B of respective shapes (d, r) and (r, k)
     With r a rank based on num of params and weights (r ∈ {1, 2, 4, ..., 2^n} a good starting point per the paper)
 
-    The fact that gradient updates with BA are decoupled from the weights, gives us the possibility to store and
-    reuse any BA for another downstream task at no additional inference latency (vs re-finetuning).
-    ex: Wx - BA to get back default pretrained weights and Wx + B'A' to use another set of updated weights.
+    The fact that gradient updates with AB are decoupled from the weights, gives us the possibility to store and
+    reuse any AB for another downstream task at no additional inference latency (vs re-finetuning).
+    ex: xW^T - xAB to get back default pretrained weights and xW^T + xA'B' to use another set of updated weights.
+
+    paper: https://arxiv.org/abs/2106.09685
 
     Args:
         d (int): Input dimension (rows of W)
         k (int): Output dimension (columns of W)
         r (int): Rank of the low-rank matrices (r << d, k)
         alpha (float): Scaling factor for the update
+        linear_bias (bool): Whether to add a bias to the linear layer
 
     Returns:
-        torch.Tensor: The output tensor after applying the LoRA update, which is the result of α/r * BAx.
+        torch.Tensor: The output tensor after applying the LoRA update, which is the result of xW^T + α/r * xAB.
     """
 
-    def __init__(self, d, k, r, alpha, linear_bias=False) -> None:
+    def __init__(self, d, k, r, alpha, linear_bias=False):
         super().__init__()
-        self.linear = nn.Linear(d, k, bias=linear_bias is not None)
+        self.linear = nn.Linear(d, k, bias=linear_bias)
         # zero init for B (nn.param flags the tensor as a learnable param)
-        self.B = nn.Parameter(torch.zeros(d, r))
+        self.B = nn.Parameter(torch.zeros(r, k))
 
         # random Gaussian init for A (per the paper)
         # LoRA code from MSFT and @rasbt's alt: nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        self.A = nn.Parameter(torch.empty(r, k))
+        self.A = nn.Parameter(torch.empty(d, r))
         nn.init.normal_(self.A, mean=0.0, std=0.02)  # small std commonly used
 
-        # BA is scaled by α/r, where α is a constant scaling factor: α/r * BAx
+        # AB is scaled by α/r, where α is a constant scaling factor: α/r * xAB
         # (α is basically the same as the 'α' factor in Adam to tune the lr)
         self.scaler = alpha / r
 
     def forward(self, x):
-        # return standard linear layer + our low-rank parametrized update matrices α/r * xBA (LoRA)
-        return self.linear(x) + self.scaler * (x @ self.B @ self.A)
+        # return standard linear layer + our low-rank parametrized update matrices α/r * xAB (LoRA)
+        return self.linear(x) + self.scaler * (x @ self.A @ self.B)
 
 
 # for completeness (will only change Attention Q,K,V and output layer for instruct training like the paper)
