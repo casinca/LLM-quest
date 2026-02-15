@@ -62,13 +62,7 @@ if __name__ == "__main__":
         if isinstance(module, MultiHeadAttention):
             for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
                 linear = getattr(module, attr)
-                setattr(
-                    module,
-                    attr,
-                    LoRALinearLayer(
-                        linear.in_features, linear.out_features, rank, alpha, linear_bias=linear.bias is not None
-                    ),
-                )
+                setattr(module, attr, LoRALinearLayer(linear, rank, alpha))
 
     # Note: Concerning frozen and trainable params when replacing nn.Linear. They were already part of the
     # model and will be picked up and frozen automatically, whereas A and B are nn.Parameters (default grad=True) and not

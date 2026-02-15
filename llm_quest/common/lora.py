@@ -26,19 +26,24 @@ class LoRALinearLayer(nn.Module):
     paper: https://arxiv.org/abs/2106.09685
 
     Args:
-        d (int): Input dimension (rows of W)
-        k (int): Output dimension (columns of W)
-        r (int): Rank of the low-rank matrices (r << d, k)
-        alpha (float): Scaling factor for the update
-        linear_bias (bool): Whether to add a bias to the linear layer
+        trained_linear_layer (nn.Linear): The pretrained linear layer to wrap (will be frozen).
+        r (int): Rank of the low-rank matrices (r << d, k).
+        alpha (float): Scaling factor for the update.
 
     Returns:
         torch.Tensor: The output tensor after the forward pass: xW^T + α/r * xAB.
     """
 
-    def __init__(self, d, k, r, alpha, linear_bias=False):
+    def __init__(self, trained_linear_layer, r, alpha):
         super().__init__()
-        self.linear = nn.Linear(d, k, bias=linear_bias)
+        self.linear = trained_linear_layer
+        # in case (but should already be done upstream)
+        for param in self.linear.parameters():
+            param.requires_grad = False
+
+        d = self.linear.in_features
+        k = self.linear.out_features
+
         # zero init for B (nn.param flags the tensor as a learnable param)
         self.B = nn.Parameter(torch.zeros(r, k))
 
@@ -61,25 +66,20 @@ class LoRALinearLayer(nn.Module):
 def replace_with_lora(model, rank, alpha):
     """
     This function iterates through all modules in the given model. When it finds a nn.Linear layer,
-    it replaces it with a LoRALinearLayer that has the same input and output dimensions,
+    it replaces it with a LoRALinearLayer that wraps the existing (pretrained) linear and freezes it,
     with the specified rank and alpha for the LoRA update.
     For modules that are not nn.Linear, it recursively calls itself to check and replace
     any nn.Linear layers within those submodules.
 
     Args:
-        model (nn.Module): The model in which to replace layers.
+        model (nn.Module): The model in which to replace layers
         rank (int): The rank 'r' for the low-rank update in LoRA.
         alpha (float): The scaling factor for the low-rank update.
     """
     # iterating through modules, ex: ("linear1", nn.Linear(10, 5)), ("relu", nn.ReLU())
     for name, module in model.named_children():
         if isinstance(module, nn.Linear):
-            # replace Linear with LoRA:
-            d_in = module.in_features
-            d_out = module.out_features
-            bias = module.bias is not None
-            setattr(model, name, LoRALinearLayer(d_in, d_out, rank, alpha, linear_bias=bias))
-            # setattr() same as model.name = LoRALinearLayer(d_in, d_out, rank, alpha, linear_bias=bias)
+            setattr(model, name, LoRALinearLayer(module, rank, alpha))
         else:
             # recursively check & replace in submodules
             replace_with_lora(module, rank, alpha)
