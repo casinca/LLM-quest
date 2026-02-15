@@ -63,7 +63,7 @@ class LoRALinearLayer(nn.Module):
 
 # for completeness (will only change Attention Q,K,V and output layer for instruct training like the paper)
 # (iterating through model.modules() is faster and doesn't need explicit dfs but more verbose than named.children())
-def replace_with_lora(model, rank, alpha):
+def replace_with_lora(model, rank, alpha, lora_class=LoRALinearLayer):
     """
     This function iterates through all modules in the given model. When it finds a nn.Linear layer,
     it replaces it with a LoRALinearLayer that wraps the existing (pretrained) linear and freezes it,
@@ -72,17 +72,18 @@ def replace_with_lora(model, rank, alpha):
     any nn.Linear layers within those submodules.
 
     Args:
-        model (nn.Module): The model in which to replace layers
-        rank (int): The rank 'r' for the low-rank update in LoRA.
+        model (nn.Module): The model in which to replace layers (must have pretrained weights loaded).
+        rank (int): The rank 'r' for the low-rank update.
         alpha (float): The scaling factor for the low-rank update.
+        lora_class: Class with signature (trained_linear_layer, r, alpha), e.g. LoRALinearLayer or LoRAXSLinearLayer.
     """
     # iterating through modules, ex: ("linear1", nn.Linear(10, 5)), ("relu", nn.ReLU())
     for name, module in model.named_children():
         if isinstance(module, nn.Linear):
-            setattr(model, name, LoRALinearLayer(module, rank, alpha))
+            setattr(model, name, lora_class(module, rank, alpha))
         else:
             # recursively check & replace in submodules
-            replace_with_lora(module, rank, alpha)
+            replace_with_lora(module, rank, alpha, lora_class=lora_class)
 
 
 class LoRAXSLinearLayer(nn.Module):
