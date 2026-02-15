@@ -3,6 +3,8 @@ from functools import partial
 import torch
 from torch.utils.data import DataLoader
 
+from llm_quest.common.lora import LoRALinearLayer, LoRAXSLinearLayer
+
 torch.manual_seed(123)
 
 # --- Hyperparameters ---
@@ -24,6 +26,7 @@ use_amp = False
 # LoRA hyperparameters
 rank = 4
 alpha = 16
+lora_linear_class = LoRAXSLinearLayer  # or LoRALinearLayer
 
 data_device = "cpu"
 
@@ -34,7 +37,6 @@ if __name__ == "__main__":
     import tiktoken
 
     import config
-    from llm_quest.common.lora import LoRALinearLayer
     from llm_quest.dataset import InstructionDataset, collate_function
     from llm_quest.engine import LearningRateScheduler, training_eval_loop
     from llm_quest.gpt.gpt_attention import MultiHeadAttention
@@ -62,7 +64,7 @@ if __name__ == "__main__":
         if isinstance(module, MultiHeadAttention):
             for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
                 linear = getattr(module, attr)
-                setattr(module, attr, LoRALinearLayer(linear, rank, alpha))
+                setattr(module, attr, lora_linear_class(linear, rank, alpha))
 
     # Note: Concerning frozen and trainable params when replacing nn.Linear. They were already part of the
     # model and will be picked up and frozen automatically, whereas A and B are nn.Parameters (default grad=True) and not
