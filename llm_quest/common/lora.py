@@ -151,3 +151,73 @@ class LoRAXSLinearLayer(nn.Module):
         """Forward pass: h = xW^T + α/r * xARB"""
         # linear layer + LoRA-XS update
         return self.linear(x) + self.scaler * (x @ self.A @ self.R @ self.B)
+
+
+class TinyLoRALinearLayer(nn.Module):
+    """
+    TinyLoRA: Learning to Reason in 13 Parameters
+    paper: https://arxiv.org/abs/2602.04118
+
+    Instead of learning a single (r, r) matrix R (like LoRA-XS), TinyLoRA learns a single vector v (u,) that is used to
+    generate the matrix R (just like in LoRA-XS).
+
+    More specifically, R is generated from the sum of scalar matrix products between u scalars and u fixed matrices
+    P_i (i = 1,..., u) with P_i (r, r)
+
+    What we end up doing is creating R from a sum of matrices P_i weighted by the learned scalars v_i.
+
+    The rest of the logic is the same as in LoRA-XS. Ie, AB from the truncated SVD of W.
+
+    LoRA-XS: W'= W + UΣRV^T
+        with UΣ = A and V^T = B
+
+    TinyLoRA: W'= W + UΣ sum(v_i * P_i) V^T with i=1,...,u
+
+    TinyLoRA also proposes tying the vector v across modules and layers.
+    Therefore with a 1-dim vector (u=1) and total weight tying, we can end up with as low as 1 parameter to train.
+
+    Args:
+        trained_linear_layer (nn.Linear): The trained linear layer to be replaced with TinyLoRA (linear+TinyLoRA update)
+        r (int): Rank of the low-rank adaptation (r << d, k)
+        alpha (float): Scaling factor for the update
+
+    Returns:
+        torch.Tensor: The output tensor after the forward pass: xW^T + α/r * xARB.
+                    with R = sum(v_i * P_i)
+    """
+
+    def __init__(self, trained_linear_layer, r, alpha):
+        super().__init__()
+
+        # Store the frozen trained linear layer
+        self.linear = trained_linear_layer
+        # in case
+        for param in self.linear.parameters():
+            param.requires_grad = False
+
+        # Compute truncated SVD of the trained weight/matrix
+        # W = U @ Σ @ V^T, with W as shape (d, k) so we transpose because nn.Linear stores weight as (k, d)
+        with torch.no_grad():
+            # can't use "Σ" symbol, so "S" for sigmas. Also doing SVD in fp32
+            U, S, Vt = torch.linalg.svd(self.linear.weight.data.float().T, full_matrices=False)
+
+            # truncating: top r singular vectors and values
+            U_r = U[:, :r]  # (d, r)
+            S_r = S[:r]  # (r,) PyTorch for efficiency returns directly a vector, instead of a diag matrix with 0s
+            Vt_r = Vt[:r, :]  # (r, k)
+
+            # Unlike LoRA, AB are frozen, not trained (registered as buffers), only R is trained
+            self.register_buffer("A", U_r @ torch.diag(S_r).to(self.linear.weight))  # A = U_r * Σ_r (shape: d, r)
+            self.register_buffer("B", Vt_r.to(self.linear.weight))  # B = V_r^T (shape: r, k)
+
+        # Normal init N(0, σ²) with σ = 1e-5 per the paper
+        self.R = nn.Parameter(torch.empty(r, r))
+        nn.init.normal_(self.R, mean=0.0, std=1e-5)
+
+        # paper mentions p.12: α = r for instruction tuning (so scaler = 1), α = 16 for GLUE benchmark
+        self.scaler = alpha / r
+
+    def forward(self, x):
+        """Forward pass: h = xW^T + α/r * xARB"""
+        # linear layer + LoRA-XS update
+        return self.linear(x) + self.scaler * (x @ self.A @ self.R @ self.B)
