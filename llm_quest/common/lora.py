@@ -121,6 +121,7 @@ class LoRAXSLinearLayer(nn.Module):
 
         # Store the frozen trained linear layer
         self.linear = trained_linear_layer
+        ref = self.linear.weight  # used for retrieving og dtype and device
         # in case
         for param in self.linear.parameters():
             param.requires_grad = False
@@ -131,17 +132,17 @@ class LoRAXSLinearLayer(nn.Module):
             # can't use "Σ" symbol, so "S" for sigmas. Also doing SVD in fp32
             U, S, Vt = torch.linalg.svd(self.linear.weight.data.float().T, full_matrices=False)
 
-            # truncating: top r singular vectors and values
-            U_r = U[:, :r]  # (d, r)
-            S_r = S[:r]  # (r,) PyTorch for efficiency returns directly a vector, instead of a diag matrix with 0s
-            Vt_r = Vt[:r, :]  # (r, k)
+            # truncating: top r singular vectors and values and cast to the same dtype and device of the linear layer
+            # U_r shape (d, r), Vt_r shape (r, k)
+            # S_r shape (r,) PyTorch for efficiency returns a vector, instead of a diag matrix with 0s
+            U_r, S_r, Vt_r = [t.to(ref) for t in [U[:, :r], S[:r], Vt[:r, :]]]
 
             # Unlike LoRA, AB are frozen, not trained (registered as buffers), only R is trained
-            self.register_buffer("A", U_r @ torch.diag(S_r).to(self.linear.weight))  # A = U_r * Σ_r (shape: d, r)
-            self.register_buffer("B", Vt_r.to(self.linear.weight))  # B = V_r^T (shape: r, k)
+            self.register_buffer("A", U_r @ torch.diag(S_r))  # A = U_r * Σ_r (shape: d, r)
+            self.register_buffer("B", Vt_r)  # B = V_r^T (shape: r, k)
 
         # Normal init N(0, σ²) with σ = 1e-5 per the paper
-        self.R = nn.Parameter(torch.empty(r, r))
+        self.R = nn.Parameter(torch.empty(r, r).to(ref))
         nn.init.normal_(self.R, mean=0.0, std=1e-5)
 
         # paper mentions p.12: α = r for instruction tuning (so scaler = 1), α = 16 for GLUE benchmark
@@ -198,6 +199,7 @@ class TinyLoRALinearLayer(nn.Module):
         super().__init__()
         self.rank = r  # this is just for the forward to reshape R
         self.linear = trained_linear_layer
+        ref = self.linear.weight  # used for retrieving og dtype and device
         # in case
         for param in self.linear.parameters():
             param.requires_grad = False
@@ -209,20 +211,20 @@ class TinyLoRALinearLayer(nn.Module):
             U, S, Vt = torch.linalg.svd(self.linear.weight.data.float().T, full_matrices=False)
 
             # truncating: top r singular vectors and values
-            U_r = U[:, :r]  # (d, r)
-            S_r = S[:r]  # (r,) PyTorch for efficiency returns directly a vector, instead of a diag matrix with 0s
-            Vt_r = Vt[:r, :]  # (r, k)
+            # U_r shape (d, r), Vt_r shape (r, k)
+            # S_r shape (r,) PyTorch for efficiency returns a vector, instead of a diag matrix with 0s
+            U_r, S_r, Vt_r = [t.to(ref) for t in [U[:, :r], S[:r], Vt[:r, :]]]
 
             # Unlike LoRA, AB are frozen, not trained (registered as buffers)
-            self.register_buffer("A", U_r @ torch.diag(S_r).to(self.linear.weight))  # A = U_r * Σ_r (shape: d, r)
-            self.register_buffer("B", Vt_r.to(self.linear.weight))  # B = V_r^T (shape: r, k)
+            self.register_buffer("A", U_r @ torch.diag(S_r))  # A = U_r * Σ_r (shape: d, r)
+            self.register_buffer("B", Vt_r)  # B = V_r^T (shape: r, k)
 
             # they just mention random fixed matrices, so N(0, 1) should look good
             # not (u, r, r) shape as in the paper, here (u, r²) to do the weighted sum as a matmul
-            self.register_buffer("P", torch.randn(num_trainable_params, r * r))
+            self.register_buffer("P", torch.randn(num_trainable_params, r * r).to(ref))
 
         # no mention of init, but we want to start training at 0 (ARB=0) and since P is N random, v should be 0
-        self.v = nn.Parameter(torch.zeros(num_trainable_params))
+        self.v = nn.Parameter(torch.zeros(num_trainable_params).to(ref))
 
         self.scaler = alpha / r
 
