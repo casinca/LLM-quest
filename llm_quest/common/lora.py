@@ -159,37 +159,44 @@ class TinyLoRALinearLayer(nn.Module):
     paper: https://arxiv.org/abs/2602.04118
 
     Instead of learning a single (r, r) matrix R (like LoRA-XS), TinyLoRA learns a single vector v (u,) that is used to
-    generate the matrix R (just like in LoRA-XS).
+    generate the matrix R (the same matrix from LoRA-XS).
 
-    More specifically, R is generated from the sum of scalar matrix products between u scalars and u fixed matrices
+    More specifically, R is generated from the sum of scalar matrix products between "u" scalars and "u" fixed matrices
     P_i (i = 1,..., u) with P_i (r, r)
 
     What we end up doing is creating R from a sum of matrices P_i weighted by the learned scalars v_i.
+    ie: R = sum(v_i * P_i) with i=1,...,u
 
     The rest of the logic is the same as in LoRA-XS. Ie, AB from the truncated SVD of W.
 
     LoRA-XS: W'= W + UΣRV^T
         with UΣ = A and V^T = B
 
-    TinyLoRA: W'= W + UΣ sum(v_i * P_i) V^T with i=1,...,u
+    TinyLoRA: W'= W + UΣ sum(v_i * P_i) V^T
+        with sum(v_i * P_i) = R and i=1,...,u
 
     TinyLoRA also proposes tying the vector v across modules and layers.
-    Therefore with a 1-dim vector (u=1) and total weight tying, we can end up with as low as 1 parameter to train.
+    Therefore with a 1-dim vector (u=1) and global weight tying, we can end up with as low as 1 parameter to train.
+
+    NOTE: we compute R as a matmul (v @ P_flat) just like in mHC-lite with BVN/convex combination and not directly as a
+    weighted sum (torch.sum(v * P, dim=0)) as in the paper, for efficiency.
+    Although r being usually small, unlikely that it'll matter much here...
 
     Args:
         trained_linear_layer (nn.Linear): The trained linear layer to be replaced with TinyLoRA (linear+TinyLoRA update)
         r (int): Rank of the low-rank adaptation (r << d, k)
         alpha (float): Scaling factor for the update
+        num_trainable_params (int): Number of trainable parameters, this is "u" in the paper, dim of the vector v
+        (default is 13 to match the paper)
 
     Returns:
         torch.Tensor: The output tensor after the forward pass: xW^T + α/r * xARB.
                     with R = sum(v_i * P_i)
     """
 
-    def __init__(self, trained_linear_layer, r, alpha):
+    def __init__(self, trained_linear_layer, r, alpha, num_trainable_params=13):
         super().__init__()
-
-        # Store the frozen trained linear layer
+        self.rank = r  # this is just for the forward to reshape R
         self.linear = trained_linear_layer
         # in case
         for param in self.linear.parameters():
@@ -206,18 +213,21 @@ class TinyLoRALinearLayer(nn.Module):
             S_r = S[:r]  # (r,) PyTorch for efficiency returns directly a vector, instead of a diag matrix with 0s
             Vt_r = Vt[:r, :]  # (r, k)
 
-            # Unlike LoRA, AB are frozen, not trained (registered as buffers), only R is trained
+            # Unlike LoRA, AB are frozen, not trained (registered as buffers)
             self.register_buffer("A", U_r @ torch.diag(S_r).to(self.linear.weight))  # A = U_r * Σ_r (shape: d, r)
             self.register_buffer("B", Vt_r.to(self.linear.weight))  # B = V_r^T (shape: r, k)
 
-        # Normal init N(0, σ²) with σ = 1e-5 per the paper
-        self.R = nn.Parameter(torch.empty(r, r))
-        nn.init.normal_(self.R, mean=0.0, std=1e-5)
+            # they just mention random fixed matrices, so N(0, 1) should look good
+            # not (u, r, r) shape as in the paper, here (u, r²) to do the weighted sum as a matmul
+            self.register_buffer("P", torch.randn(num_trainable_params, r * r))
 
-        # paper mentions p.12: α = r for instruction tuning (so scaler = 1), α = 16 for GLUE benchmark
+        # no mention of init, but we want to start training at 0 (ARB=0) and since P is N random, v should be 0
+        self.v = nn.Parameter(torch.zeros(num_trainable_params))
+
         self.scaler = alpha / r
 
     def forward(self, x):
-        """Forward pass: h = xW^T + α/r * xARB"""
-        # linear layer + LoRA-XS update
-        return self.linear(x) + self.scaler * (x @ self.A @ self.R @ self.B)
+        """Forward pass: h = xW^T + α/r * xARB with R = sum(v_i * P_i)"""
+        # linear layer + TinyLoRA update
+        R = (self.v @ self.P).view(self.rank, self.rank)
+        return self.linear(x) + self.scaler * (x @ self.A @ R @ self.B)
