@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+# Recap on LoRA variants and their differences: https://github.com/casinca/LLM-quest/pull/24
+
 
 # NOTE: Paper does W' = Wx + BAx, in pytorch we do W' = xW^T + x @ A^T @ B^T for x coming from the left
 # Here we store A and B already transposed, so xW^T + xAB

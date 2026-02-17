@@ -21,7 +21,7 @@
 
 ## Latest 3 updates
 
-- LoRA-XS
+- LoRA-XS and Meta TinyLoRA
 - mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)
 - DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp
 
@@ -100,7 +100,7 @@
 | **Speculative Decoding** | Google's original version |
 | **Dynamic Tanh** | Normalization-free alternative to RMSNorm/LayerNorm ([Zhu et al., 2025](https://arxiv.org/abs/2503.10622)) |
 | **RoPE + YaRN** | NTK-aware + by-part/wavelength scaling |
-| **LoRAs** | classic LoRA and LoRA-XS|
+| **LoRAs** | classic LoRA, LoRA-XS and Meta TinyLoRA|
 | **Number Token Loss** | Regression-like loss on number tokens — Wasserstein Distance variant ([Zausinger et al., 2025](https://arxiv.org/abs/2411.02083)) |
 | **generate.py** | common sampling functions: temperature, top-k, top-p, min-p |
 | **experimental** | — |

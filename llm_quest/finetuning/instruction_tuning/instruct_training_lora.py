@@ -3,7 +3,7 @@ from functools import partial
 import torch
 from torch.utils.data import DataLoader
 
-from llm_quest.common.lora import LoRALinearLayer, LoRAXSLinearLayer
+from llm_quest.common.lora import LoRALinearLayer, LoRAXSLinearLayer, TinyLoRALinearLayer
 
 torch.manual_seed(123)
 
@@ -23,10 +23,11 @@ num_workers = 0
 pin_memory = False
 use_amp = False
 
-# LoRA hyperparameters
+# --- LoRA hyperparameters ---
 rank = 4
 alpha = 16
-lora_linear_class = LoRAXSLinearLayer  # or LoRALinearLayer
+num_trainable_params = 100  # only relevant for TinyLoRA (13 is not good enough for SFT+global weight tying)
+lora_linear_class = TinyLoRALinearLayer  # or LoRALinearLayer or LoRAXSLinearLayer
 
 data_device = "cpu"
 
