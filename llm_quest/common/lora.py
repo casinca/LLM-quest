@@ -37,6 +37,7 @@ class LoRALinearLayer(nn.Module):
     def __init__(self, trained_linear_layer, r, alpha):
         super().__init__()
         self.linear = trained_linear_layer
+        ref = self.linear.weight  # used for retrieving og dtype and device
         # in case (but should already be done upstream)
         for param in self.linear.parameters():
             param.requires_grad = False
@@ -45,11 +46,11 @@ class LoRALinearLayer(nn.Module):
         k = self.linear.out_features
 
         # zero init for B (nn.param flags the tensor as a learnable param)
-        self.B = nn.Parameter(torch.zeros(r, k))
+        self.B = nn.Parameter(torch.zeros(r, k).to(ref))
 
         # random Gaussian init for A (per the paper)
         # LoRA code from MSFT and @rasbt's alt: nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        self.A = nn.Parameter(torch.empty(d, r))
+        self.A = nn.Parameter(torch.empty(d, r).to(ref))
         nn.init.normal_(self.A, mean=0.0, std=0.02)  # small std commonly used
 
         # AB is scaled by α/r, where α is a constant scaling factor: α/r * xAB
@@ -189,13 +190,14 @@ class TinyLoRALinearLayer(nn.Module):
         alpha (float): Scaling factor for the update
         num_trainable_params (int): Number of trainable parameters, this is "u" in the paper, dim of the vector v
         (default is 13 to match the paper)
+        shared_v: The vector v to share across modules and layers, if None, a new vector v will be created
 
     Returns:
         torch.Tensor: The output tensor after the forward pass: xW^T + α/r * xARB.
                     with R = sum(v_i * P_i)
     """
 
-    def __init__(self, trained_linear_layer, r, alpha, num_trainable_params=13):
+    def __init__(self, trained_linear_layer, r, alpha, num_trainable_params=13, shared_v=None):
         super().__init__()
         self.rank = r  # this is just for the forward to reshape R
         self.linear = trained_linear_layer
@@ -223,8 +225,13 @@ class TinyLoRALinearLayer(nn.Module):
             # not (u, r, r) shape as in the paper, here (u, r²) to do the weighted sum as a matmul
             self.register_buffer("P", torch.randn(num_trainable_params, r * r).to(ref))
 
-        # no mention of init, but we want to start training at 0 (ARB=0) and since P is N random, v should be 0
-        self.v = nn.Parameter(torch.zeros(num_trainable_params).to(ref))
+        if shared_v is not None:
+            if shared_v.shape[0] != num_trainable_params:
+                raise ValueError(f"shared_v is {shared_v.shape} and num params {num_trainable_params} don't match")
+            self.v = shared_v
+        else:
+            # no mention of init, but we want to start training at 0 (ARB=0) and since P is N random, v should be 0
+            self.v = nn.Parameter(torch.zeros(num_trainable_params).to(ref))
 
         self.scaler = alpha / r
 
