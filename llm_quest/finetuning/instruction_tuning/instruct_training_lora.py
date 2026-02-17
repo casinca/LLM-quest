@@ -59,12 +59,31 @@ if __name__ == "__main__":
     for param in model.parameters():
         param.requires_grad = False
 
-    # replacing only Linear layers within Attention modules (attention weights (Q, K, V) + output layer)
-    for module in model.modules():
-        if isinstance(module, MultiHeadAttention):
-            for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
-                linear = getattr(module, attr)
-                setattr(module, attr, lora_linear_class(linear, rank, alpha))
+    if lora_linear_class == TinyLoRALinearLayer:
+        # global weight tying in this example, otherwise need to recreate every layer in the loop
+        ref_param = next(model.parameters())
+        common_v = torch.nn.Parameter(torch.zeros(num_trainable_params, device=ref_param.device, dtype=ref_param.dtype))
+
+        for module in model.modules():
+            if isinstance(module, MultiHeadAttention):
+                for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
+                    linear = getattr(module, attr)
+                    setattr(
+                        module,
+                        attr,
+                        lora_linear_class(
+                            linear, rank, alpha, num_trainable_params=num_trainable_params, shared_v=common_v
+                        ),
+                    )
+
+    # LoRA-XS or LoRA
+    else:
+        # replacing only Linear layers within Attention modules (attention weights (Q, K, V) + output layer)
+        for module in model.modules():
+            if isinstance(module, MultiHeadAttention):
+                for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
+                    linear = getattr(module, attr)
+                    setattr(module, attr, lora_linear_class(linear, rank, alpha))
 
     # Note: Concerning frozen and trainable params when replacing nn.Linear. They were already part of the
     # model and will be picked up and frozen automatically, whereas A and B are nn.Parameters (default grad=True) and not
