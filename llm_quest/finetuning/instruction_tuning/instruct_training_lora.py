@@ -3,7 +3,7 @@ from functools import partial
 import torch
 from torch.utils.data import DataLoader
 
-from llm_quest.common.lora import LoRALinearLayer, LoRAXSLinearLayer
+from llm_quest.common.lora import LoRALinearLayer, LoRAXSLinearLayer, TinyLoRALinearLayer
 
 torch.manual_seed(123)
 
@@ -23,10 +23,11 @@ num_workers = 0
 pin_memory = False
 use_amp = False
 
-# LoRA hyperparameters
+# --- LoRA hyperparameters ---
 rank = 4
 alpha = 16
-lora_linear_class = LoRAXSLinearLayer  # or LoRALinearLayer
+num_trainable_params = 100  # only relevant for TinyLoRA (13 is not good enough for SFT+global weight tying)
+lora_linear_class = TinyLoRALinearLayer  # or LoRALinearLayer or LoRAXSLinearLayer
 
 data_device = "cpu"
 
@@ -59,12 +60,31 @@ if __name__ == "__main__":
     for param in model.parameters():
         param.requires_grad = False
 
-    # replacing only Linear layers within Attention modules (attention weights (Q, K, V) + output layer)
-    for module in model.modules():
-        if isinstance(module, MultiHeadAttention):
-            for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
-                linear = getattr(module, attr)
-                setattr(module, attr, lora_linear_class(linear, rank, alpha))
+    if lora_linear_class == TinyLoRALinearLayer:
+        # global weight tying in this example, otherwise need to recreate every layer in the loop
+        ref_param = next(model.parameters())
+        common_v = torch.nn.Parameter(torch.zeros(num_trainable_params, device=ref_param.device, dtype=ref_param.dtype))
+
+        for module in model.modules():
+            if isinstance(module, MultiHeadAttention):
+                for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
+                    linear = getattr(module, attr)
+                    setattr(
+                        module,
+                        attr,
+                        lora_linear_class(
+                            linear, rank, alpha, num_trainable_params=num_trainable_params, shared_v=common_v
+                        ),
+                    )
+
+    # LoRA-XS or LoRA
+    else:
+        # replacing only Linear layers within Attention modules (attention weights (Q, K, V) + output layer)
+        for module in model.modules():
+            if isinstance(module, MultiHeadAttention):
+                for attr in ["w_queries", "w_keys", "w_values", "out_proj"]:
+                    linear = getattr(module, attr)
+                    setattr(module, attr, lora_linear_class(linear, rank, alpha))
 
     # Note: Concerning frozen and trainable params when replacing nn.Linear. They were already part of the
     # model and will be picked up and frozen automatically, whereas A and B are nn.Parameters (default grad=True) and not
