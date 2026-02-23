@@ -9,7 +9,7 @@ import torch
 #
 # - recompute the new diagonal mask + normalized attention scores: they do not include the token t attending to
 #   itself, but [1,... t-1] so we can't use the model attention weights directly, we need to re-apply a mask and
-#   softmax.
+#   renormalize.
 class AttentionDivergenceLoss(torch.nn.Module):
     """
     Calculates the "Advantage-Weighted attention divergence" loss from the paper:
