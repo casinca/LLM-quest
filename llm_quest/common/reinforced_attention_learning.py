@@ -16,18 +16,12 @@ class AttentionDivergenceLoss(torch.nn.Module):
     Reinforced Attention Learning (RAL) https://arxiv.org/abs/2602.04884
 
     Normalized attention scores (after softmax) should be retrieved/exposed from the model.
-    For the attention calculation we are not masking the prompt but only future+padding tokens (with causal+attn_mask),
-    but the RAL loss computes the divergence for "generated tokens" only.
-    Therefore we need the loss mask (mask prompt + padding)
+    RAL loss computes the divergence for "generated tokens" only.
 
-    args:
-        policy_attention_weights: (list | torch.Tensor), shape (b, num_heads, seq_len, seq_len)
-        old_attention_weights: (list | torch.Tensor), shape (b, num_heads, seq_len, seq_len)
-        advantages: (torch.Tensor), advantages per sequence, shape (b,)
-        loss_mask: (torch.Tensor), shape (b, seq_len)
-        ral_factor: (float) recommended values between 0.5 and 1.5
+    Args:
+        ral_factor: (float) scaling factor for the RAL loss, recommended values between 0.5 and 1.5
 
-    returns:
+    Returns:
         RAL loss: (torch.Tensor), scalar
     """
 
@@ -40,17 +34,23 @@ class AttentionDivergenceLoss(torch.nn.Module):
         self.qlog_q = None
 
     @torch.no_grad()
-    def precompute_qlog_q(self, old_attention_weights):
+    def precompute_q_and_mask(self, old_attention_weights):
         """
-        attention weights are already masked from the model, we only need to mask the diagonal for token attending to
-        itself
-        TODO
-        """
+        This methods serves to:
+        - precompute the diagonal mask for the class (also used for the new policy)
+        - compute the new normalized attention weights for the old policy Q
+        - precompute the first term of the KL(Q || M) divergence: Q*log(Q) to avoid recomputing it every gradient step
 
+        Attention weights are already masked from the model, but not for tokens attending to themselves, so we need to
+        create and apply a new mask for the diagonal (token t attending to itself)
+
+        Args:
+            old_attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
+        """
         seq_len = old_attention_weights.shape[-1]
+
         self.diag_mask = torch.eye(seq_len, dtype=torch.bool, device=old_attention_weights.device)
         self.q_norm_attn_weights = self._prepare_attention_weights(old_attention_weights, self.diag_mask)
-
         self.qlog_q = self.q_norm_attn_weights * torch.log(self.q_norm_attn_weights)
 
     @staticmethod
@@ -58,11 +58,11 @@ class AttentionDivergenceLoss(torch.nn.Module):
         """
         Average over heads, mask the diagonal, renormalize to sum to 1 and clamp to avoid log(0) later on.
 
-        args:
+        Args:
             attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
-            diag_mask: (torch.Tensor), shape (seq_len, seq_len)
+            diag_mask: (torch.Tensor), shape (seq_len, seq_len) to mask token t attending to itself
 
-        returns:
+        Returns:
             new normalized attention weights: (torch.Tensor), shape (b, seq_len, seq_len)
         """
         new_attn_weights = attention_weights.mean(dim=1).masked_fill(diag_mask, 0.0)
@@ -73,16 +73,17 @@ class AttentionDivergenceLoss(torch.nn.Module):
 
     def forward(self, policy_attention_weights, advantages, loss_mask):
         """
-        TODO
+        Calculates the RAL loss for a batch.
+
+        Args:
+            policy_attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
+            advantages: (torch.Tensor), advantages per sequence, shape (b,)
+            loss_mask: (torch.Tensor), shape (b, seq_len) to mask prompt primarily
         """
         if self.q_norm_attn_weights is None or self.qlog_q is None:
             raise RuntimeError("We must call `precompute_qlog_q` before calling `forward`.")
 
-        # The paper only used the last layer's attention weights, but we can use more layers if we want
-        if isinstance(policy_attention_weights, list):
-            pass  # TODO
-        else:
-            p_norm_attn_weights = self._prepare_attention_weights(policy_attention_weights, self.diag_mask)
+        p_norm_attn_weights = self._prepare_attention_weights(policy_attention_weights, self.diag_mask)
 
         # M = (P+Q)/2
         m = ((p_norm_attn_weights + self.q_norm_attn_weights) / 2.0).clamp(min=1e-8)
