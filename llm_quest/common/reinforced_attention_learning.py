@@ -1,8 +1,10 @@
 import torch
 
 
-# NOTE: We could have used a single function to compute the loss but it is slightly inefficient as this would force us
-# to :
+
+# NOTE: The function version is more readable but slightly less efficient (if num_grad updates > 1) as this forces us
+# to:
+#
 # - recompute for the old policy Q*log(Q), every gradient step, in the KL(Q || M) term.
 #   Ie, KL(Q || M)= ∑Q*log(Q/M) = ∑(Q*log(Q) - Q*log(M))
 #   We can't fully precompute KL(Q || M) though, as M, being(P+Q)/2, depends also on the current policy P being updated.
@@ -105,3 +107,80 @@ class AttentionDivergenceLoss(torch.nn.Module):
         ral_loss = ral_loss.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
 
         return ral_loss.mean() * self.ral_factor
+
+
+def attention_divergence_loss(policy_attention_weights, old_attention_weights, advantages, loss_mask, ral_factor=1.0):
+    """
+    Calculates the "Advantage-Weighted attention divergence" loss from the paper:
+    Reinforced Attention Learning (RAL) https://arxiv.org/abs/2602.04884
+
+    Args:
+        policy_attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
+        old_attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
+        advantages: (torch.Tensor), advantages per sequence, shape (b,)
+        loss_mask: (torch.Tensor), shape (b, seq_len)
+        ral_factor: (float) scaling factor for the RAL loss, recommended values between 0.5 and 1.5
+
+    Returns:
+        RAL loss: (torch.Tensor), scalar
+    """
+
+    seq_len = policy_attention_weights.shape[-1]
+    diag_mask = torch.eye(seq_len, dtype=torch.bool, device=policy_attention_weights.device)
+
+    def _prepare_attn_weights(attn_weights):
+        """Average over heads, mask the diagonal, renormalize to sum to 1 and clamp to avoid log(0) later on."""
+        attn = attn_weights.mean(dim=1).masked_fill(diag_mask, 0.0)
+        attn = attn / attn.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+        return attn.clamp(min=1e-8)
+
+    with torch.no_grad():
+        q_norm_attn_weights = _prepare_attn_weights(old_attention_weights)  # shape (b, seq_len, seq_len)
+    p_norm_attn_weights = _prepare_attn_weights(policy_attention_weights)
+
+    # Jensen-Shannon divergence: JSD(P || Q) = 0.5 * (KL(P || M) + KL(Q || M)) with M = (P+Q)/2
+    m = (p_norm_attn_weights + q_norm_attn_weights) / 2.0
+    log_m = torch.log(m)
+
+    # Use PyTorch builtin kl_div for both KL terms: kl_div(log(M), P) = KL(P || M) when input=log(M), target=P.
+    p_kl_div = torch.nn.functional.kl_div(log_m, p_norm_attn_weights, reduction="none")
+    q_kl_div = torch.nn.functional.kl_div(log_m, q_norm_attn_weights, reduction="none")
+
+    # sum over keys/attended tokens to get divergence per query token (b, seq_len, seq_len) → (b, seq_len)
+    jsd = 0.5 * (p_kl_div + q_kl_div).sum(dim=-1)
+
+    # ral loss: advantages * JSD
+    ral_loss = advantages.unsqueeze(1) * jsd * loss_mask
+    ral_loss = ral_loss.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+
+    return ral_loss.mean() * ral_factor
+
+
+# quick inline test
+if __name__ == "__main__":
+    torch.manual_seed(42)
+
+    b, h, s, _ = 2, 2, 3, 3
+    device = "cpu"
+    policy_attention_weights = torch.softmax(torch.randn(b, h, s, s, device=device), dim=-1)
+    old_attention_weights = torch.softmax(torch.randn(b, h, s, s, device=device), dim=-1)
+    advantages = torch.randn(2, device=device)
+    loss_mask = torch.tensor([[1, 1, 0], [1, 0, 0]], device=device)
+
+    # function version
+    ral_loss_value1 = attention_divergence_loss(
+        policy_attention_weights=policy_attention_weights,
+        old_attention_weights=old_attention_weights,
+        advantages=advantages,
+        loss_mask=loss_mask,
+        ral_factor=1.0,
+    )
+    print("ral_loss_value1:", ral_loss_value1)
+
+    # class version
+    ral_loss = AttentionDivergenceLoss(ral_factor=1.0)
+    ral_loss.precompute_q_and_mask(old_attention_weights)
+    ral_loss_value2 = ral_loss(policy_attention_weights, advantages, loss_mask)
+    print("ral_loss_value2:", ral_loss_value2)
+
+    assert torch.allclose(ral_loss_value1, ral_loss_value2)
