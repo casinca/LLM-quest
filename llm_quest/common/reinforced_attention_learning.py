@@ -68,7 +68,7 @@ class AttentionDivergenceLoss(torch.nn.Module):
             new normalized attention weights: (torch.Tensor), shape (b, seq_len, seq_len)
         """
         new_attn_weights = attention_weights.mean(dim=1).masked_fill(diag_mask, 0.0)
-        # we need to clamp because the 1st token now is 0.0 and guaranteed to trigger a div by 0
+        # we need to clamp because the 1st token, now, is 0.0 and guaranteed to trigger a div by 0
         new_attn_weights = new_attn_weights / new_attn_weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
         return new_attn_weights.clamp(min=1e-8)
@@ -88,7 +88,7 @@ class AttentionDivergenceLoss(torch.nn.Module):
         p_norm_attn_weights = self._prepare_attention_weights(policy_attention_weights, self.diag_mask)
 
         # M = (P+Q)/2
-        m = ((p_norm_attn_weights + self.q_norm_attn_weights) / 2.0).clamp(min=1e-8)
+        m = (p_norm_attn_weights + self.q_norm_attn_weights) / 2.0
         log_m = torch.log(m)
 
         # KL(Q || M) = ∑Q*log(Q/M) = ∑(Q*log(Q) - Q*log(M))
