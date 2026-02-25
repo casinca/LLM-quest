@@ -1,7 +1,6 @@
 import torch
 
 
-
 # NOTE 1: The function version is more readable but slightly less efficient (if `num_grad_updates` > 1) as this forces
 # us to:
 # - recompute for the old policy Q*log(Q), every gradient step, in the KL(Q || M) term.
@@ -27,7 +26,7 @@ class AttentionDivergenceLoss(torch.nn.Module):
     RAL loss computes the divergence for "generated tokens" only.
 
     L_ral = Advantage * JSD(P || Q)
-    Minimizing L_ral is either done by: 
+    Minimizing L_ral is either done by:
         - pulling the current policy toward the old policy (if advantage > 0, we want to minimize JSD)
         - pushing the current policy away from the old policy (if advantage < 0, we want to maximize JSD).
 
@@ -92,7 +91,7 @@ class AttentionDivergenceLoss(torch.nn.Module):
         Args:
             policy_attention_weights: (torch.Tensor), shape (b, num_heads, seq_len, seq_len)
             advantages: (torch.Tensor), advantages per sequence, shape (b,)
-            loss_mask: (torch.Tensor), can be the same loss mask used for GRPO, here we need it to mask prompt, 
+            loss_mask: (torch.Tensor), can be the same loss mask used for GRPO, here we need it to mask prompt,
                                         shape (b, seq_len)
         """
         if self.q_norm_attn_weights is None or self.qlog_q is None:
@@ -134,7 +133,7 @@ def attention_divergence_loss(policy_attention_weights, old_attention_weights, a
         old_attention_weights: (torch.Tensor), the attention weights from the local old policy Q (not from
                                     a separated inference framework), shape (b, num_heads, seq_len, seq_len)
         advantages: (torch.Tensor), advantages per sequence, shape (b,)
-        loss_mask: (torch.Tensor), can be the same loss mask used for GRPO, here we need it to mask prompt, 
+        loss_mask: (torch.Tensor), can be the same loss mask used for GRPO, here we need it to mask prompt,
                                         shape (b, seq_len)
         ral_factor: (float) scaling factor for the RAL loss, recommended values between 0.5 and 1.5
 
