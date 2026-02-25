@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- Google Reinforced Attention Learning (RAL)
 - LoRA-XS and Meta TinyLoRA
 - mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)
-- DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp
 
 
 &nbsp;
@@ -98,6 +98,7 @@
 | **Hyper-connections** | • mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)<br>• DeepSeek Manifold-Constrained Hyper-connections (mHC) with Sinkhorn-Knopp and Qwen3 convergence test<br>• Classic (unconstrained) Hyper-connections (alternative to residual connections) and test on "hyper-connected" Qwen3 for convergence |
 | **QK-Clip** | Query-Key clipping (naive & per head + GQA compatible) from [Moonshot.ai](https://www.moonshot.ai/)'s MuonClip and experimental "Magnitude" variant. |
 | **Speculative Decoding** | Google's original version |
+| **Reinforced Attention Learning (RAL)** | Google's auxiliary policy-gradient loss, regularizing attention weights via Advantage-Weighted Jensen-Shannon divergence |
 | **Dynamic Tanh** | Normalization-free alternative to RMSNorm/LayerNorm ([Zhu et al., 2025](https://arxiv.org/abs/2503.10622)) |
 | **RoPE + YaRN** | NTK-aware + by-part/wavelength scaling |
 | **LoRAs** | classic LoRA, LoRA-XS and Meta TinyLoRA|
