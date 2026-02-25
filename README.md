@@ -11,7 +11,7 @@
     - [Alignment & Reasoning](#alignment--reasoning)
     - [Multimodal](#multimodal)
     - [Fine-tuning SFT](#fine-tuning-sft)
-    - [Other Model-Agnostic Techniques and Papers](#other-model-agnostic-techniques-and-papers)
+    - [Other Model-Agnostic Techniques and Papers](#other-model-agnostic-techniques-and-papers-common-folder)
 - [Acknowledgements](#acknowledgements)
 
 <!-- /TOC -->
@@ -91,7 +91,7 @@
 
 &nbsp;
 
-### Other Model-Agnostic Techniques and Papers (common folder)
+### Other Model-Agnostic Techniques and Papers (`common` folder)
 
 |           | Notes |
 |:----------|:------------|
