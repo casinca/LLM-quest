@@ -1,6 +1,8 @@
 import torch
 
 
+# tldr: https://github.com/casinca/LLM-quest/pull/25
+#
 # NOTE 1: The function version is more readable but slightly less efficient (if `num_grad_updates` > 1) as this forces
 # us to:
 # - recompute for the old policy Q*log(Q), every gradient step, in the KL(Q || M) term.
