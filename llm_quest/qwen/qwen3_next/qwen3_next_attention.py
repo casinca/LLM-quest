@@ -175,10 +175,15 @@ class GatedAttention(nn.Module):
         self.num_repeat = self.num_heads // self.num_kv_groups
         self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
 
-        self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        # old unfused version
+        # self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        # self.w_gate = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+
+        # fused version: Q + gate projection (to matches Qwen3.5 weights)
+        self.w_queries_gate = nn.Linear(self.d_in, self.d_out * 2, bias=False, dtype=self.dtype)
+
         self.w_keys = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
         self.w_values = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
-        self.w_gate = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
 
         self.q_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
         self.k_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
@@ -196,12 +201,20 @@ class GatedAttention(nn.Module):
         """
         b, seq_len, d_in = x.shape
 
-        queries = self.w_queries(x)
+        # unfused version
+        # queries = self.w_queries(x)
+        # queries = queries.view(b, seq_len, self.num_heads, self.head_dim)
+        # gate_output = torch.sigmoid(self.w_gate(x))
+
+        # fused version
+        queries_and_gate = self.w_queries_gate(x)  # (b, seq_len, d_out * 2)
+        queries_and_gate = queries_and_gate.view(b, seq_len, self.num_heads, self.head_dim * 2)
+        queries, gate = torch.chunk(queries_and_gate, 2, dim=-1)  # each (b, seq_len, num_heads, head_dim)
+        gate_output = torch.sigmoid(gate.reshape(b, seq_len, self.d_out))
+
         keys = self.w_keys(x)
         values = self.w_values(x)
-        gate_output = torch.sigmoid(self.w_gate(x))
 
-        queries = queries.view(b, seq_len, self.num_heads, self.head_dim)
         keys = keys.view(b, seq_len, self.num_kv_groups, -1)
         values = values.view(b, seq_len, self.num_kv_groups, -1)
 
@@ -414,5 +427,5 @@ if __name__ == "__main__":
         gdnet = GatedDeltaNet(dummy_cfg)
 
     print(gsdpa(input_batch, mask, cos, sin))
-    print(f"\n{'*'*50}\n")
+    print(f"\n{'*' * 50}\n")
     print(gdnet(input_batch, attn_mask))  # last 2 vectors masked per attention mask
