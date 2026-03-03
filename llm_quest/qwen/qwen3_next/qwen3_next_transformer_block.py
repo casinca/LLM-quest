@@ -19,7 +19,7 @@ class Qwen3NextTransformerBlock(nn.Module):
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
-        layer_idx (int): Layer index
+        layer_idx (int): Layer index (0-based)
     """
 
     def __init__(self, cfg, layer_idx):

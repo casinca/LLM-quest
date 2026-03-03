@@ -291,12 +291,12 @@ class GatedDeltaNet(nn.Module):
         self.w_alpha = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
 
         # alpha components, to calc alpha decay factor following Qwen3-Next here, see compute_alpha_factor()
-        A_init = torch.empty(self.num_v_heads, dtype=self.dtype).uniform_(0, 16)
+        A_init = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)  # A_log in FP32 specifically
         self.log_A = nn.Parameter(torch.log(A_init))  # log_A to ensure A > 0
         self.dt = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
 
         self.activation = nn.SiLU()
-        self.post_norm = ZeroCenteredRMSNorm(self.d_out_vg, dtype=self.dtype)
+        self.post_norm = ZeroCenteredRMSNorm(self.d_out_vg, dtype=torch.float32)  # FP32 specifically
         self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
