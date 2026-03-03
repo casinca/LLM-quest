@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from llm_quest.common.rope import RoPE
+from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
 
 # Differences compared to `Qwen3_attention.py`:
 #
@@ -302,7 +303,8 @@ class GatedDeltaNet(nn.Module):
         self.dt = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
 
         self.activation = nn.SiLU()
-        self.post_norm = ZeroCenteredRMSNorm(self.d_out_vg, dtype=torch.float32)  # FP32 specifically
+        # Post-attention RMSNorm is classic, not `ZeroCenteredRMSNorm` + it's per V head dim + in fp32
+        self.post_norm = PytorchRMSNorm(self.vg_head_dim, dtype=torch.float32)
         self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
@@ -374,12 +376,13 @@ class GatedDeltaNet(nn.Module):
         # state isn't needed for training unlike inference
         ctx_tensor, prev_state = gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None)
 
-        # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
+        # (upcasting to fp32 beforehand, so that PytorchRMSNorm returns in fp32)
+        ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
+        # reshaping (b, num_head, seq_len, vg_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
         ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
-        ctx_tensor = self.post_norm(ctx_tensor)
 
-        gate_output = self.activation(self.w_gate(x))  # shape (b, seq_len, d_out_vg)
-        output = gate_output * ctx_tensor
+        gate_output = self.activation(self.w_gate(x).to(torch.float32))  # shape (b, seq_len, d_out_vg)
+        output = (gate_output * ctx_tensor).to(self.dtype)  # product has to be in fp32 per the official impl
 
         output = self.out_proj(output)  # shape (b, seq_len, d_in)
 
