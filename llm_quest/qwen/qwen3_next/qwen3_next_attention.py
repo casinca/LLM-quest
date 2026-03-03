@@ -123,7 +123,7 @@ def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
         attn_output: (b, num_heads, seq_len, v_head_dim) the context tensor
         prev_state: updated state/memory to be used in the next forward pass
     """
-    # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_vg_heads
+    # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_v_heads
     b, num_heads, seq_len, k_head_dim = keys.shape
     v_head_dim = values.shape[-1]
     scale = queries.shape[-1] ** -0.5  # scaling factor for queries (same as attention scaling)
@@ -279,12 +279,12 @@ class GatedDeltaNet(nn.Module):
         self.num_qk_heads = cfg["linear_num_qk_heads"]
         self.num_v_heads = cfg["linear_num_value_heads"]
         self.qk_head_dim = cfg["linear_qk_head_dim"]  # same for Q and K
-        self.vg_head_dim = cfg["linear_value_head_dim"]  # same for V and gate
+        self.v_head_dim = cfg["linear_value_head_dim"]
         self.conv_kernel_size = cfg["linear_conv_kernel_size"]
         self.num_repeat = self.num_v_heads // self.num_qk_heads  # similar to GQA (here "GV" grouped value heads)
 
         self.d_out = self.num_qk_heads * self.qk_head_dim  # dim for Q and K
-        self.d_out_vg = self.num_v_heads * self.vg_head_dim  # dim for V and gate
+        self.d_out_vg = self.num_v_heads * self.v_head_dim  # dim for V and gate
 
         self.dtype = cfg["dtype"]
         self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
@@ -304,7 +304,7 @@ class GatedDeltaNet(nn.Module):
 
         self.activation = nn.SiLU()
         # Post-attention RMSNorm is classic, not `ZeroCenteredRMSNorm` + it's per V head dim + in fp32
-        self.post_norm = PytorchRMSNorm(self.vg_head_dim, dtype=torch.float32)
+        self.post_norm = PytorchRMSNorm(self.v_head_dim, dtype=torch.float32)
         self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
@@ -359,7 +359,7 @@ class GatedDeltaNet(nn.Module):
         # reshaping to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
         queries = queries.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
         keys = keys.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
-        values = values.reshape(b, self.num_v_heads, self.vg_head_dim, -1).transpose(2, 3).contiguous()
+        values = values.reshape(b, self.num_v_heads, self.v_head_dim, -1).transpose(2, 3).contiguous()
 
         queries = l2_norm(queries)
         keys = l2_norm(keys)
@@ -378,7 +378,7 @@ class GatedDeltaNet(nn.Module):
 
         # (upcasting to fp32 beforehand, so that PytorchRMSNorm returns in fp32)
         ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
-        # reshaping (b, num_head, seq_len, vg_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
+        # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
         ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
 
         gate_output = self.activation(self.w_gate(x).to(torch.float32))  # shape (b, seq_len, d_out_vg)
