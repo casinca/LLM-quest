@@ -45,6 +45,8 @@ class ZeroCenteredRMSNorm(nn.Module):
         return (x * rms * (1.0 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
 
+# my initial implementation but could differ because of clamp vs adding eps (in l2_norm_official())
+# slightly faster than l2_norm_official() below
 def l2_norm(x):
     """
     Reducing Q and K vectors magnitude to unit length, by dividing by their L2 norms.
@@ -55,6 +57,13 @@ def l2_norm(x):
     """
     l2_norm = torch.linalg.vector_norm(x, dim=-1, ord=2, keepdim=True)
     return x * torch.clamp(l2_norm, min=1e-6).reciprocal()
+
+
+# Copy of the official impl for exact repro in case, because it could differ in float precision with my L2_norm()
+def l2_norm_official(x: torch.FloatTensor, dim: int = -1, eps: float = 1e-6):
+    """This function is intended to align with the l2norm implementation in the FLA library."""
+    inv_norm = torch.rsqrt((x * x).sum(dim=dim, keepdim=True) + eps)
+    return x * inv_norm
 
 
 # NOTE This was made as a separate helper function because it really needed some more explanation
