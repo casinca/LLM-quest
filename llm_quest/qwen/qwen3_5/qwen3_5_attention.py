@@ -32,7 +32,7 @@ class FusedGatedDeltaNet(nn.Module):
     Fused Gated DeltaNet for Qwen3.5.
 
     Same as our Qwen3-Next `GatedDeltaNet` class but with some fused weights:
-    - QKV are projected in a single fused linear (in_proj_qkv) instead of 3 separate ones
+    - QKV are projected in a single fused linear (w_qkv) instead of 3 separate ones
     - A single Conv1d is used on the fused QKV output instead of 3 separate Conv1ds
 
     Rest is the same, we re-use: l2_norm(), compute_alpha_factor(), gated_delta_rule() from `qwen3_next_attention.py`
