@@ -300,7 +300,7 @@ class GatedDeltaNet(nn.Module):
         # alpha components, to calc alpha decay factor following Qwen3-Next here, see compute_alpha_factor()
         A_init = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)  # A_log in FP32 specifically
         self.log_A = nn.Parameter(torch.log(A_init))  # log_A to ensure A > 0
-        self.dt = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
+        self.dt_bias = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
 
         self.activation = nn.SiLU()
         # Post-attention RMSNorm is classic, not `ZeroCenteredRMSNorm` + it's per V head dim + in fp32
@@ -308,12 +308,16 @@ class GatedDeltaNet(nn.Module):
         self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
+        # the goal is to inject local positional context along the time axis (temporal/depthwise causal convolution),
+        # not to mix features across dimensions (standard convolution)
         self.conv_queries = nn.Conv1d(
             in_channels=self.d_out,
             out_channels=self.d_out,  # number of kernels/filters
             kernel_size=self.conv_kernel_size,
             bias=False,
-            padding=self.conv_kernel_size - 1,  # serves as causal mask
+            padding=self.conv_kernel_size - 1,  # serves as causal mask (causal convolution)
+            # depthwise conv/per channel independently (groups=channels), not mixed/standard conv (groups=1)
+            groups=self.d_out,
             dtype=self.dtype,
         )
         self.conv_keys = nn.Conv1d(
@@ -322,6 +326,7 @@ class GatedDeltaNet(nn.Module):
             kernel_size=self.conv_kernel_size,
             bias=False,
             padding=self.conv_kernel_size - 1,
+            groups=self.d_out,
             dtype=self.dtype,
         )
         self.conv_values = nn.Conv1d(
@@ -330,6 +335,7 @@ class GatedDeltaNet(nn.Module):
             kernel_size=self.conv_kernel_size,
             bias=False,
             padding=self.conv_kernel_size - 1,
+            groups=self.d_out_vg,
             dtype=self.dtype,
         )
 
@@ -352,11 +358,11 @@ class GatedDeltaNet(nn.Module):
         values = self.w_values(x).transpose(1, 2)
 
         # We are not doing features convolution but a temporal convolution, (ie over the sequence length)
-        queries = self.activation(self.conv_queries(queries))[..., :seq_len]
-        keys = self.activation(self.conv_keys(keys))[..., :seq_len]
-        values = self.activation(self.conv_values(values))[..., :seq_len]
+        queries = self.activation(self.conv_queries(queries)[..., :seq_len])
+        keys = self.activation(self.conv_keys(keys)[..., :seq_len])
+        values = self.activation(self.conv_values(values)[..., :seq_len])
 
-        # reshaping to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
+        # reshape+transpose to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
         queries = queries.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
         keys = keys.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
         values = values.reshape(b, self.num_v_heads, self.v_head_dim, -1).transpose(2, 3).contiguous()
@@ -371,12 +377,12 @@ class GatedDeltaNet(nn.Module):
         # shape (b, num_v_heads, seq_len) for beta and alpha
         beta = torch.sigmoid(self.w_beta(x).transpose(1, 2).contiguous())
         token_projs = self.w_alpha(x)
-        alpha = compute_alpha_factor(self.log_A, token_projs, self.dt).transpose(1, 2).contiguous()
+        alpha = compute_alpha_factor(self.log_A, token_projs, self.dt_bias).transpose(1, 2).contiguous()
 
         # state isn't needed for training unlike inference
         ctx_tensor, prev_state = gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None)
 
-        # (upcasting to fp32 beforehand, so that PytorchRMSNorm returns in fp32)
+        # The norm+gate is done in fp32
         ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
         # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
         ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
