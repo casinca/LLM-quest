@@ -16,7 +16,7 @@ from llm_quest.multimodal.vision_transformer.vit_transformer_block import LayerN
 # information of the entire image.
 
 
-class PatchEmbedding(nn.Module):
+class PatchEmbedding2D(nn.Module):
     """
     Convert image tensors to sequence of patch embeddings.
 
@@ -109,7 +109,7 @@ class ViTModel(nn.Module):
         super().__init__()
 
         # Patch embedding layer (replaces token embeddings from GPT)
-        self.patch_embedding = PatchEmbedding(
+        self.patch_embedding = PatchEmbedding2D(
             img_width=cfg["img_width"],
             img_height=cfg["img_height"],
             patch_size=cfg["patch_size"],
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     x = torch.randn(2, 3, 224, 224)
 
     # test patch embedding
-    patch_emb = PatchEmbedding(
+    patch_emb = PatchEmbedding2D(
         img_width=224,
         img_height=224,
         patch_size=16,
