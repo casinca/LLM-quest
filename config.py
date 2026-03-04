@@ -363,7 +363,7 @@ QWEN3_5_08B_CONFIG = {
     "head_dim": 256,
     "rope_base": 10_000_000,
     "partial_rope_factor": 0.25,
-    "context_length": 262_144,  # "max_position_embeddings"
+    "context_length": 8192,  # "max_position_embeddings" # 262_144
     # GDN
     "linear_num_qk_heads": 16,
     "linear_num_value_heads": 16,
