@@ -333,8 +333,8 @@ QWEN3_NEXT_SMALL_CONFIG = {
     "context_length": 512,
     # gated deltanet
     "linear_num_qk_heads": 4,
-    "linear_qk_head_dim": 64,
     "linear_num_value_heads": 8,
+    "linear_qk_head_dim": 64,
     "linear_value_head_dim": 64,
     "linear_conv_kernel_size": 4,
     # moe
@@ -347,6 +347,35 @@ QWEN3_NEXT_SMALL_CONFIG = {
     # training
     "p_dropout": 0.1,
 }
+
+
+# hardcoded Qwen3.5-0.8B text-only config TODO
+# From: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
+QWEN3_5_08B_CONFIG = {
+    "model_path": "Qwen/Qwen3.5-0.8B",
+    "vocab_size": 248_320,
+    "emb_dim": 1024,  # hidden_size
+    "hidden_dim": 3584,  # intermediate_size
+    "n_layers": 24,
+    "linear_sdpa_ratio": 4,  # cycle length for hybrid attention. FusedGatedDeltaNet used every 4 blocks, (3:1 ratio)
+    "n_heads": 8,
+    "num_kv_groups": 2,
+    "head_dim": 256,
+    "rope_base": 10_000_000,
+    "partial_rope_factor": 0.25,
+    "context_length": 262_144,  # "max_position_embeddings"
+    # GDN
+    "linear_num_qk_heads": 16,
+    "linear_num_value_heads": 16,
+    "linear_qk_head_dim": 128,
+    "linear_value_head_dim": 128,
+    "linear_conv_kernel_size": 4,
+    "tie_embeddings": True,
+    "dtype": torch.bfloat16,
+    "p_dropout": 0.0,
+    "training": False,
+}
+
 
 # ----------- ALIGNMENT  -----------
 
