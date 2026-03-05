@@ -46,12 +46,14 @@ class PatchEmbedding2D(nn.Module):
         # If we had flattened: each patch is num_channels x patch_size x patch_size = num_channels * patch_size^2
         # Instead of manually flattening, sliding a kernel with unfold() and projecting with a linear layer,
         # we use a convolutional layer, which is basically its purpose: extract & project
+        kernel_size = (patch_size, patch_size)  # ie (patch_h, patch_w)
         self.conv_proj = nn.Conv2d(
             in_channels=num_channels,
             out_channels=emb_dim,
-            kernel_size=patch_size,  # ie (patch_size x patch_size)
-            stride=patch_size,  # sliding window step (if >= kernel size = no overlap)
-            padding=0,
+            kernel_size=kernel_size,  # could also pass a single integer `patch_size` if square patches
+            stride=kernel_size,  # sliding window step (if >= kernel size = no overlap)
+            padding=0,  # default value but being explicit
+            bias=True,  # default value but being explicit
         )
 
         # learnable classification token
@@ -65,6 +67,9 @@ class PatchEmbedding2D(nn.Module):
         Returns:
             Patch embeddings, shape (b, num_patches + 1, emb_dim)
         """
+        assert x.shape[2] == self.img_width and x.shape[3] == self.img_height, (
+            f"Input image shape {x.shape} does not match expected shape {self.img_width}x{self.img_height}"
+        )
         batch_size = x.shape[0]
 
         # convolution: extract patches & project to emb_dim
