@@ -190,6 +190,52 @@ class Qwen3_5VisionAttention(nn.Module):
         return ctx_tensor
 
 
+class Qwen3_5VisionTransformerBlock(nn.Module):
+    """
+    Qwen3.5 Vision Transformer Block.
+
+    Same structure as our classification ViT's `ViTTransformerBlock`:
+        LayerNorm → Attention → Residual → LayerNorm → FFN → Residual
+
+    Differences from our classification ViT trf block:
+    - Uses `Qwen3_5VisionAttention` (with RoPE) instead of `ViTMultiHeadAttention`
+    - Uses `Qwen3_5VisionFFN` (GELU approx w/ tanh) instead of FFN
+    - Uses `nn.LayerNorm` directly for simplicity
+
+    Args:
+        cfg (dict): Configuration dictionary
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(cfg["hidden_size"], eps=1e-6)
+        self.norm2 = nn.LayerNorm(cfg["hidden_size"], eps=1e-6)
+        self.att = Qwen3_5VisionAttention(cfg)
+        self.ffn = Qwen3_5VisionFFN(cfg)
+
+    def forward(self, x, cos, sin):
+        """
+        Args:
+            x: (batch, seq_len, d_in)
+            cos: (seq_len, head_dim) angles for attention (2D axial RoPE)
+            sin: (seq_len, head_dim) angles for attention (2D axial RoPE)
+
+        Returns:
+            (batch, seq_len, d_in)
+        """
+        residual = x
+        x = self.norm1(x)
+        x = self.att(x, cos, sin)
+        x = x + residual
+
+        residual = x
+        x = self.norm2(x)
+        x = self.ffn(x)
+        x = x + residual
+
+        return x
+
+
 # quick inline test
 if __name__ == "__main__":
     torch.manual_seed(123)
