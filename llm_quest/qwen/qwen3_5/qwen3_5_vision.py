@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from llm_quest.common.rope import VisionRoPE
+
 # Some differences with our `PatchEmbedding2D` class for the ViT in multimodal/vision_transformer/vit_model.py:
 #
 # For the from-scratch ViT, we were only using fixed size square images (CxHxW) where Height and Width are the same and
@@ -105,18 +107,113 @@ class PatchEmbedding3D(nn.Module):
         return x
 
 
+class Qwen3_5VisionAttention(nn.Module):
+    """
+    Bidirectional multi-head attention for the Qwen vision model (which is based on Qwen3-VL) with 2D axial RoPE.
+
+    This is adapted from our `ViTMultiHeadAttention` (`llm_quest/multimodal/vision_transformer/vit_attention.py`)
+    with these differences:
+    - Adds Axial 2D RoPE for queries and keys
+    - QKV have biases
+    - No dropout (not training, loading weights)
+
+    Args:
+        cfg(dict): Configuration dictionary
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        # Qwen chose d_in = d_out, also called hidden_size in HF
+        self.d_in = cfg["d_in"]
+        self.num_heads = cfg["num_heads"]
+        self.head_dim = self.d_in // self.num_heads
+
+        # Fused QKV with bias
+        self.qkv = nn.Linear(self.d_in, self.d_in * 3, bias=True)
+        self.proj = nn.Linear(self.d_in, self.d_in, bias=True)
+
+    def forward(self, x, cos, sin):
+        """
+        Args:
+            x: (batch, seq_len, d_in)
+            cos: (seq_len, head_dim)
+            sin: (seq_len, head_dim)
+
+        `seq_len` is the same as `num_patches` in this context
+
+        Returns:
+            (batch, seq_len, d_out)
+        """
+        b, seq_len, d_in = x.shape
+
+        # split back and reshape to b,h,s,d
+        qkv = self.qkv(x)
+        queries, keys, values = qkv.chunk(3, dim=-1)
+
+        queries = queries.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        keys = keys.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        values = values.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # apply vision/axial 2D RoPE
+        queries = VisionRoPE.apply(queries, cos, sin)
+        keys = VisionRoPE.apply(keys, cos, sin)
+
+        # Bidirectional attention (no causal mask, same as our classification ViT)
+        ctx_tensor = nn.functional.scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            attn_mask=None,
+            is_causal=False,
+        )
+
+        # shape (batch, num_heads, seq_len, head_dim) → (batch, seq_len, d_in)
+        ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_in)
+        ctx_tensor = self.proj(ctx_tensor)
+
+        return ctx_tensor
+
+
+# quick inline test
 if __name__ == "__main__":
     x = torch.randn(1, 3, 8, 32, 32)
+    patch_size = 8
+    img_h, img_w = 32, 32
+    temporal_patch_size = 2
+    num_frames = 8 // temporal_patch_size
+    num_patches_h = img_h // patch_size
+    num_patches_w = img_w // patch_size
+    emb_dim = 128
+
     patch_embedding = PatchEmbedding3D(
-        img_width=32,
-        img_height=32,
+        img_width=img_w,
+        img_height=img_h,
         num_channels=3,
-        emb_dim=128,
-        patch_size=8,
-        temporal_patch_size=2,
+        emb_dim=emb_dim,
+        patch_size=patch_size,
+        temporal_patch_size=temporal_patch_size,
     )
-    print(patch_embedding(x).shape)  # (1, 64, 128)
+    x_shaped = patch_embedding(x)
+    print(x_shaped.shape)  # (1, 64, 128)
     # time is 8/temporal_patch_size = 4
     # num_patches h and w (since square) is 32/patch_size = 4 for both,
     # emb_dim is 128
     # so (1, 4*4*4, 128) = (1, 64, 128)
+
+    #  --- dummy test for Qwen3_5VisionAttention ---
+    dummy_cfg = {
+        "d_in": emb_dim,  # d_in = d_out = hidden_size
+        "num_heads": 4,
+    }
+    cos, sin = VisionRoPE.compute_angles_2d(
+        base=10000,
+        head_dim=dummy_cfg["d_in"] // dummy_cfg["num_heads"],
+        height_patches=num_patches_h,
+        width_patches=num_patches_w,
+        num_frames=num_frames,
+    )
+
+    attn = Qwen3_5VisionAttention(dummy_cfg)
+    y = attn(x_shaped, cos, sin)
+    print("Qwen3_5VisionAttention output shape:", y.shape)
+    print(y)
