@@ -107,6 +107,22 @@ class PatchEmbedding3D(nn.Module):
         return x
 
 
+class Qwen3_5VisionFFN(nn.Module):
+    """
+    Same as our ViT `FFN` class but:
+    - GELU is approximated with tanh instead of exact GELU (using Pytorch)
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.lin1 = nn.Linear(cfg["d_in"], cfg["hidden_dim"])
+        self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["d_out"])
+        self.activ = nn.GELU(approximate="tanh")
+
+    def forward(self, x):
+        return self.lin2(self.activ(self.lin1(x)))
+
+
 class Qwen3_5VisionAttention(nn.Module):
     """
     Bidirectional multi-head attention for the Qwen vision model (which is based on Qwen3-VL) with 2D axial RoPE.
