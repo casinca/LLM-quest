@@ -4,7 +4,6 @@ import torch
 
 
 class RoPE:
-
     @staticmethod
     def partial_rotation(head_dim, factor):
         """
@@ -14,7 +13,7 @@ class RoPE:
 
         So if the new partial head_dim is odd, I will at most rotate the specified factor while HF will rotate an extra
         dimension.
-        Ex: head_dim = 6 rotation_factor = 0.5, head_dim = 3 → I will rotate 2 dimensions while HF will rotate 4.
+        Ex: head_dim = 6 rotation_factor = 0.5, new_head_dim = 3 → I will rotate 2 dimensions while HF will rotate 4.
 
         Helper function to scale the head dimension that will be used for rotating the dimensions/features
 
@@ -245,7 +244,7 @@ class RoPE:
         b, n_head, seq_length, head_dim = x.shape
         assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
 
-        # If cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
+        # If precomputed cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
         if head_dim != cos.shape[-1]:
             return RoPE._apply_partial_rope(x, cos, sin, position_ids)
 
@@ -273,15 +272,179 @@ class RoPE:
         return res
 
 
+class VisionRoPE:
+    """
+    This 2D variant is also known as Axial 2D RoPE, the RoPE-Mixed paper (https://arxiv.org/abs/2403.13298) mentions the
+    EVA-02 paper (Evangelion nod) as a reference for the Axial 2D RoPE: https://arxiv.org/abs/2303.11331
+
+    NOTE: For simplicity, for fixed-size images so that we can just precompute the same way as we do for text in the
+    `RoPE` class.
+
+    Same as 1D text classic RoPE except we are also adding a new direction/y-axis for images. We can see, in this
+    context, the classic text RoPE as already a 1D x-axis (as a sequence)
+
+    Why do we need 2D RopE, with a good example:
+
+    Let's take an image divided in 3x3 grid of patches:
+    [0] [1] [2]
+    [3] [4] [5]
+    [6] [7] [8]
+
+    When it's flattened (after `PatchEmbedding3D`) we have a 1D sequence of patches for the transformer block:
+    [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+    If we use classic text RoPE, we would only be encoding the position along this flat sequence:
+
+    - patch [2] and patch [3] are next to each other in the flat sequence but in reality, in the image, they are 3
+        step away from each other (if we take manhattan distance).
+    - Inversely and similarly, patch [0] and [3] are next to each other (vertically) in the image but not in the flat
+        sequence.
+
+    Hence the reason to use 2D RoPE and preserve this true spacial distance information.
+
+    We will split the `head_dim` into 2 parts, one for row (x-axis) and one for column (y-axis).
+    Instead of having position ids for a single sequence, we will have a grid of positions.
+
+    For example, patch [0] would be (0,0) and patch [3] (1,0):
+        - Their row x-axis RoPE (same as 1D classic text RoPE) are both 0 and 0 (could be seen as a start of a sequence)
+        - Their column y-axis RoPE are 0 and 1, effectively recording that they are 1 step apart on the y-axis
+    """
+
+    @staticmethod
+    def compute_angles_2d(
+        base,
+        head_dim,
+        height_patches,
+        width_patches,
+        num_frames=1,
+        dtype=torch.float32,
+    ):
+        """
+        Computes 2D RoPE angles
+
+        We omit YaRN scaling
+
+        Args:
+            base (int): Base value for frequency scaling.
+            head_dim (int): Dimension of each attention head (must be divisible by 4).
+            height_patches (int): Fixed number of patches along the height (H).
+            width_patches (int): Fixed number of patches along the width (W).
+            num_frames (int): Number of temporal frames (default 1 for images, videos would be >1).
+            dtype (torch.dtype): Data type for computation.
+
+        Returns:
+            tuple: (cos, sin) tensors of shape (num_frames * height_patches * width_patches, head_dim)
+        """
+        # Half of head_dim is going to y (row) and half to x (col)
+        # since we also need pairs for cos/sin, head_dim must be divisible by 4.
+        assert head_dim % 4 == 0, "head_dim must be divisible by 4 for 2D RoPE"
+
+        # Same as text RoPE: compute 1D theta/frequencies, except now the range is half a head dim
+        # we're doing this once (not each axis) because frequencies are the same for both axes.
+        half_dim = head_dim // 2
+        theta = 1.0 / (base ** (2 * torch.arange(0, half_dim // 2, dtype=dtype) / half_dim))
+
+        # Generate the 2D coordinates/distances using PyTorch meshgrid
+        # this gives us the (row, col) for every patch in the H x W image grid.
+        #
+        # Example to remember what it does:
+        #
+        # with an image split in a 2x2 grid of 4 patches (ie `height_patches=2` and `width_patches=2`)
+        # feeding 2x torch.arange for x and y-axis, will give 2x 2D tensors:
+        #
+        # row_pos = [[0, 0],   # Row 0
+        #           [1, 1]]   # Row 1
+        #
+        # col_pos = [[0, 1],   # Col 0, Col 1
+        #           [0, 1]]   # Col 0, Col 1
+        row_pos, col_pos = torch.meshgrid(
+            torch.arange(height_patches, dtype=dtype),
+            torch.arange(width_patches, dtype=dtype),
+            indexing="ij",  # row-major order (left-to-right, top-to-bottom), just like conv3D flattening
+        )
+
+        # Flatten the 2x 2D grid into the 1D sequence the transformer block expects
+        # shape each: (height_patches, width_patches) → (height_patches * width_patches)
+        flat_row_pos = row_pos.flatten()
+        flat_col_pos = col_pos.flatten()
+
+        # Same as Text RoPE but twice (for each axis): multiply positions by theta to get the angles (outer product)
+        # shape of both: (height_patches * width_patches, half_dim // 2)
+        angles_y = torch.outer(flat_row_pos, theta)
+        angles_x = torch.outer(flat_col_pos, theta)
+
+        # concatenate the y and x angles together, shape: (height_patches * width_patches, half_dim)
+        angles_2d = torch.cat([angles_y, angles_x], dim=-1)
+
+        # If it's a video, repeat the spatial layout `num_frames` times
+        # shape: (num_frames * height_patches * width_patches, half_dim)
+        # NOTE: yes, we are duplicating
+        # There's no 3D/time/temporal awareness "here", ie if the patches are from image1 or image2
+        # It's purely 2D/spatial awareness per image/independently.
+        # Temporal awareness would be handled by MRoPE (Multimodal RoPE) in the Multimodal model
+        if num_frames > 1:
+            angles_2d = angles_2d.repeat(num_frames, 1)
+
+        # Same as Text RoPE now:
+        # duplicate to match the full head_dim for apply()
+        # shape: (num_frames * height_patches * width_patches, head_dim)
+        angles = torch.cat([angles_2d, angles_2d], dim=-1)
+
+        cos = torch.cos(angles)
+        sin = torch.sin(angles)
+
+        return cos, sin
+
+    @staticmethod
+    def apply(x, cos, sin, position_ids=None):
+        """
+        NOTE: This is the same thing/copy as `RoPE.apply()` method. Nothing change as we use fixed size image.
+
+        Args:
+            x (torch.Tensor): The input tensor to apply RoPE to, shape (b, num_heads, seq_length, head_dim)
+            cos (torch.Tensor): The cosine of the angles, shape (ctx_len, head_dim)
+            sin (torch.Tensor): The sine of the angles, shape (ctx_len, head_dim)
+            position_ids (torch.LongTensor, optional): Tensor of shape (batch_size, seq_len or 1 if KVcache) containing
+                                                        the positions of each token. If None, applies RoPE to the first
+                                                        seq_length positions (non-KV cache case).
+        Returns:
+            torch.Tensor: The input tensor with RoPE applied/rotated, shape (b, num_heads, seq_length, head_dim)
+        """
+        b, n_head, seq_length, head_dim = x.shape
+        assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
+
+        # Full RoPE
+        # splitting dimensions/features in half (paper splits by pairs instead)
+        h1 = x[..., : head_dim // 2]
+        h2 = x[..., head_dim // 2 :]
+
+        # preparing 2nd coordinates/dimensions matrix for calc optimization
+        rotated = torch.concat((-h2, h1), dim=-1)
+
+        if position_ids is not None:
+            # cos/sin shape: (ctx_len, head_dim)
+            # position_ids shape: (b, s) → gathered cos/sin: (b, s, head_dim) → unsqueezed: (b, 1, s, head_dim)
+            cos = cos[position_ids].unsqueeze(1).to(x.dtype)
+            sin = sin[position_ids].unsqueeze(1).to(x.dtype)
+        else:
+            # For non-KV cache case, slice from the beginning
+            cos = cos[:seq_length, :].to(x.dtype)
+            sin = sin[:seq_length, :].to(x.dtype)
+
+        # apply RoPE efficiently (vectorized vs classic sparse paper)
+        res = cos * x + sin * rotated
+
+        return res
+
+
 if __name__ == "__main__":
+    torch.manual_seed(123)
 
     batch_size = 2
-    context_len = 5
     num_heads = 2
     head_dim = 6
-
-    # Dummy query tensor
-    torch.manual_seed(123)
+    # Dummy test for 1D classic text RoPE
+    context_len = 5
     queries = torch.randn(batch_size, num_heads, context_len, head_dim)
 
     cos, sin = RoPE.compute_angles(
@@ -291,5 +454,30 @@ if __name__ == "__main__":
         rotation_factor=0.7,  # if partial rotation head_dim is odd, will floor to head_dim
         dtype=torch.float32,
     )
-    print(queries)
-    print(RoPE.apply(queries, cos, sin))
+    print("RoPE input:", queries)
+    rotated_queries = RoPE.apply(queries, cos, sin)
+    print("RoPE output:", rotated_queries)
+    print("RoPE output shape:", rotated_queries.shape)
+
+    # Dummy test for VisionRoPE (Axial 2D RoPE)
+    # a single image/frame of a 2x3 grid of patches (H=2, W=3)
+    head_dim = 4
+    num_frames = 1
+    height_patches = 2
+    width_patches = 3
+    flat_3d_seq_len = num_frames * height_patches * width_patches
+
+    vision_queries = torch.randn(batch_size, num_heads, flat_3d_seq_len, head_dim)
+
+    cos_vision, sin_vision = VisionRoPE.compute_angles_2d(
+        base=10000,
+        head_dim=head_dim,
+        height_patches=height_patches,
+        width_patches=width_patches,
+        num_frames=num_frames,
+        dtype=torch.float32,
+    )
+    print("VisionRoPE input:", vision_queries)
+    rotated_vision_queries = VisionRoPE.apply(vision_queries, cos_vision, sin_vision)
+    print("VisionRoPE output:", rotated_vision_queries)
+    print("VisionRoPE output shape:", rotated_vision_queries.shape)
