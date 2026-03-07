@@ -150,9 +150,9 @@ class Qwen3_5VisionAttention(nn.Module):
         qkv = self.qkv(x)
         queries, keys, values = qkv.chunk(3, dim=-1)
 
-        queries = queries.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        keys = keys.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        values = values.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        queries, keys, values = map(
+            lambda t: t.view(b, seq_len, self.num_heads, self.head_dim).transpose(1, 2), (queries, keys, values)
+        )
 
         # apply vision/axial 2D RoPE
         queries = VisionRoPE.apply(queries, cos, sin)
@@ -176,6 +176,8 @@ class Qwen3_5VisionAttention(nn.Module):
 
 # quick inline test
 if __name__ == "__main__":
+    torch.manual_seed(123)
+
     x = torch.randn(1, 3, 8, 32, 32)
     patch_size = 8
     img_h, img_w = 32, 32
