@@ -3,6 +3,8 @@ import torch.nn as nn
 
 from llm_quest.common.rope import VisionRoPE
 
+# NOTE: interchanging "frame" and "image" in comments and possibly variables, same thing.
+
 # Some differences with our `PatchEmbedding2D` class for the ViT in multimodal/vision_transformer/vit_model.py:
 #
 # For the from-scratch ViT, we were only using fixed size square images (CxHxW) where Height and Width are the same and
@@ -58,7 +60,7 @@ class PatchEmbedding3D(nn.Module):
         num_channels (int): Number of input channels (RGB = 3)
         emb_dim (int): Embedding dimension
         patch_size (int): Size of each patch (assumes square patches)
-        temporal_patch_size (int): number of frames to group together
+        temporal_patch_size (int): number of images/frames to group together, if >1, will reduce the time dimension
     """
 
     def __init__(self, img_width, img_height, num_channels, emb_dim, patch_size, temporal_patch_size):
@@ -70,8 +72,8 @@ class PatchEmbedding3D(nn.Module):
         self.img_height = img_height
         self.patch_size = patch_size
         self.temporal_patch_size = temporal_patch_size
-        self.num_image_patches = (img_width * img_height) // patch_size**2  # N = HW/P^2
-        # num_patches is now = self.num_image_patches * time // temporal_patch_size
+        self.num_patches_per_image = (img_width * img_height) // patch_size**2  # N = HW/P^2
+        # total_num_patches is now = self.num_patches_per_image * time // temporal_patch_size
 
         kernel_size = (temporal_patch_size, patch_size, patch_size)  # ie (time, patch_h, patch_w)
         self.conv_proj = nn.Conv3d(
@@ -110,13 +112,13 @@ class PatchEmbedding3D(nn.Module):
 class Qwen3_5VisionFFN(nn.Module):
     """
     Same as our ViT `FFN` class but:
-    - GELU is approximated with tanh instead of exact GELU (using Pytorch)
+    - GELU is approximated with tanh (using Pytorch) instead of exact GELU.
     """
 
     def __init__(self, cfg):
         super().__init__()
-        self.lin1 = nn.Linear(cfg["d_in"], cfg["hidden_dim"])
-        self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["d_out"])
+        self.lin1 = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"])
+        self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"])
         self.activ = nn.GELU(approximate="tanh")
 
     def forward(self, x):
@@ -140,7 +142,7 @@ class Qwen3_5VisionAttention(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         # Qwen chose d_in = d_out, also called hidden_size in HF
-        self.d_in = cfg["d_in"]
+        self.d_in = cfg["emb_dim"]
         self.num_heads = cfg["num_heads"]
         self.head_dim = self.d_in // self.num_heads
 
@@ -208,8 +210,8 @@ class Qwen3_5VisionTransformerBlock(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.norm1 = nn.LayerNorm(cfg["hidden_size"], eps=1e-6)
-        self.norm2 = nn.LayerNorm(cfg["hidden_size"], eps=1e-6)
+        self.norm1 = nn.LayerNorm(cfg["emb_dim"], eps=1e-6)
+        self.norm2 = nn.LayerNorm(cfg["emb_dim"], eps=1e-6)
         self.att = Qwen3_5VisionAttention(cfg)
         self.ffn = Qwen3_5VisionFFN(cfg)
 
@@ -234,6 +236,131 @@ class Qwen3_5VisionTransformerBlock(nn.Module):
         x = x + residual
 
         return x
+
+
+class Qwen3_5VisionModel(nn.Module):
+    """
+    Complete Vision model for the final Multimodal Qwen3.5.
+    This is the equivalent of our `ViTModel` for the multimodal GPT-2 pipeline.
+
+    NOTE: Even if we are doing fixed size images/frames, the number of frames (the time dimension) is completely
+    variable and dynamic, the ViT has no temporal awareness (except in conv3D if temporal_patch_size > 1):
+    We can pass a single 768x768 image, just like a video of 10x 768x768 images.
+
+    - `PatchEmbed3D`: image → patch embeddings
+    - add Positional embeddings (yes kept from the original ViT, on top of 2D RoPE)
+    - use 2D spatial RoPE for attention
+    - transformer blocks
+    - `ViTMergeAdapter`: spatial merge (optional) + project to text/llm emb dim
+
+    Args:
+        cfg (dict): Vision configuration dictionary with keys:
+            emb_dim(int): embedding dimension = hidden_size = d_in = d_out for Qwen3 Vision (not emb dim of the text/LLM)
+            img_width(int): input image width
+            img_height(int): input image height
+            patch_size(int): size of each patch (assumes square patches)
+            in_channels(int): number of input channels (RGB = 3)
+            num_position_embeddings(int): max number of patches in the image/frame (capacity of the position embeddings)
+            num_heads(int): number of attention heads
+            temporal_patch_size(int): number of images/frames to merge together, if >1, will reduce the time dimension
+            spatial_merge_size(int): number of patches to merge per side (height and width) within images
+            llm_d_in(int): text model/LLM embedding dimension (output of the ViT (after adapter) / input dim of the LLM)
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        img_width = cfg["img_width"]
+        img_height = cfg["img_height"]
+        patch_size = cfg["patch_size"]
+
+        assert img_width % patch_size == 0, f"Image width {img_width} not divisible by patch size {patch_size}"
+        assert img_height % patch_size == 0, f"Image height {img_height} not divisible by patch size {patch_size}"
+        n_width_patches = img_width // patch_size
+        n_height_patches = img_height // patch_size
+        self.n_spatial_patches = n_width_patches * n_height_patches
+
+        # Since we are doing fixed size, we expect the number of patches per image to be less than the maximum capacity
+        # of the model. With variable size, the max capacity is used to downsize larger images.
+        assert self.n_spatial_patches <= cfg["num_position_embeddings"], (
+            f"the image size {img_width}x{img_height} "
+            f"is too large for the number of position embeddings {cfg['num_position_embeddings']}"
+        )
+
+        emb_dim = cfg["emb_dim"]  # d_in = d_out = hidden_size
+        llm_d_in = cfg["llm_d_in"]
+        num_heads = cfg["num_heads"]
+
+        self.patch_embed = PatchEmbedding3D(
+            img_width=img_width,
+            img_height=img_height,
+            num_channels=cfg["in_channels"],
+            emb_dim=emb_dim,
+            patch_size=patch_size,
+            temporal_patch_size=cfg["temporal_patch_size"],
+        )
+
+        # Learned positional embeddings (spatial only, repeated across frames) will be overwritten by loaded weights
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.n_spatial_patches, emb_dim))
+
+        # Vision-specific RoPE (separate from text model's RoPE)
+        # We precompute angles for Vision RoPE
+        # NOTE since precomputed, we expect fixed size images/patches, not handling variable length sequences here.
+        # Concerning `num_frames=1`, instead of storing duplicated angles for each fixed size frame, we repeat in the
+        # forward pass for memory efficiency.
+        cos, sin = VisionRoPE.compute_angles_2d(
+            base=cfg["rope_base"],
+            head_dim=emb_dim // num_heads,
+            height_patches=n_height_patches,
+            width_patches=n_width_patches,
+            num_frames=1,
+        )
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
+
+        self.blocks = nn.ModuleList([Qwen3_5VisionTransformerBlock(cfg=cfg) for _ in range(cfg["n_layers"])])
+
+        # Head is: spatial merge + project to text model dim
+        self.merge_adapter = ViTMergeAdapter(
+            vit_d_out=emb_dim,
+            llm_d_in=llm_d_in,
+            n_height_patches=n_height_patches,
+            n_width_patches=n_width_patches,
+            spatial_merge_size=cfg["spatial_merge_size"],
+        )
+
+    def forward(self, x):
+        """
+        Process images through the vision encoder.
+
+        Args:
+            x: (batch, in_channels, time, img_h, img_w) Pre-processed image pixels for the `PatchEmbedding3D`
+
+        Returns:
+            (batch, num_merged_patches, llm_d_in) vision embeddings in text embedding space
+        """
+        # extract patches via 3D convolution, shape (batch, num_patches, emb_dim)
+        x = self.patch_embed(x)
+
+        seq_len = x.shape[1]  # flat total number of patches
+        # "actual" number of frames/images, because if temporal_patch_size > 1, actual_n_frames < time/initial n_frames.
+        actual_n_frames = seq_len // self.n_spatial_patches
+
+        # add positional embeddings (repeated across time frames)
+        pos_embed_repeated = self.pos_embed.repeat(1, actual_n_frames, 1)
+        x = x + pos_embed_repeated[:, :seq_len, :]
+
+        # repeat cos and sin for each time frame
+        batch_cos = self.cos.repeat(actual_n_frames, 1)  # shape (actual_n_frames*n_spatial_patches, head_dim)
+        batch_sin = self.sin.repeat(actual_n_frames, 1)
+
+        for block in self.blocks:
+            x = block(x, batch_cos, batch_sin)  # shape (batch, total_num_patches/seq_len, emb_dim)
+
+        # Merge patches within images (reduces by spatial_merge_size² = 2x2) and project to text dim
+        merged_output = self.merge_adapter(x)
+
+        return merged_output
+
 
 
 # quick inline test
@@ -266,12 +393,12 @@ if __name__ == "__main__":
 
     #  --- dummy test for Qwen3_5VisionAttention ---
     dummy_cfg = {
-        "d_in": emb_dim,  # d_in = d_out = hidden_size
+        "emb_dim": emb_dim,  # d_in = d_out = hidden_size
         "num_heads": 4,
     }
     cos, sin = VisionRoPE.compute_angles_2d(
         base=10000,
-        head_dim=dummy_cfg["d_in"] // dummy_cfg["num_heads"],
+        head_dim=dummy_cfg["emb_dim"] // dummy_cfg["num_heads"],
         height_patches=num_patches_h,
         width_patches=num_patches_w,
         num_frames=num_frames,
@@ -281,3 +408,36 @@ if __name__ == "__main__":
     y = attn(x_shaped, cos, sin)
     print("Qwen3_5VisionAttention output shape:", y.shape)
     print(y)
+
+    # Test with a simple vision config (matching ~Qwen3.5-0.8B vision)
+    test_cfg = {
+        "n_layers": 2,
+        "emb_dim": 768,
+        "hidden_dim": 3072,
+        "num_heads": 12,
+        "rope_base": 10000,
+        "spatial_merge_size": 2,
+        "patch_size": 16,
+        "temporal_patch_size": 2,
+        "img_width": 384,
+        "img_height": 384,
+        "in_channels": 3,
+        "num_position_embeddings": 2304,
+        "llm_d_in": 1024,
+    }
+
+    model = Qwen3_5VisionModel(test_cfg)
+    print(f"Vision model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    # Simulate a single 384x384 image video of length 2 (1 batch, 3 channels, 2 time, 384 H, 384 W)
+    batch_size = 1
+    pixel_values = torch.randn(batch_size, 3, 2, 384, 384)
+
+    output = model(pixel_values)
+    print(f"Input pixel shape: {pixel_values.shape}")
+    print(f"Output shape: {output.shape}")
+    # Expected:
+    # num_height_patches, num_width_patches each 384/16 = 24
+    # 24*24 = 576 patches. time=2 frames, temporal_patch_size=2 so, 2/2=1 temporal frame.
+    # Total number of patches = 1 * 576. Final merge 2x2, 576/4 = 144 patches/tokens
+    print(f"Expected merged patches: {24 * 24 // 4}")
