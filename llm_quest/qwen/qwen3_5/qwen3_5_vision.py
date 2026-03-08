@@ -362,6 +362,66 @@ class Qwen3_5VisionModel(nn.Module):
         return merged_output
 
 
+class ViTMergeAdapter(nn.Module):
+    """
+    The `ViTMergeAdapter` is more complex than the `ViTAdapter` because it also performs spatial downsampling, reducing
+    the number of patches per frame/image, whereas the `ViTAdapter` only does feature reprojection.
+
+    Merges adjacent patches if `spatial_merge_size` > 1 and reprojects to text embedding dimension.
+
+    There are similarities concerning this compression and the `PatchEmbedding3D` class.
+    In the `PatchEmbedding3D` class, we have the `temporal_patch_size` argument to control the compression over the
+    time dimension.
+
+    Here, the compression, controlled by the `spatial_merge_size` argument, is over the spatial dimension. We are not
+    reducing the number of images in a video, but rather patches within image, in both directions (height and width).
+
+    Takes groups of "spatial_merge_size²" (Qwen config uses 2x2 = 4) adjacent patches, concatenates their features, and
+    projects through an FFN to the text model's embedding dimension:
+
+    vision_emb_dim → (merge 4 patches) → vision_emb_dim * 4 → FFN → llm_d_in/text_emb_dim
+
+    Args:
+        vit_d_out (int): Vision hidden dimension (per patch)
+        llm_d_in (int): Text model embedding dimension (output)
+        spatial_merge_size (int): Number of patches to merge per side (2 → 2x2=4 patches merged)
+    """
+
+    def __init__(self, vit_d_out, llm_d_in, n_height_patches, n_width_patches, spatial_merge_size=2):
+        super().__init__()
+        self.m = spatial_merge_size
+        self.n_h_patches = n_height_patches
+        self.n_w_patches = n_width_patches
+        self.merged_size = vit_d_out * (self.m**2)  # 4 patches concatenated
+
+        # (not using nn.Sequential module, it'll be easier for loading weights)
+        self.norm = nn.LayerNorm(vit_d_out, eps=1e-6)
+        self.lin1 = nn.Linear(self.merged_size, self.merged_size)
+        self.activ = nn.GELU()
+        self.lin2 = nn.Linear(self.merged_size, llm_d_in)
+
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, num_patches, vit_d_out) arranged in row major order (from conv3d in PatchEmbedding3D)
+
+        Returns:
+            (batch, num_merged_patches, llm_d_in) projected to text embedding dim
+        """
+        b, n_patches, vit_d_out = x.shape
+        t = n_patches // (self.n_h_patches * self.n_w_patches)  # time dim (actual num of frames)
+
+        x = self.norm(x)  # norm, before merging
+
+        # Group 2x2 patches: reshape to grid, reorder so each 2x2 block is contiguous, then flatten
+        x = x.view(b, t, self.n_h_patches // self.m, self.m, self.n_w_patches // self.m, self.m, vit_d_out)
+        x = x.permute(0, 1, 2, 4, 3, 5, 6).contiguous()  # shape (b, t, block_h, block_w, m, m, vit_d_out)
+        x = x.view(b, -1, self.merged_size)  # shape (b, num_merged_patches, merged_size)
+
+        x = self.lin2(self.activ(self.lin1(x)))  # shape (b, num_merged_patches, llm_d_in)
+
+        return x
+
 
 # quick inline test
 if __name__ == "__main__":
