@@ -349,9 +349,10 @@ QWEN3_NEXT_SMALL_CONFIG = {
 }
 
 
-# hardcoded Qwen3.5-0.8B text-only config TODO
+# Qwen3.5-0.8B config Vision + Text
 # From: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
 QWEN3_5_08B_CONFIG = {
+    # --- Text config keys ---
     "model_path": "Qwen/Qwen3.5-0.8B",
     "vocab_size": 248_320,
     "emb_dim": 1024,  # hidden_size
@@ -374,6 +375,28 @@ QWEN3_5_08B_CONFIG = {
     "dtype": torch.bfloat16,
     "p_dropout": 0.0,
     "training": False,
+    "mrope_section": [11, 11, 10],
+    # --- Vision config keys ---
+    "vision_n_layers": 12,  # depth
+    "vision_emb_dim": 768,  # hidden_size
+    "vision_hidden_act": "gelu_pytorch_tanh",  # unused
+    "vision_hidden_dim": 3072,  # intermediate_size
+    "vision_num_heads": 12,
+    "llm_d_in": 1024,  # also called out_hidden_size, must match text emb_dim
+    "in_channels": 3,
+    "patch_size": 16,
+    "spatial_merge_size": 2,
+    "temporal_patch_size": 2,
+    "num_position_embeddings": 2304,
+    # fixed image size for simplification
+    "img_width": 384,
+    "img_height": 384,
+    "vision_rope_base": 10_000,
+    # Special token IDs
+    "image_token_id": 248056,
+    "vision_start_token_id": 248053,
+    "vision_end_token_id": 248054,
+    "video_token_id": 248057,
 }
 
 
