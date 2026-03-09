@@ -14,7 +14,7 @@ from safetensors.torch import load_file
 from transformers import AutoTokenizer
 
 from config import QWEN3_5_08B_CONFIG
-from llm_quest.qwen.qwen3_5.qwen3_5_model import Qwen3_5Model
+from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5Model
 
 
 def get_remapping_rules():

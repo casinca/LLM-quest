@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 
 from config import QWEN3_5_08B_CONFIG, auto_device
 from llm_quest.generate import generate_loop
-from llm_quest.qwen.qwen3_5.qwen3_5_model import Qwen3_5Model
+from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5Model
 from llm_quest.qwen.qwen3_5.qwen3_5_weight_loading import load_qwen3_5_weights
 
 ###########
