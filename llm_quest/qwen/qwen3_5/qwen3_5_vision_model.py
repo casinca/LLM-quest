@@ -275,9 +275,9 @@ class Qwen3_5VisionModel(nn.Module):
 
         assert img_width % patch_size == 0, f"Image width {img_width} not divisible by patch size {patch_size}"
         assert img_height % patch_size == 0, f"Image height {img_height} not divisible by patch size {patch_size}"
-        n_width_patches = img_width // patch_size
-        n_height_patches = img_height // patch_size
-        self.n_spatial_patches = n_width_patches * n_height_patches
+        self.n_width_patches = img_width // patch_size
+        self.n_height_patches = img_height // patch_size
+        self.n_spatial_patches = self.n_width_patches * self.n_height_patches
 
         # Since we are doing fixed size, we expect the number of patches per image to be less than the maximum capacity
         # of the model. With variable size, the max capacity is used to downsize larger images.
@@ -310,8 +310,8 @@ class Qwen3_5VisionModel(nn.Module):
         cos, sin = VisionRoPE.compute_angles_2d(
             base=cfg["rope_base"],
             head_dim=emb_dim // num_heads,
-            height_patches=n_height_patches,
-            width_patches=n_width_patches,
+            height_patches=self.n_height_patches,
+            width_patches=self.n_width_patches,
             num_frames=1,
         )
         self.register_buffer("cos", cos, persistent=False)
@@ -323,8 +323,8 @@ class Qwen3_5VisionModel(nn.Module):
         self.merge_adapter = ViTMergeAdapter(
             vit_d_out=emb_dim,
             llm_d_in=llm_d_in,
-            n_height_patches=n_height_patches,
-            n_width_patches=n_width_patches,
+            n_height_patches=self.n_height_patches,
+            n_width_patches=self.n_width_patches,
             spatial_merge_size=cfg["spatial_merge_size"],
         )
 
@@ -491,10 +491,10 @@ if __name__ == "__main__":
 
     # Simulate a single 384x384 image video of length 2 (1 batch, 3 channels, 2 time, 384 H, 384 W)
     batch_size = 1
-    pixel_values = torch.randn(batch_size, 3, 2, 384, 384)
+    image_pixels = torch.randn(batch_size, 3, 2, 384, 384)
 
-    output = model(pixel_values)
-    print(f"Input pixel shape: {pixel_values.shape}")
+    output = model(image_pixels)
+    print(f"Input pixel shape: {image_pixels.shape}")
     print(f"Output shape: {output.shape}")
     # Expected:
     # num_height_patches, num_width_patches each 384/16 = 24
