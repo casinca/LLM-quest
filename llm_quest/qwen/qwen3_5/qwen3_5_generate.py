@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 
 from config import QWEN3_5_08B_CONFIG, auto_device
 from llm_quest.generate import generate_loop
-from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5Model
+from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5TextModel
 from llm_quest.qwen.qwen3_5.qwen3_5_weight_loading import load_qwen3_5_weights
 
 ###########
@@ -34,7 +34,7 @@ prompt = "Give me a short introduction to large language models."
 # Prep #
 ########
 
-qwen3_5_model = Qwen3_5Model(model_cfg)
+qwen3_5_model = Qwen3_5TextModel(model_cfg)
 qwen3_5_model = load_qwen3_5_weights(qwen3_5_model, model_cfg)
 qwen3_5_model.to(device).eval()
 

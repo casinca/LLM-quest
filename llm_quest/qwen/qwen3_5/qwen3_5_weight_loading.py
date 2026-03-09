@@ -14,7 +14,7 @@ from safetensors.torch import load_file
 from transformers import AutoTokenizer
 
 from config import QWEN3_5_08B_CONFIG
-from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5Model
+from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5TextModel
 
 
 def get_remapping_rules():
@@ -198,7 +198,7 @@ def test_generation_with_weights(device="cuda"):
     model_cfg = QWEN3_5_08B_CONFIG
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["model_path"])
 
-    model = Qwen3_5Model(model_cfg)
+    model = Qwen3_5TextModel(model_cfg)
     model = load_qwen3_5_weights(model=model, model_cfg=model_cfg)
     model.to(device).eval()
 

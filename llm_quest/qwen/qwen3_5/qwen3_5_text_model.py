@@ -198,8 +198,7 @@ class Qwen3_5TransformerBlock(nn.Module):
 #
 # - Uses dense SwiGLU FFN instead of MoE (handled by the transformer block)
 # - Uses FusedGatedDeltaNet (fused weights) for linear_attention layers
-# - TODO No MRoPE yet later with vision, text generation checking first
-class Qwen3_5Model(nn.Module):
+class Qwen3_5TextModel(nn.Module):
     """
     Qwen3.5 implementation, similar to Qwen3-Next at this level of the architecture:
     - We pass the layer idx to the transformer block to determine which attention block to use
@@ -311,7 +310,7 @@ if __name__ == "__main__":
     print("\n--- Testing Qwen3_5Model ---")
 
     torch.manual_seed(123)
-    model = Qwen3_5Model(config.QWEN3_5_08B_CONFIG)
+    model = Qwen3_5TextModel(config.QWEN3_5_08B_CONFIG)
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {num_params:,}")
