@@ -117,8 +117,8 @@ class Qwen3_5VisionFFN(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.lin1 = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"])
-        self.lin2 = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"])
+        self.lin1 = nn.Linear(cfg["vision_emb_dim"], cfg["vision_hidden_dim"])
+        self.lin2 = nn.Linear(cfg["vision_hidden_dim"], cfg["vision_emb_dim"])
         self.activ = nn.GELU(approximate="tanh")
 
     def forward(self, x):
@@ -142,8 +142,8 @@ class Qwen3_5VisionAttention(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         # Qwen chose d_in = d_out, also called hidden_size in HF
-        self.d_in = cfg["emb_dim"]
-        self.num_heads = cfg["num_heads"]
+        self.d_in = cfg["vision_emb_dim"]
+        self.num_heads = cfg["vision_num_heads"]
         self.head_dim = self.d_in // self.num_heads
 
         # Fused QKV with bias
@@ -210,8 +210,8 @@ class Qwen3_5VisionTransformerBlock(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.norm1 = nn.LayerNorm(cfg["emb_dim"], eps=1e-6)
-        self.norm2 = nn.LayerNorm(cfg["emb_dim"], eps=1e-6)
+        self.norm1 = nn.LayerNorm(cfg["vision_emb_dim"], eps=1e-6)
+        self.norm2 = nn.LayerNorm(cfg["vision_emb_dim"], eps=1e-6)
         self.att = Qwen3_5VisionAttention(cfg)
         self.ffn = Qwen3_5VisionFFN(cfg)
 
@@ -269,6 +269,13 @@ class Qwen3_5VisionModel(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
+
+        emb_dim = cfg["vision_emb_dim"]
+        n_layers = cfg["vision_n_layers"]
+        num_heads = cfg["vision_num_heads"]
+        rope_base = cfg["vision_rope_base"]
+        llm_d_in = cfg["llm_d_in"]  # also called out_hidden_size = llm/text model emb_dim
+
         img_width = cfg["img_width"]
         img_height = cfg["img_height"]
         patch_size = cfg["patch_size"]
@@ -285,10 +292,6 @@ class Qwen3_5VisionModel(nn.Module):
             f"the image size {img_width}x{img_height} "
             f"is too large for the number of position embeddings {cfg['num_position_embeddings']}"
         )
-
-        emb_dim = cfg["emb_dim"]  # d_in = d_out = hidden_size
-        llm_d_in = cfg["llm_d_in"]
-        num_heads = cfg["num_heads"]
 
         self.patch_embed = PatchEmbedding3D(
             img_width=img_width,
@@ -308,7 +311,7 @@ class Qwen3_5VisionModel(nn.Module):
         # Concerning `num_frames=1`, instead of storing duplicated angles for each fixed size frame, we repeat in the
         # forward pass for memory efficiency.
         cos, sin = VisionRoPE.compute_angles_2d(
-            base=cfg["rope_base"],
+            base=rope_base,
             head_dim=emb_dim // num_heads,
             height_patches=self.n_height_patches,
             width_patches=self.n_width_patches,
@@ -317,7 +320,7 @@ class Qwen3_5VisionModel(nn.Module):
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
-        self.blocks = nn.ModuleList([Qwen3_5VisionTransformerBlock(cfg=cfg) for _ in range(cfg["n_layers"])])
+        self.blocks = nn.ModuleList([Qwen3_5VisionTransformerBlock(cfg=cfg) for _ in range(n_layers)])
 
         # Head is: spatial merge + project to text model dim
         self.merge_adapter = ViTMergeAdapter(
@@ -453,12 +456,12 @@ if __name__ == "__main__":
 
     #  --- dummy test for Qwen3_5VisionAttention ---
     dummy_cfg = {
-        "emb_dim": emb_dim,  # d_in = d_out = hidden_size
-        "num_heads": 4,
+        "vision_emb_dim": emb_dim,  # d_in = d_out = hidden_size
+        "vision_num_heads": 4,
     }
     cos, sin = VisionRoPE.compute_angles_2d(
         base=10000,
-        head_dim=dummy_cfg["emb_dim"] // dummy_cfg["num_heads"],
+        head_dim=dummy_cfg["vision_emb_dim"] // dummy_cfg["vision_num_heads"],
         height_patches=num_patches_h,
         width_patches=num_patches_w,
         num_frames=num_frames,
@@ -471,11 +474,11 @@ if __name__ == "__main__":
 
     # Test with a simple vision config (matching ~Qwen3.5-0.8B vision)
     test_cfg = {
-        "n_layers": 2,
-        "emb_dim": 768,
-        "hidden_dim": 3072,
-        "num_heads": 12,
-        "rope_base": 10000,
+        "vision_n_layers": 2,
+        "vision_emb_dim": 768,
+        "vision_hidden_dim": 3072,
+        "vision_num_heads": 12,
+        "vision_rope_base": 10000,
         "spatial_merge_size": 2,
         "patch_size": 16,
         "temporal_patch_size": 2,
