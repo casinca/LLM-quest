@@ -1,3 +1,5 @@
+import os
+import json
 import functools
 import itertools
 import math
@@ -6,6 +8,9 @@ import time
 
 import torch
 import torch.nn.functional as F
+from huggingface_hub import hf_hub_download, snapshot_download
+from safetensors.torch import load_file
+from transformers import AutoTokenizer
 
 
 # timing decorator
@@ -777,3 +782,146 @@ class BirkhoffvonNeumann(torch.nn.Module):
 
     def __call__(self, weight_a):
         return self.bvn_composition(weight_a)
+
+
+def download_hf_weights(hf_model_name):
+    """
+    Download model weights from Hugging Face and return the state dict.
+    Supports both single file and sharded models.
+    """
+    print(f"Loading {hf_model_name} from Hugging Face...")
+    try:
+        print("Downloading weights...")
+        repo_dir = snapshot_download(repo_id=hf_model_name)
+
+        index_path = os.path.join(repo_dir, "model.safetensors.index.json")
+        if os.path.exists(index_path):
+            with open(index_path, "r") as f:
+                index = json.load(f)
+
+            hf_state_dict = {}
+            for filename in set(index["weight_map"].values()):
+                shard_path = os.path.join(repo_dir, filename)
+                shard = load_file(shard_path)
+                hf_state_dict.update(shard)
+            print(f"Successfully loaded weights from {hf_model_name}")
+        else:
+            weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
+            hf_state_dict = load_file(weights_file)
+            print(f"Successfully loaded weights from {hf_model_name}")
+            
+        return hf_state_dict
+
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        raise
+
+
+def convert_weights(hf_state_dict, our_state_dict, remapping_rules, ignored_prefixes=None):
+    """
+    Convert Hugging Face weights to our implementation weights.
+
+    Args:
+        hf_state_dict (dict): Hugging Face state dictionary
+        our_state_dict (dict): Our implementation state dictionary
+        remapping_rules (list): Remapping rules
+        ignored_prefixes (tuple): Optional prefixes of weights to skip
+    """
+    if ignored_prefixes is None:
+        ignored_prefixes = ()
+        
+    converted_weights = {}
+    skipped = []
+
+    for hf_name, hf_weight in hf_state_dict.items():
+        if ignored_prefixes and any(hf_name.startswith(prefix) for prefix in ignored_prefixes):
+            skipped.append(hf_name)
+            continue
+
+        our_name = hf_name
+        for pattern, replacement in remapping_rules:
+            if pattern in our_name:
+                our_name = our_name.replace(pattern, replacement)
+                if pattern == hf_name:
+                    break
+
+        if our_name in our_state_dict:
+            if hf_weight.shape == our_state_dict[our_name].shape:
+                converted_weights[our_name] = hf_weight.clone()
+            else:
+                print(
+                    f"WARNING: Shape mismatch: {our_name}: HF {hf_weight.shape} vs Ours {our_state_dict[our_name].shape}"
+                )
+        else:
+            print(f"WARNING: No match for HF weight '{hf_name}' → tried '{our_name}'")
+
+    if skipped:
+        print(f"Skipped {len(skipped)} weights")
+
+    return converted_weights
+
+
+def handle_weight_tying(model):
+    """Handle weight tying after loading pretrained weights."""
+    if not (hasattr(model, "tie_embeddings") and model.tie_embeddings):
+        print("Tie_embeddings=False, skipping weight tying\n")
+        return
+
+    print("\nTie_embeddings=True, trying weight tying...")
+    
+    emb_shape = model.emb_dict.weight.shape
+    out_shape = model.out_head.weight.shape
+    
+    if emb_shape != out_shape:
+        print(f"WARNING: Shape mismatch for weight tying: {emb_shape} vs {out_shape}")
+        return
+
+    model.out_head.weight = model.emb_dict.weight
+
+    # sanity check
+    if id(model.emb_dict.weight) == id(model.out_head.weight):
+        print("Weight tied successfully\n")
+    else:
+        print("WARNING: Weight tying failed!\n")
+
+
+def report_loading_status(model, load_result, converted_weights):
+    """Report loading results."""
+    print(f"Loaded {len(converted_weights)}/{len(model.state_dict())} weights successfully\n")
+
+    if load_result.missing_keys:
+        print(f"Missing keys ({len(load_result.missing_keys)}):")
+        print(f"-> Missing keys list: {load_result.missing_keys}")
+        print("-> lm_head/out_head expected to be missing with tie_embeddings=True")
+        print("-> custom buffers expected to be missing, ex: mask, cos, sin\n")
+
+    if load_result.unexpected_keys:
+        print(f"Unexpected keys: {load_result.unexpected_keys}")
+
+
+def test_generation_with_weights(model, model_cfg, device="cuda"):
+    """
+    Test the loaded model with a simple generation
+    """
+    print("\n=== Testing Generation ===")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_cfg["model_path"])
+
+    model.to(device).eval()
+
+    prompt = "Give me a short introduction to large language models."
+    print(f"Prompt: '{prompt}'\n")
+
+    # simple greedy generation
+    input_ids = torch.tensor([tokenizer.encode(prompt)]).to(device)
+
+    for _ in range(20):
+        with torch.no_grad():
+            logits = model(input_ids)
+            next_token = torch.argmax(logits[:, -1, :], dim=-1)
+            input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=1)
+
+    generated_text = tokenizer.decode(input_ids[0].tolist())
+    print(f"Generated: {generated_text}")
+
+

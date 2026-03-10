@@ -2,19 +2,21 @@
 This module loads pretrained Qwen3.5 models from Hugging Face
 and converts them to work with our custom Qwen3.5 implementation.
 
-Copy/paste from `qwen3_weight_loading.py`.
+Similar to `qwen3_weight_loading.py`.
 """
 
-import json
-import os
-
 import torch
-from huggingface_hub import hf_hub_download, snapshot_download
-from safetensors.torch import load_file
-from transformers import AutoTokenizer
 
 from config import QWEN3_5_08B_CONFIG
 from llm_quest.qwen.qwen3_5.qwen3_5_text_model import Qwen3_5TextModel
+from llm_quest.qwen.qwen3_5.qwen3_5_vlm_model import Qwen3_5VLM
+from llm_quest.utils import (
+    convert_weights,
+    download_hf_weights,
+    handle_weight_tying,
+    report_loading_status,
+    test_generation_with_weights,
+)
 
 
 def get_remapping_rules():
@@ -55,51 +57,31 @@ def get_remapping_rules():
     return rules
 
 
-def _convert_weights(hf_state_dict, our_state_dict, remapping_rules, ignored_prefixes=None):
-    """
-    Convert HF weights to our implementation weights.
-
-    Args:
-    hf_state_dict (dict): Hugging Face state dictionary
-    our_state_dict (dict): Our implementation state dictionary
-    remapping_rules (list): Remapping rules
-    """
-    if ignored_prefixes is None:
-        ignored_prefixes = ("model.visual.", "mtp.")  # skip vision and MTP weights TODO
-
-    converted_weights = {}
-    skipped = []
-
-    for hf_name, hf_weight in hf_state_dict.items():
-        # skip vision/MTP weights
-        if any(hf_name.startswith(prefix) for prefix in ignored_prefixes):
-            skipped.append(hf_name)
-            continue
-
-        our_name = hf_name
-        for pattern, replacement in remapping_rules:
-            if pattern in our_name:
-                our_name = our_name.replace(pattern, replacement)
-                if pattern == hf_name:
-                    break
-
-        if our_name in our_state_dict:
-            if hf_weight.shape == our_state_dict[our_name].shape:
-                converted_weights[our_name] = hf_weight.clone()
-            else:
-                print(
-                    f"WARNING: Shape mismatch: {our_name}: HF {hf_weight.shape} vs Ours {our_state_dict[our_name].shape}"
-                )
-        else:
-            print(f"WARNING: No match for HF weight '{hf_name}' → tried '{our_name}'")
-
-    if skipped:
-        print(f"Skipped {len(skipped)} weights (vision/MTP)")
-
-    return converted_weights
+def get_vision_remapping_rules():
+    """Get the remapping rules for converting HF vision weight names to our implementation names."""
+    rules = [
+        # patch embedding
+        ("model.visual.patch_embed.proj.", "patch_embed.conv_proj."),
+        # positional embedding
+        ("model.visual.pos_embed.", "pos_embed."),
+        # vision transformer blocks
+        ("model.visual.blocks.", "blocks."),
+        # attention
+        (".attn.qkv.", ".att.qkv."),
+        (".attn.proj.", ".att.proj."),
+        # FFN
+        (".mlp.linear_fc1.", ".ffn.lin1."),
+        (".mlp.linear_fc2.", ".ffn.lin2."),
+        # norm1 and norm2 already match between HF and ours
+        # merger / merge_adapter
+        ("model.visual.merger.norm.", "merge_adapter.norm."),
+        ("model.visual.merger.linear_fc1.", "merge_adapter.lin1."),
+        ("model.visual.merger.linear_fc2.", "merge_adapter.lin2."),
+    ]
+    return rules
 
 
-def load_qwen3_5_weights(model, model_cfg):
+def load_qwen3_5_text_weights(model, model_cfg):
     """
     Download Qwen3.5 weights from HF and convert + load to our implementation.
 
@@ -107,33 +89,10 @@ def load_qwen3_5_weights(model, model_cfg):
         model: our Qwen3.5 model with corresponding weights loaded
     """
     hf_model_name = model_cfg["model_path"]
-    print(f"Loading {hf_model_name} from Hugging Face...")
 
     #########################
     ### Download weights ###
-    try:
-        print("Downloading weights...")
-        repo_dir = snapshot_download(repo_id=hf_model_name)
-
-        index_path = os.path.join(repo_dir, "model.safetensors.index.json")
-        if os.path.exists(index_path):
-            with open(index_path, "r") as f:
-                index = json.load(f)
-
-            hf_state_dict = {}
-            for filename in set(index["weight_map"].values()):
-                shard_path = os.path.join(repo_dir, filename)
-                shard = load_file(shard_path)
-                hf_state_dict.update(shard)
-            print(f"Successfully loaded weights from {hf_model_name}")
-        else:
-            weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
-            hf_state_dict = load_file(weights_file)
-            print(f"Successfully loaded weights from {hf_model_name}")
-
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        raise
+    hf_state_dict = download_hf_weights(hf_model_name)
 
     # Get remapping rules and our model state dict
     remapping_rules = get_remapping_rules()
@@ -142,81 +101,93 @@ def load_qwen3_5_weights(model, model_cfg):
     ########################
     ### Convert weights ###
     print("\nConverting weights...")
-    converted_weights = _convert_weights(hf_state_dict, our_state_dict, remapping_rules)
+    converted_weights = convert_weights(
+        hf_state_dict, our_state_dict, remapping_rules, ignored_prefixes=("model.visual.", "mtp.")
+    )
 
     #####################
     ### Load weights ###
     with torch.no_grad():
         load_result = model.load_state_dict(converted_weights, strict=False)
-        _handle_weight_tying(model)
+        handle_weight_tying(model)
 
-    _report_loading_status(model, load_result, converted_weights)
+    report_loading_status(model, load_result, converted_weights)
 
     return model
 
 
-def _handle_weight_tying(model):
-    """Handle weight tying after loading pretrained weights."""
-    if not (hasattr(model, "tie_embeddings") and model.tie_embeddings):
-        print("Tie_embeddings=False, skipping weight tying\n")
-        return
-
-    print("\nTie_embeddings=True, trying weight tying...")
-    emb_shape, out_shape = model.emb_dict.weight.shape, model.out_head.weight.shape
-    if emb_shape != out_shape:
-        print(f"WARNING: Shape mismatch for weight tying: {emb_shape} vs {out_shape}")
-        return
-
-    model.out_head.weight = model.emb_dict.weight
-
-    # sanity check
-    if id(model.emb_dict.weight) == id(model.out_head.weight):
-        print("Weight tied successfully\n")
-    else:
-        print("WARNING: Weight tying failed!\n")
-
-
-def _report_loading_status(model, load_result, converted_weights):
-    """Report loading results."""
-    print(f"Loaded {len(converted_weights)}/{len(model.state_dict())} weights successfully\n")
-
-    if load_result.missing_keys:
-        print(f"Missing keys ({len(load_result.missing_keys)}):")
-        print("-> lm_head/out_head expected to be missing with tie_embeddings=True")
-        print("-> custom buffers expected to be missing, ex: mask, cos, sin\n")
-
-    if load_result.unexpected_keys:
-        print(f"Unexpected keys: {load_result.unexpected_keys}")
-
-
-def test_generation_with_weights(device="cuda"):
+def load_qwen3_5_vlm_weights(model, model_cfg):
     """
-    Test the loaded model with a simple generation
+    Download Qwen3.5 weights from HF and convert + load to our VLM implementation.
+    Loads both text AND vision weights.
+
+    returns:
+        model: our Qwen3.5 VLM model with corresponding weights loaded
     """
-    print("\n=== Testing Generation ===")
+    hf_model_name = model_cfg["model_path"]
 
-    model_cfg = QWEN3_5_08B_CONFIG
-    tokenizer = AutoTokenizer.from_pretrained(model_cfg["model_path"])
+    #########################
+    ### Download weights ###
+    hf_state_dict = download_hf_weights(hf_model_name)
 
-    model = Qwen3_5TextModel(model_cfg)
-    model = load_qwen3_5_weights(model=model, model_cfg=model_cfg)
-    model.to(device).eval()
+    ########################
+    ### Convert weights ###
+    print("\nConverting weights (text + vision)...")
 
-    prompt = "Give me a short introduction to large language models."
-    print(f"Prompt: '{prompt}'\n")
+    # Convert text weights separately
+    text_state_dict = model.language_model.state_dict()
+    text_converted = convert_weights(
+        hf_state_dict, text_state_dict, get_remapping_rules(), ignored_prefixes=("model.visual.", "mtp.")
+    )
 
-    input_ids = torch.tensor([tokenizer.encode(prompt)]).to(device)
+    # Convert vision weights separately
+    vision_state_dict = model.vision_model.state_dict()
+    vision_converted = convert_weights(
+        hf_state_dict,
+        vision_state_dict,
+        get_vision_remapping_rules(),
+        ignored_prefixes=("model.language_model.", "mtp."),
+    )
 
-    for _ in range(20):
-        with torch.no_grad():
-            logits = model(input_ids)
-            next_token = torch.argmax(logits[:, -1, :], dim=-1)
-            input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=1)
+    #####################
+    ### Load weights ###
+    with torch.no_grad():
+        load_result_text = model.language_model.load_state_dict(text_converted, strict=False)
+        load_result_vision = model.vision_model.load_state_dict(vision_converted, strict=False)
+        handle_weight_tying(model.language_model)
 
-    generated_text = tokenizer.decode(input_ids[0].tolist())
-    print(f"Generated: {generated_text}")
+    # Local reconstruct load results for uniform reporting (overlaps)
+    from collections import namedtuple
+
+    LoadResult = namedtuple("LoadResult", ["missing_keys", "unexpected_keys"])
+
+    missing_keys = [f"language_model.{k}" for k in load_result_text.missing_keys] + [
+        f"vision_model.{k}" for k in load_result_vision.missing_keys
+    ]
+    unexpected = [f"language_model.{k}" for k in load_result_text.unexpected_keys] + [
+        f"vision_model.{k}" for k in load_result_vision.unexpected_keys
+    ]
+
+    combined_result = LoadResult(missing_keys, unexpected)
+
+    combined_weights = {f"language_model.{k}": v for k, v in text_converted.items()}
+    combined_weights.update({f"vision_model.{k}": v for k, v in vision_converted.items()})
+
+    report_loading_status(model, combined_result, combined_weights)
+
+    return model
 
 
 if __name__ == "__main__":
     torch.manual_seed(123)
-    test_generation_with_weights()
+
+    model_cfg = QWEN3_5_08B_CONFIG
+    model_text = Qwen3_5TextModel(model_cfg)
+    model_text = load_qwen3_5_text_weights(model=model_text, model_cfg=model_cfg)
+    test_generation_with_weights(model_text, model_cfg)
+
+    # test Final VLM weights load correctly
+    print("\n------\n")
+    model_cfg = QWEN3_5_08B_CONFIG
+    model_vlm = Qwen3_5VLM(model_cfg)
+    model_vlm = load_qwen3_5_vlm_weights(model=model_vlm, model_cfg=model_cfg)
