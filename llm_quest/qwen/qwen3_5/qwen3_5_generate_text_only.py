@@ -1,4 +1,8 @@
-# TODO simple copy of qwen3_generate.py for now
+"""
+This is a text only generation, to make sure the text part of the VLM worked as expected before doing
+everything all at once.
+"""
+
 import torch
 from transformers import AutoTokenizer
 
