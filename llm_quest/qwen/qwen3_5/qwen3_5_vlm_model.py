@@ -36,15 +36,26 @@ class Qwen3_5VLM(nn.Module):
         Not handling variable size, so H and W should be the same for all images
 
         Args:
-            image_pixels: (b, c, t, h, w) preprocessed image pixels
+            (both formats supported)
+            - 5D: (b, c, t, h, w) → image pixels - (original style, our PatchEmbedding3D)
+            - 3D: (b, num_patches, features) → pre-extracted patches - (HuggingFace style, Qwen3_5VisionPatchEmbed)
 
         Returns:
             feeds_3d_shape: (num_feeds, 3) shape of each separated feed / number of independent visual inputs
 
         """
-        n_frames = image_pixels.shape[2]
-        n_actual_frames = n_frames // self.cfg["temporal_patch_size"]
         n_height_patches = self.vision_model.n_height_patches
         n_width_patches = self.vision_model.n_width_patches
+        n_spatial_patches = n_height_patches * n_width_patches
+
+        if image_pixels.dim() == 5:
+            # shape[2] is the time/temporal dimension
+            n_actual_frames = image_pixels.shape[2] // self.cfg["temporal_patch_size"]
+
+        # if input is HF like 3D (b, num_patches, features)
+        else:
+            # not image_pixels in this case, patches are already temporally merged by the preprocessing
+            # so n_actual_frames = num_patches // n_spatial_patches
+            n_actual_frames = image_pixels.shape[1] // n_spatial_patches
 
         return torch.tensor([[n_actual_frames, n_height_patches, n_width_patches]])  # (1, 3) 3 for t, h, w
