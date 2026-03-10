@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from llm_quest.common.buffers import GlobalBuffers
+from llm_quest.common.rope import RoPE
 from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
 from llm_quest.qwen.qwen3.qwen3_transformer_block import FFN
 from llm_quest.qwen.qwen3_next.qwen3_next_attention import (
@@ -11,7 +12,6 @@ from llm_quest.qwen.qwen3_next.qwen3_next_attention import (
     gated_delta_rule,
     l2_norm,
 )
-from llm_quest.common.rope import RoPE
 
 # The full_attention layers (`GatedAttention` class) are re-used from Qwen3-Next in `qwen3_next_attention.py`.
 # So nothing changes for these.
@@ -150,13 +150,16 @@ class FusedGatedDeltaNet(nn.Module):
 
 class MRoPEGatedAttention(GatedAttention):
     """
-    Extends GatedAttention with Multimodal RoPE (MRoPE) for multimodal inputs.
-    That's all
+    Same as GatedAttention but with Multimodal RoPE (MRoPE) for multimodal inputs. That's it.
     """
 
-    def forward(self, x, mask, cos, sin, attn_mask=None, position_ids=None, mrope_section=None):
-        if position_ids is None or mrope_section is None:
-            return super().forward(x, mask, cos, sin, attn_mask)
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.mrope_section = cfg["mrope_section"]
+
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
+        if position_ids is None:
+            return super().forward(x, mask, cos, sin, attn_mask=attn_mask)
 
         b, seq_len, d_in = x.shape
 
@@ -176,9 +179,9 @@ class MRoPEGatedAttention(GatedAttention):
         keys = self.k_norm(keys)
 
         # MRoPE: apply interleaved 3D positional encoding instead of standard RoPE
-        # works with 1D (text-only) too 
-        queries = RoPE.apply_mrope(queries, cos, sin, position_ids, mrope_section)
-        keys = RoPE.apply_mrope(keys, cos, sin, position_ids, mrope_section)
+        # works with 1D (text-only) too
+        queries = RoPE.apply_mrope(queries, cos, sin, position_ids, self.mrope_section)
+        keys = RoPE.apply_mrope(keys, cos, sin, position_ids, self.mrope_section)
 
         curr_mask = mask[:seq_len, :seq_len]
         if attn_mask is not None:
@@ -210,6 +213,7 @@ class Qwen3_5TransformerBlock(nn.Module):
     Differences from Qwen3-Next (qwen3_next_transformer_block.py):
     - Uses FusedGatedDeltaNet for linear_attention layers (fused to match HF pretrained weights)
     - Dense SwiGLU FFN (from Qwen3) instead of MoE for loading smaller models
+    - Supports MRoPE 3D type position IDs for multimodal inputs
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
@@ -220,25 +224,30 @@ class Qwen3_5TransformerBlock(nn.Module):
         super().__init__()
 
         interval = cfg["linear_sdpa_ratio"]
-        # hybrid attention architecture: alternating between FusedGatedDeltaNet and GatedAttention
-        self.att = FusedGatedDeltaNet(cfg) if (layer_idx + 1) % interval else GatedAttention(cfg)
+        # hybrid attention architecture: alternating between FusedGatedDeltaNet and MRoPEGatedAttention
+        self.att = FusedGatedDeltaNet(cfg) if (layer_idx + 1) % interval else MRoPEGatedAttention(cfg)
         self.norm1 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin, attn_mask=None):
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
         """
         args:
             x: (b, seq_len, emb_dim)
             mask: (seq_len, seq_len) causal mask (inverted for SDPA: True = masked)
-            cos, sin: RoPE cos/sin
+            cos, sin: RoPE cos/sin buffers (ctx_len, rotation_dim*) *head_dim or partial
+            position_ids: (3, b, seq_len) MRoPE position IDs
             attn_mask: (b, seq_len) 1=real token, 0=padding
         """
         residual = x
         x = self.norm1(x)
 
         # dispatching based on attention type (full/classic attention or linear attention)
-        x = self.att(x, mask, cos, sin, attn_mask) if isinstance(self.att, GatedAttention) else self.att(x, attn_mask)
+        x = (
+            self.att(x, mask, cos, sin, position_ids, attn_mask)
+            if isinstance(self.att, MRoPEGatedAttention)
+            else self.att(x, attn_mask)  # FusedGatedDeltaNet (linear attention)
+        )
 
         x = x + residual
 
@@ -254,11 +263,17 @@ class Qwen3_5TransformerBlock(nn.Module):
 #
 # - Uses dense SwiGLU FFN instead of MoE (handled by the transformer block)
 # - Uses FusedGatedDeltaNet (fused weights) for linear_attention layers
+# - Supports MRoPE position IDs for multimodal (vision+text) inputs
+# - Supports pre-computed input embeddings (inputs_embs) for VLM early fusion
 class Qwen3_5TextModel(nn.Module):
     """
     Qwen3.5 implementation, similar to Qwen3-Next at this level of the architecture:
     - We pass the layer idx to the transformer block to determine which attention block to use
     - use Zero-Centered RMSNorm
+
+    Supports two forward modes:
+    - Text-only: pass input_ids, uses standard 1D RoPE
+    - Multimodal: pass inputs_embs + position_ids (3, b, s), uses MRoPE
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
@@ -304,12 +319,30 @@ class Qwen3_5TextModel(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x, attn_mask=None):
-        # x shape (b, s) → (b, s, emb_dim)
-        x = self.emb_dict(x)
+    def forward(self, x=None, attn_mask=None, inputs_embs=None, position_ids=None):
+        """
+        Forward pass supporting both text-only (token ids) and multimodal inputs (already as embeddings).
+
+        Args:
+            x: (b, s) input token IDs. Ignored if inputs_embs is provided.
+            attn_mask: (b, s) optional attention mask (1=real, 0=padding)
+            inputs_embs: (b, s, emb_dim) pre-computed embeddings (for VLM early fusion).
+                            If provided, skips the embedding lookup from x.
+            position_ids: (3, b, s) MRoPE position IDs (temporal/time, height, width).
+                            If None, just use classic 1D RoPE (text-only mode).
+
+        Returns:
+            logits: (b, s, vocab_size)
+        """
+        # Embedding: either from input IDs or pre-computed (for VLM)
+        if inputs_embs is not None:
+            x = inputs_embs
+        else:
+            # x shape (b, s) → (b, s, emb_dim)
+            x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin, attn_mask)
+            x = block(x, self.mask, self.cos, self.sin, position_ids, attn_mask)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
@@ -351,6 +384,7 @@ if __name__ == "__main__":
         "linear_value_head_dim": 4,
         "linear_conv_kernel_size": 3,
         "p_dropout": 0.0,
+        "mrope_section": [0, 1, 2],
         "training": False,
         "dtype": torch.bfloat16,
     }
