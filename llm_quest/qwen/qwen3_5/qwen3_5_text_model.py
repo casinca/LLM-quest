@@ -11,6 +11,7 @@ from llm_quest.qwen.qwen3_next.qwen3_next_attention import (
     gated_delta_rule,
     l2_norm,
 )
+from llm_quest.common.rope import RoPE
 
 # The full_attention layers (`GatedAttention` class) are re-used from Qwen3-Next in `qwen3_next_attention.py`.
 # So nothing changes for these.
@@ -145,6 +146,61 @@ class FusedGatedDeltaNet(nn.Module):
         output = self.out_proj(output)  # shape (b, seq_len, d_in)
 
         return output
+
+
+class MRoPEGatedAttention(GatedAttention):
+    """
+    Extends GatedAttention with Multimodal RoPE (MRoPE) for multimodal inputs.
+    That's all
+    """
+
+    def forward(self, x, mask, cos, sin, attn_mask=None, position_ids=None, mrope_section=None):
+        if position_ids is None or mrope_section is None:
+            return super().forward(x, mask, cos, sin, attn_mask)
+
+        b, seq_len, d_in = x.shape
+
+        queries_and_gate = self.w_queries_gate(x)
+        queries_and_gate = queries_and_gate.view(b, seq_len, self.num_heads, self.head_dim * 2)
+        queries, gate = torch.chunk(queries_and_gate, 2, dim=-1)
+        gate_output = torch.sigmoid(gate.reshape(b, seq_len, self.d_out))
+
+        keys = self.w_keys(x).view(b, seq_len, self.num_kv_groups, -1)
+        values = self.w_values(x).view(b, seq_len, self.num_kv_groups, -1)
+
+        queries = torch.transpose(queries, 1, 2)
+        keys = keys.transpose(1, 2)
+        values = values.transpose(1, 2)
+
+        queries = self.q_norm(queries)
+        keys = self.k_norm(keys)
+
+        # MRoPE: apply interleaved 3D positional encoding instead of standard RoPE
+        # works with 1D (text-only) too 
+        queries = RoPE.apply_mrope(queries, cos, sin, position_ids, mrope_section)
+        keys = RoPE.apply_mrope(keys, cos, sin, position_ids, mrope_section)
+
+        curr_mask = mask[:seq_len, :seq_len]
+        if attn_mask is not None:
+            curr_mask = curr_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+
+        ctx_tensor = nn.functional.scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            attn_mask=curr_mask,
+            is_causal=False,
+            dropout_p=self.p_dropout,
+            enable_gqa=True,
+        )
+
+        ctx_tensor = ctx_tensor.transpose(1, 2)
+        ctx_tensor = ctx_tensor.contiguous().view(b, seq_len, self.d_out)
+
+        ctx_tensor = ctx_tensor * gate_output
+        ctx_tensor = self.out_proj(ctx_tensor)
+
+        return ctx_tensor
 
 
 class Qwen3_5TransformerBlock(nn.Module):
