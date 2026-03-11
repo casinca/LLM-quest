@@ -271,6 +271,54 @@ class RoPE:
 
         return res
 
+    @staticmethod
+    def interleave_mrope_coeffs(cos, sin, mrope_section):
+        """
+        This follows HF `apply_interleaved_mrope` because we need to follow how (the order) MRoPE is applied.
+
+        We interleave rotary coefficients from cos and sin from chunked[TTT...HHH...WWW] layout to
+        interleaved[T,H,W, T,H,W, ..., T,T] layout, preserving 3D continuity.
+
+        In standard 1D RoPE the rotary coeffs are contiguous which makes sense in pure text (sequential). So early
+        rotary coeffs represent high frequencies and span up to later ones which are the low frequencies.
+        But here since we have 3D shapes (T, H, W), if we were to follow that
+        contiguous/chunked pattern[TTT...HHH...WWW], it means all the Time dimension would fill all the higher
+        frequencies and all the H's mid, and W's the lower frequencies. We end up with per dimension information rather
+        than per patch (T, H, C) natural/sequential order information.
+
+        That's why we interleave the rotary coefficients, so that each dimension (T, H, W) gets exposed to all types
+        (high, mid, low) of frequencies. Which is more inline with a per-patch sequential order.
+
+        So instead of standard 1D RoPE, where each Q and K vector (all `head_dim` features) is rotated based on a single
+        1D position, here 1/3 of features encode T rotations, 1/3 H and 1/3 W. The split is dedided by the
+        `mrope_section` arg.
+
+        Since T always gets the first slot of each triplet and may have extra slots at the end (when section sizes
+        differ), T has slightly more influence appropriate since temporal/text is the primary dimension.
+
+        Args:
+            cos: (3, batch, seq_len, head_dim // 2) first dim being "3" for each dimension (T, H, W)
+            sin: (3, batch, seq_len, head_dim // 2) first dim being "3" for each dimension (T, H, W)
+            mrope_section (list[int]): This is used to split the head_dim into 3 sections, for each
+            dimension (T, H, W). The 3 ints from mrope_section, give the amount of features for each dimension.
+                                sum(mrope_section) should equal head_dim * partial_rotary_factor // 2
+
+        Returns:
+            mrope_cos, mrope_sin: (batch, seq_len, head_dim // 2) interleaved rotary coefficients
+        """
+        # Start as prefilled T values (T will get positions 0, 3, 6, ...)
+        mrope_cos = cos[0].clone()  # (batch, seq_len, head_dim // 2)
+        mrope_sin = sin[0].clone()
+
+        # Overwrite Height and Width slots at interleaved positions
+        # ie H gets positions 1, 4, 7, ... and W gets positions 2, 5, 8, etc...
+        for dim, offset in enumerate((1, 2), start=1):  # the idx(dim) serves as dim=1 for H, dim=2 for W
+            length = mrope_section[dim] * 3
+            idx = slice(offset, length, 3)  # stride-3 starting at offset
+            mrope_cos[..., idx] = cos[dim, ..., idx]
+            mrope_sin[..., idx] = sin[dim, ..., idx]
+
+        return mrope_cos, mrope_sin
 
 class VisionRoPE:
     """
