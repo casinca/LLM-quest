@@ -134,3 +134,63 @@ class Qwen3_5VLM(nn.Module):
 
 
 # quick test
+if __name__ == "__main__":
+    import config
+
+    torch.manual_seed(123)
+
+    cfg = config.QWEN3_5_08B_CONFIG
+    dummy_cfg = dict(cfg)
+    dummy_cfg.update(
+        {
+            "n_layers": 2,
+            "emb_dim": 768,
+            "hidden_dim": 3072,
+            "num_heads": 12,
+            "rope_base": 10000,
+            "spatial_merge_size": 2,
+            "patch_size": 16,
+            "temporal_patch_size": 2,
+            "img_width": 384,
+            "img_height": 384,
+            "in_channels": 3,
+            "num_position_embeddings": 2304,
+            "llm_d_in": 768,
+            "image_token_id": 248056,
+        }
+    )
+
+    model = Qwen3_5VLM(dummy_cfg)
+    total_params = sum(p.numel() for p in model.parameters())
+    vision_params = sum(p.numel() for p in model.vision_model.parameters())
+    text_params = sum(p.numel() for p in model.language_model.parameters())
+    print(f"Total params: {total_params:,}")
+    print(f"  Vision: {vision_params:,}")
+    print(f"  Text: {text_params:,}")
+
+    batch_size = 1
+    # shape (B, C, T, H, W)
+    # T/time=2 frames, so a video of 2 frames of 384x384 res
+    image_pixels = torch.randn(batch_size, 3, 2, 384, 384)
+
+    # Calculate expected number of merged image tokens
+    # h_patches, w_patches = 384 // 16 = 24
+    # spatial_patches = 24 * 24 = 576 per frame
+    # temporal_merged_frames = 2 // temporal_patch_size = 1
+    # merged_tokens = 576 // (spatial_merge_size^2) = 576 // 4 = 144
+    num_image_tokens = 144
+    image_token_id = dummy_cfg["image_token_id"]
+
+    # Input IDs with placeholder [5 text] + [144 image placeholders] + [5 text] = 154 total tokens
+    input_ids = torch.cat(
+        [
+            torch.randint(0, 1000, (batch_size, 5)),  # prefix text
+            torch.full((batch_size, num_image_tokens), image_token_id),  # image placeholders
+            torch.randint(0, 1000, (batch_size, 5)),  # suffix text
+        ],
+        dim=1,
+    )
+
+    print("\nforward pass")
+    logits = model(input_ids, image_pixels=image_pixels)
+    print(f"Logits shape: {logits.shape}")  # expected: (batch, 154, vocab_size)
