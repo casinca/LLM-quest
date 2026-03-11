@@ -2,6 +2,8 @@
 # This is a more explicit approach of RoPE vs Llama impl (which uses complex numbers directly)
 import torch
 
+# TODO now that logic works we might want to refactor duplication in RoPE, VisionRoPE, MRoPE
+
 
 class RoPE:
     @staticmethod
@@ -276,7 +278,7 @@ class RoPE:
         """
         This follows HF `apply_interleaved_mrope` because we need to follow how (the order) MRoPE is applied.
 
-        We interleave rotary coefficients from cos and sin from chunked[TTT...HHH...WWW] layout to
+        We interleave rotary coefficients from cos and sin from chunked [TTT...HHH...WWW] layout to
         interleaved[T,H,W, T,H,W, ..., T,T] layout, preserving 3D continuity.
 
         In standard 1D RoPE the rotary coeffs are contiguous which makes sense in pure text (sequential). So early
@@ -300,8 +302,8 @@ class RoPE:
             cos: (3, batch, seq_len, head_dim // 2) first dim being "3" for each dimension (T, H, W)
             sin: (3, batch, seq_len, head_dim // 2) first dim being "3" for each dimension (T, H, W)
             mrope_section (list[int]): This is used to split the head_dim into 3 sections, for each
-            dimension (T, H, W). The 3 ints from mrope_section, give the amount of features for each dimension.
-                                sum(mrope_section) should equal head_dim * partial_rotary_factor // 2
+                    dimension (T, H, W). The 3 ints from mrope_section, give the amount of features for each dimension.
+                    sum(mrope_section) should equal head_dim * partial_rotary_factor // 2
 
         Returns:
             mrope_cos, mrope_sin: (batch, seq_len, head_dim // 2) interleaved rotary coefficients
@@ -319,6 +321,75 @@ class RoPE:
             mrope_sin[..., idx] = sin[dim, ..., idx]
 
         return mrope_cos, mrope_sin
+
+    @staticmethod
+    def apply_mrope(x, cos, sin, position_ids, mrope_section):
+        """
+        Applies Multimodal RoPE (MRoPE) to the input tensor x (Q or K).
+
+        MRoPE extends standard RoPE to 3D positional encoding temporal/time(T), height(H), width(W).
+        Each dimension gets its own position.
+        The returned cos and sin rotary coeffs are interleaved [THW, THW,...] across the head dimension (or less than
+        head_dim if partial_rotary_factor<1), which is split in 3 sections T, H and W, determined by `mrope_section`.
+
+        Ex: if a patch's 3D position (not only patches, even text token have now 3D position) is (T=6, H=7, W=6) then
+        1/3 of the features will be encoded with coeffs for pos 6 (T), 1/3 for pos 7 (H) and 1/3 for pos 6 (W).
+
+        For text-only inputs, position_ids has all 3 dimensions identical, eg (T=5, H=5, W=5) which is equivalent to
+        standard RoPE but through the MRoPE path.
+
+        Args:
+            x: (b, num_heads, seq_len, head_dim)  input tensor (queries or keys)
+            cos: (ctx_len, rotation_dim)  precomputed cosine coeffs
+            sin: (ctx_len, rotation_dim)  precomputed sine coeffs
+            position_ids: (3, b, seq_len)  position indices for each dimension (T, H, W)
+            mrope_section (list[int]): This is used to split the head_dim into 3 sections, for each
+                    dimension (T, H, W). The 3 ints from mrope_section, give the amount of features for each dimension.
+                    sum(mrope_section) should equal head_dim * partial_rotary_factor // 2
+
+        Returns:
+            (b, num_heads, seq_len, head_dim)  input with MRoPE applied
+        """
+        b, n_head, seq_length, head_dim = x.shape
+        rotation_dim = cos.shape[-1]  # "rotation_dim" because could be < head_dim if partial rotation<1 (Qwen3.5)
+        half_dim = rotation_dim // 2
+
+        # cos/sin are precomputed in standard RoPE style with `.compute_angles()` shape (ctx_len, rotation_dim)
+        # since both cos and sin are duplicated eg: [cosmθ, cosmθ], for simplicity we deduplicate, because we don't need
+        # dups and duplicate back after.
+        cos_half = cos[:, :half_dim]  # (ctx_len, half_dim)
+        sin_half = sin[:, :half_dim]
+
+        # Gather coeffs for each of the 3 dimensions using their respective position_ids
+        # position_ids shape: (3, b, seq_len)
+        chunked_cos = cos_half[position_ids]  # (3, b, seq_len, half_dim) "chunked" because by dim [TT..., HH.., WW..]
+        chunked_sin = sin_half[position_ids]
+
+        # Interleave the 3D frequencies into a single (b, seq_len, half_dim) tensor for both cos and sin
+        mrope_cos, mrope_sin = RoPE.interleave_mrope_coeffs(  # interleaved [THW, THW, ...]
+            chunked_cos, chunked_sin, mrope_section
+        )
+
+        # duplicate back to rotation_dim, then unsqueeze for heads (b, 1, seq_len, rotation_dim)
+        mrope_cos = torch.cat([mrope_cos, mrope_cos], dim=-1).unsqueeze(1).to(x.dtype)
+        mrope_sin = torch.cat([mrope_sin, mrope_sin], dim=-1).unsqueeze(1).to(x.dtype)
+
+        # --- Rest same as 1D RoPE ---
+        # if partial rotation (rotation_dim < head_dim)
+        if head_dim != rotation_dim:
+            x_rot, x_rest = x[..., :rotation_dim], x[..., rotation_dim:]
+            h1 = x_rot[..., : rotation_dim // 2]
+            h2 = x_rot[..., rotation_dim // 2 :]
+            rotated = torch.concat((-h2, h1), dim=-1)
+            roped = mrope_cos * x_rot + mrope_sin * rotated
+            return torch.cat((roped, x_rest), dim=-1)
+
+        # Full rotation (rotation_dim = head_dim)
+        h1 = x[..., :half_dim]
+        h2 = x[..., half_dim:]
+        rotated = torch.concat((-h2, h1), dim=-1)
+        return mrope_cos * x + mrope_sin * rotated
+
 
 class VisionRoPE:
     """
@@ -450,8 +521,9 @@ class VisionRoPE:
 
         Args:
             x (torch.Tensor): The input tensor to apply RoPE to, shape (b, num_heads, seq_length, head_dim)
-            cos (torch.Tensor): The cosine of the angles, shape (ctx_len, head_dim)
-            sin (torch.Tensor): The sine of the angles, shape (ctx_len, head_dim)
+            cos (torch.Tensor): The cosine of the angles, shape (seq_length, head_dim)
+            sin (torch.Tensor): The sine of the angles, shape (seq_length, head_dim)
+                                    with seq_length = num_frames * height_patches * width_patches
             position_ids (torch.LongTensor, optional): Tensor of shape (batch_size, seq_len or 1 if KVcache) containing
                                                         the positions of each token. If None, applies RoPE to the first
                                                         seq_length positions (non-KV cache case).
@@ -476,6 +548,7 @@ class VisionRoPE:
             sin = sin[position_ids].unsqueeze(1).to(x.dtype)
         else:
             # For non-KV cache case, slice from the beginning
+            # In the case of VisionRoPE and fixed size images, this is a no-op, since seq_length is always the same
             cos = cos[:seq_length, :].to(x.dtype)
             sin = sin[:seq_length, :].to(x.dtype)
 
