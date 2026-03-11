@@ -302,8 +302,10 @@ class Qwen3_5VisionModel(nn.Module):
             temporal_patch_size=cfg["temporal_patch_size"],
         )
 
-        # Learned positional embeddings (spatial only, repeated across frames) will be overwritten by loaded weights
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.n_spatial_patches, emb_dim))
+        # Learned positional embeddings (spatial only, repeated across frames)
+        # This could seem redundant but is intentionally kept, on top of RoPE. Kept from pretrained og ViTs?
+        # Using nn.Embedding to match HF's weight structure (num_position_embeddings, emb_dim)
+        self.pos_embed = nn.Embedding(cfg["num_position_embeddings"], emb_dim)
 
         # Vision-specific RoPE (separate from text model's RoPE)
         # We precompute angles for Vision RoPE
@@ -348,9 +350,12 @@ class Qwen3_5VisionModel(nn.Module):
         # "actual" number of frames/images, because if temporal_patch_size > 1, actual_n_frames < time/initial n_frames.
         actual_n_frames = seq_len // self.n_spatial_patches
 
-        # add positional embeddings (repeated across time frames)
-        pos_embed_repeated = self.pos_embed.repeat(1, actual_n_frames, 1)
-        x = x + pos_embed_repeated[:, :seq_len, :]
+        # add positional embeddings:
+        # Look up only the first n_spatial_patches positions, repeated for each frame
+        pos_indices = torch.arange(self.n_spatial_patches, device=x.device)
+        pos_embed = self.pos_embed(pos_indices)  # (n_spatial_patches, emb_dim)
+        pos_embed = pos_embed.unsqueeze(0).repeat(1, actual_n_frames, 1)  # (1, actual_n_frames*n_spat_patches, emb_dim)
+        x = x + pos_embed[:, :seq_len, :]
 
         # repeat cos and sin for each time frame
         batch_cos = self.cos.repeat(actual_n_frames, 1)  # shape (actual_n_frames*n_spatial_patches, head_dim)
