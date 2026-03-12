@@ -38,10 +38,10 @@ class Qwen3_5VLM(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.image_token_id = cfg.get("image_token_id", 248056)
+        self.merge_size = cfg["spatial_merge_size"]  # for compute_3d_position_ids
         self.cfg = cfg
         self.vision_model = Qwen3_5VisionModel(self.cfg)
         self.language_model = Qwen3_5TextModel(self.cfg)
-
 
     def get_feeds_3d_shape(self, image_pixels):
         """
@@ -82,6 +82,99 @@ class Qwen3_5VLM(nn.Module):
 
         return torch.tensor([[n_actual_frames, n_height_patches, n_width_patches]])  # (1, 3) 3 for t, h, w
 
+    def compute_3d_position_ids(self, input_ids, feeds_3d_shape=None, image_mask=None):
+        """
+        Compute 3D position IDs for MRoPE.
+
+        In classic 1D RoPE, position_ids is a 1D sequence: [0, 1, 2, 3, 4, ...].
+        An image being a 2D grid (patches). If we just give image patches 1D sequential positions, the model doesn't
+        know which patch is directly below another patch. (Explained in docstring of VisionRoPE.compute_angles_2d).
+
+        compute_3d_position_ids generates 3 positions for every token: Temporal/Time(T), Height(H), and Width(W)
+        So we get a shape (3, batch, seq_len).
+
+        Example:
+        For Image tokens:
+            If a 2x2 image (4 patches), appears after text token 5 and is followed by another text token:
+                T: [..., 5,   6, 6, 6, 6,    8, ...] since these patches are from the same img, they share the same T=6
+                H: [..., 5,   6, 6, 7, 7,    8, ...]
+                W: [..., 5,   6, 7, 6, 7,    8, ...]
+
+            This ensures the attention mechanism understands that ex: patch 1 and patch 3 share the same Width=6 but
+            different Height=6 vs 7
+
+        For Text tokens:
+            All 3 coordinates simply increment together (ex: T=5, H=5, W=5).
+
+        This allows the text model's MRoPE to encode spatial information from vision tokens while keep treating text
+        tokens as a standard 1D sequence.
+
+        Args:
+            input_ids: (batch, seq_len) token IDs
+            feeds_3d_shape: (num_feeds/1, 3)  3 for T, H, W
+
+        Returns:
+            position_ids: (3, batch, seq_len) MRoPE 3D position IDs for each T, H, W
+        """
+        b, seq_len = input_ids.shape
+        device = input_ids.device
+
+        if feeds_3d_shape is None:
+            # if text-only: identical sequential positions across all 3 dims
+            return torch.arange(seq_len, device=device).view(1, 1, -1).expand(3, b, seq_len)
+
+        # pos_increments: text=1, image=0
+        if image_mask is None:
+            image_mask = input_ids == self.image_token_id
+        pos_increments = (~image_mask).long()
+
+        # precompute tensor (3, b, seq_len) to store local offsets (T, H, W)
+        local_3d_offsets = torch.zeros(3, b, seq_len, device=device, dtype=torch.long)
+
+        # Loop through each image/video in the batch, to retrieve the 3D shapes and compute the local offsets
+        # "local offset" ie within the image, not from the beginning of the sequence
+        for b_idx in range(b):
+            img_indices = torch.where(image_mask[b_idx])[0]  # extract img pos idx in that sequence
+            if len(img_indices) == 0:
+                continue
+
+            pos = 0
+            for img_idx in range(feeds_3d_shape.shape[0]):
+                # retrieves 3D shapes from the feeds_3d_shape tensor
+                t, h, w = map(int, feeds_3d_shape[img_idx].tolist())
+                n_merged_patches_h, n_merged_patches_w = h // self.merge_size, w // self.merge_size
+                num_tokens = t * n_merged_patches_h * n_merged_patches_w
+
+                if pos + num_tokens > len(img_indices):
+                    break
+
+                curr_indices = img_indices[pos : pos + num_tokens]
+
+                # the last patch of the image increments the position by max(T, H, W), is the jump for following tokens
+                pos_increments[b_idx, curr_indices[-1]] = max(t, n_merged_patches_h, n_merged_patches_w)
+
+                # calculate 3D local offsets within the image/video
+                local_idx = torch.arange(num_tokens, device=device)
+                frame_offset = local_idx // (n_merged_patches_h * n_merged_patches_w)  # which frame a token belongs to
+                pos_flat = local_idx % (n_merged_patches_h * n_merged_patches_w)  # 1D/flat pos in that frame
+                row_offset = pos_flat // n_merged_patches_w  # which row/height
+                col_offset = pos_flat % n_merged_patches_w  # which col/width
+
+                local_3d_offsets[0, b_idx, curr_indices] = frame_offset
+                local_3d_offsets[1, b_idx, curr_indices] = row_offset
+                local_3d_offsets[2, b_idx, curr_indices] = col_offset
+
+                pos += num_tokens
+
+        # compute global positions ("global" ie in the sequence, not local within the image) using shifted cumsum
+        # global_pos[i] = sum(pos_increments[0...i-1])
+        global_positions = torch.cumsum(pos_increments, dim=1) - pos_increments
+
+        # combine global + local offsets
+        position_ids = global_positions.unsqueeze(0) + local_3d_offsets
+
+        return position_ids
+
     def forward(self, input_ids, image_pixels=None, feeds_3d_shape=None, attn_mask=None):
         """
         Forward pass for multimodal or text-only generation.
@@ -104,6 +197,7 @@ class Qwen3_5VLM(nn.Module):
         """
         inputs_embs = self.language_model.emb_dict(input_ids)
 
+        image_mask = None
         # If multimodal, process images and replace image placeholders in the input embeddings by the vision embeddings
         if image_pixels is not None:
             # retrieves vision embeddings (projected to text dim)
@@ -121,7 +215,7 @@ class Qwen3_5VLM(nn.Module):
             feeds_3d_shape = self.get_feeds_3d_shape(image_pixels)  # shape (T/n_actual_frame, 3)
 
         # compute 3D position IDs for MRoPE
-        position_ids = self.compute_position_ids(input_ids, feeds_3d_shape)
+        position_ids = self.compute_3d_position_ids(input_ids, feeds_3d_shape, image_mask=image_mask)
 
         # Forward pass through the text model with the complete input embeddings (text + vision)
         logits = self.language_model(
