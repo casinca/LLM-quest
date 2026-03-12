@@ -393,14 +393,17 @@ QWEN3_5_08B_CONFIG = {
     # if larger, dynamic res kicks in to downsize (2D interpolation), but not doing variable size imgs here.
     "num_position_embeddings": 2304,
     # fixed image size for simplification
-    "img_width": 384,
-    "img_height": 384,
+    "img_width": 384,  # not more than 768 since we don't support variable resizing
+    "img_height": 384,  # not more than 768 since we don't support variable resizing
     "vision_rope_base": 10_000,
     # Special token IDs
     "image_token_id": 248056,
     "vision_start_token_id": 248053,
     "vision_end_token_id": 248054,
     "video_token_id": 248057,
+    # taken from their `preprocessor_config.json` file
+    "image_mean": [0.5, 0.5, 0.5],
+    "image_std": [0.5, 0.5, 0.5],
 }
 
 
