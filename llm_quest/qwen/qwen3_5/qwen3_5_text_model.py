@@ -158,6 +158,8 @@ class MRoPEGatedAttention(GatedAttention):
         self.mrope_section = cfg["mrope_section"]
 
     def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
+        # This is only when using the text model `Qwen3_5TextModel` on its own for testing in `qwen3_5_generate_text.py`
+        # This won't be triggered when using text-only via the VLM `Qwen3_5VLM`
         if position_ids is None:
             return super().forward(x, mask, cos, sin, attn_mask=attn_mask)
 

@@ -21,9 +21,9 @@
 
 ## Latest 3 updates
 
+- Multimodal Qwen3.5 from scratch
 - Google Reinforced Attention Learning (RAL)
 - LoRA-XS and Meta TinyLoRA
-- mHC-lite: optimization of mHC to get faster and exact doubly stochasticity (with Birkhoff-von Neumann theorem)
 
 
 &nbsp;
@@ -45,6 +45,7 @@
 | **Qwen3** *(dense and MoE)* | — |
 | **Qwen3-Next** (hybrid attention) | • Gated DeltaNet<br>• Gated Attention<br>• Zero-Centered RMSNorm<br>• Weighted shared expert<br>• Partial RoPE |
 | **Xiaomi MiMo-V2-Flash** (hybrid attention) | • SWA+GA<br>• Attention Sink<br>• DeepSeek MoE without shared experts<br>• SWA MTP modules<br> |
+| **Qwen3.5** (multimodal) | • Early fusion<br> • Qwen3-Next + Qwen3-ViT<br> • 3D patch embeddings with temporal downsampling<br>• ViT-LLM adapter with spatial downsampling<br> • Multimodal RoPE: MRoPE-I variant (interleaved) <br> |
 
 &nbsp;
 

@@ -276,6 +276,8 @@ class RoPE:
     @staticmethod
     def interleave_mrope_coeffs(cos, sin, mrope_section):
         """
+        MRoPE-I variant: Interleaved Multimodal RoPE
+        https://arxiv.org/abs/2510.23095
         This follows HF `apply_interleaved_mrope` because we need to follow how (the order) MRoPE is applied.
 
         We interleave rotary coefficients from cos and sin from chunked [TTT...HHH...WWW] layout to
@@ -292,7 +294,7 @@ class RoPE:
         (high, mid, low) of frequencies. Which is more inline with a per-patch sequential order.
 
         So instead of standard 1D RoPE, where each Q and K vector (all `head_dim` features) is rotated based on a single
-        1D position, here 1/3 of features encode T rotations, 1/3 H and 1/3 W. The split is dedided by the
+        1D position, here 1/3 of features encode T rotations, 1/3 H and 1/3 W. The split is decided by the
         `mrope_section` arg.
 
         Since T always gets the first slot of each triplet and may have extra slots at the end (when section sizes
