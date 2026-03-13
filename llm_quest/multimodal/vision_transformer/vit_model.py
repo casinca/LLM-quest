@@ -16,7 +16,7 @@ from llm_quest.multimodal.vision_transformer.vit_transformer_block import LayerN
 # information of the entire image.
 
 
-class PatchEmbedding(nn.Module):
+class PatchEmbedding2D(nn.Module):
     """
     Convert image tensors to sequence of patch embeddings.
 
@@ -46,12 +46,14 @@ class PatchEmbedding(nn.Module):
         # If we had flattened: each patch is num_channels x patch_size x patch_size = num_channels * patch_size^2
         # Instead of manually flattening, sliding a kernel with unfold() and projecting with a linear layer,
         # we use a convolutional layer, which is basically its purpose: extract & project
+        kernel_size = (patch_size, patch_size)  # ie (patch_h, patch_w)
         self.conv_proj = nn.Conv2d(
             in_channels=num_channels,
             out_channels=emb_dim,
-            kernel_size=patch_size,  # ie (patch_size x patch_size)
-            stride=patch_size,  # sliding window step (if >= kernel size = no overlap)
-            padding=0,
+            kernel_size=kernel_size,  # could also pass a single integer `patch_size` if square patches
+            stride=kernel_size,  # sliding window step (if >= kernel size = no overlap)
+            padding=0,  # default value but being explicit
+            bias=True,  # default value but being explicit
         )
 
         # learnable classification token
@@ -65,6 +67,9 @@ class PatchEmbedding(nn.Module):
         Returns:
             Patch embeddings, shape (b, num_patches + 1, emb_dim)
         """
+        assert x.shape[2] == self.img_width and x.shape[3] == self.img_height, (
+            f"Input image shape {x.shape} does not match expected shape {self.img_width}x{self.img_height}"
+        )
         batch_size = x.shape[0]
 
         # convolution: extract patches & project to emb_dim
@@ -109,7 +114,7 @@ class ViTModel(nn.Module):
         super().__init__()
 
         # Patch embedding layer (replaces token embeddings from GPT)
-        self.patch_embedding = PatchEmbedding(
+        self.patch_embedding = PatchEmbedding2D(
             img_width=cfg["img_width"],
             img_height=cfg["img_height"],
             patch_size=cfg["patch_size"],
@@ -165,7 +170,7 @@ if __name__ == "__main__":
     x = torch.randn(2, 3, 224, 224)
 
     # test patch embedding
-    patch_emb = PatchEmbedding(
+    patch_emb = PatchEmbedding2D(
         img_width=224,
         img_height=224,
         patch_size=16,

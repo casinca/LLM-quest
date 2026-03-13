@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from llm_quest.common.rope import RoPE
+from llm_quest.qwen.qwen3.qwen3_attention import PytorchRMSNorm
 
 # Differences compared to `Qwen3_attention.py`:
 #
@@ -45,6 +46,8 @@ class ZeroCenteredRMSNorm(nn.Module):
         return (x * rms * (1.0 + self.scale)).to(input_dtype)  # fullcast to fp32 before returning to input dtype
 
 
+# my initial implementation but could differ because of clamp vs adding eps (in l2_norm_official())
+# slightly faster than l2_norm_official() below
 def l2_norm(x):
     """
     Reducing Q and K vectors magnitude to unit length, by dividing by their L2 norms.
@@ -55,6 +58,13 @@ def l2_norm(x):
     """
     l2_norm = torch.linalg.vector_norm(x, dim=-1, ord=2, keepdim=True)
     return x * torch.clamp(l2_norm, min=1e-6).reciprocal()
+
+
+# Copy of the official impl for exact repro in case, because it could differ in float precision with my L2_norm()
+def l2_norm_official(x: torch.FloatTensor, dim: int = -1, eps: float = 1e-6):
+    """This function is intended to align with the l2norm implementation in the FLA library."""
+    inv_norm = torch.rsqrt((x * x).sum(dim=dim, keepdim=True) + eps)
+    return x * inv_norm
 
 
 # NOTE This was made as a separate helper function because it really needed some more explanation
@@ -113,7 +123,7 @@ def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
         attn_output: (b, num_heads, seq_len, v_head_dim) the context tensor
         prev_state: updated state/memory to be used in the next forward pass
     """
-    # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_vg_heads
+    # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_v_heads
     b, num_heads, seq_len, k_head_dim = keys.shape
     v_head_dim = values.shape[-1]
     scale = queries.shape[-1] ** -0.5  # scaling factor for queries (same as attention scaling)
@@ -175,10 +185,15 @@ class GatedAttention(nn.Module):
         self.num_repeat = self.num_heads // self.num_kv_groups
         self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
 
-        self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        # old unfused version
+        # self.w_queries = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+        # self.w_gate = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
+
+        # fused version: Q + gate projection (to matches Qwen3.5 HF weights)
+        self.w_queries_gate = nn.Linear(self.d_in, self.d_out * 2, bias=False, dtype=self.dtype)
+
         self.w_keys = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
         self.w_values = nn.Linear(self.d_in, self.num_kv_groups * self.head_dim, bias=False, dtype=self.dtype)
-        self.w_gate = nn.Linear(self.d_in, self.d_out, bias=False, dtype=self.dtype)
 
         self.q_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
         self.k_norm = ZeroCenteredRMSNorm(self.head_dim, dtype=self.dtype)
@@ -196,14 +211,19 @@ class GatedAttention(nn.Module):
         """
         b, seq_len, d_in = x.shape
 
-        queries = self.w_queries(x)
-        keys = self.w_keys(x)
-        values = self.w_values(x)
-        gate_output = torch.sigmoid(self.w_gate(x))
+        # unfused version
+        # queries = self.w_queries(x)
+        # queries = queries.view(b, seq_len, self.num_heads, self.head_dim)
+        # gate_output = torch.sigmoid(self.w_gate(x))
 
-        queries = queries.view(b, seq_len, self.num_heads, self.head_dim)
-        keys = keys.view(b, seq_len, self.num_kv_groups, -1)
-        values = values.view(b, seq_len, self.num_kv_groups, -1)
+        # fused version to match Qwen3.5 HF weights
+        queries_and_gate = self.w_queries_gate(x)  # (b, seq_len, d_out * 2)
+        queries_and_gate = queries_and_gate.view(b, seq_len, self.num_heads, self.head_dim * 2)
+        queries, gate = torch.chunk(queries_and_gate, 2, dim=-1)  # each (b, seq_len, num_heads, head_dim)
+        gate_output = torch.sigmoid(gate.reshape(b, seq_len, self.d_out))
+
+        keys = self.w_keys(x).view(b, seq_len, self.num_kv_groups, -1)
+        values = self.w_values(x).view(b, seq_len, self.num_kv_groups, -1)
 
         queries = torch.transpose(queries, 1, 2)
         keys = keys.transpose(1, 2)
@@ -259,12 +279,12 @@ class GatedDeltaNet(nn.Module):
         self.num_qk_heads = cfg["linear_num_qk_heads"]
         self.num_v_heads = cfg["linear_num_value_heads"]
         self.qk_head_dim = cfg["linear_qk_head_dim"]  # same for Q and K
-        self.vg_head_dim = cfg["linear_value_head_dim"]  # same for V and gate
+        self.v_head_dim = cfg["linear_value_head_dim"]
         self.conv_kernel_size = cfg["linear_conv_kernel_size"]
         self.num_repeat = self.num_v_heads // self.num_qk_heads  # similar to GQA (here "GV" grouped value heads)
 
-        self.d_out = self.num_qk_heads * self.qk_head_dim
-        self.d_out_vg = self.num_v_heads * self.vg_head_dim
+        self.d_out = self.num_qk_heads * self.qk_head_dim  # dim for Q and K
+        self.d_out_vg = self.num_v_heads * self.v_head_dim  # dim for V and gate
 
         self.dtype = cfg["dtype"]
         self.p_dropout = cfg["p_dropout"] if cfg["training"] else 0.0
@@ -278,21 +298,26 @@ class GatedDeltaNet(nn.Module):
         self.w_alpha = nn.Linear(self.d_in, self.num_v_heads, bias=False, dtype=self.dtype)
 
         # alpha components, to calc alpha decay factor following Qwen3-Next here, see compute_alpha_factor()
-        A_init = torch.empty(self.num_v_heads, dtype=self.dtype).uniform_(0, 16)
+        A_init = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)  # A_log in FP32 specifically
         self.log_A = nn.Parameter(torch.log(A_init))  # log_A to ensure A > 0
-        self.dt = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
+        self.dt_bias = nn.Parameter(torch.ones(self.num_v_heads, dtype=self.dtype))
 
         self.activation = nn.SiLU()
-        self.post_norm = ZeroCenteredRMSNorm(self.d_out_vg, dtype=self.dtype)
+        # Post-attention RMSNorm is classic, not `ZeroCenteredRMSNorm` + it's per V head dim + in fp32
+        self.post_norm = PytorchRMSNorm(self.v_head_dim, dtype=torch.float32)
         self.w_gate = nn.Linear(self.d_in, self.d_out_vg, bias=False, dtype=self.dtype)
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
+        # the goal is to inject local positional context along the time axis (temporal/depthwise causal convolution),
+        # not to mix features across dimensions (standard convolution)
         self.conv_queries = nn.Conv1d(
             in_channels=self.d_out,
             out_channels=self.d_out,  # number of kernels/filters
             kernel_size=self.conv_kernel_size,
             bias=False,
-            padding=self.conv_kernel_size - 1,  # serves as causal mask
+            padding=self.conv_kernel_size - 1,  # serves as causal mask (causal convolution)
+            # depthwise conv/per channel independently (groups=channels), not mixed/standard conv (groups=1)
+            groups=self.d_out,
             dtype=self.dtype,
         )
         self.conv_keys = nn.Conv1d(
@@ -301,6 +326,7 @@ class GatedDeltaNet(nn.Module):
             kernel_size=self.conv_kernel_size,
             bias=False,
             padding=self.conv_kernel_size - 1,
+            groups=self.d_out,
             dtype=self.dtype,
         )
         self.conv_values = nn.Conv1d(
@@ -309,6 +335,7 @@ class GatedDeltaNet(nn.Module):
             kernel_size=self.conv_kernel_size,
             bias=False,
             padding=self.conv_kernel_size - 1,
+            groups=self.d_out_vg,
             dtype=self.dtype,
         )
 
@@ -331,14 +358,14 @@ class GatedDeltaNet(nn.Module):
         values = self.w_values(x).transpose(1, 2)
 
         # We are not doing features convolution but a temporal convolution, (ie over the sequence length)
-        queries = self.activation(self.conv_queries(queries))[..., :seq_len]
-        keys = self.activation(self.conv_keys(keys))[..., :seq_len]
-        values = self.activation(self.conv_values(values))[..., :seq_len]
+        queries = self.activation(self.conv_queries(queries)[..., :seq_len])
+        keys = self.activation(self.conv_keys(keys)[..., :seq_len])
+        values = self.activation(self.conv_values(values)[..., :seq_len])
 
-        # reshaping to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
+        # reshape+transpose to multiheads for attention: (b, d_out, seq_len) → (b, num_heads, seq_len, head_dim)
         queries = queries.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
         keys = keys.reshape(b, self.num_qk_heads, self.qk_head_dim, -1).transpose(2, 3).contiguous()
-        values = values.reshape(b, self.num_v_heads, self.vg_head_dim, -1).transpose(2, 3).contiguous()
+        values = values.reshape(b, self.num_v_heads, self.v_head_dim, -1).transpose(2, 3).contiguous()
 
         queries = l2_norm(queries)
         keys = l2_norm(keys)
@@ -350,17 +377,18 @@ class GatedDeltaNet(nn.Module):
         # shape (b, num_v_heads, seq_len) for beta and alpha
         beta = torch.sigmoid(self.w_beta(x).transpose(1, 2).contiguous())
         token_projs = self.w_alpha(x)
-        alpha = compute_alpha_factor(self.log_A, token_projs, self.dt).transpose(1, 2).contiguous()
+        alpha = compute_alpha_factor(self.log_A, token_projs, self.dt_bias).transpose(1, 2).contiguous()
 
         # state isn't needed for training unlike inference
         ctx_tensor, prev_state = gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None)
 
+        # The norm+gate is done in fp32
+        ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
         # reshaping (b, num_head, seq_len, v_head_dim) → (b, seq_len, d_out_vg) for the gate scaling
         ctx_tensor = ctx_tensor.transpose(1, 2).contiguous().view(b, seq_len, self.d_out_vg)
-        ctx_tensor = self.post_norm(ctx_tensor)
 
-        gate_output = self.activation(self.w_gate(x))  # shape (b, seq_len, d_out_vg)
-        output = gate_output * ctx_tensor
+        gate_output = self.activation(self.w_gate(x).to(torch.float32))  # shape (b, seq_len, d_out_vg)
+        output = (gate_output * ctx_tensor).to(self.dtype)  # product has to be in fp32 per the official impl
 
         output = self.out_proj(output)  # shape (b, seq_len, d_in)
 
@@ -414,5 +442,5 @@ if __name__ == "__main__":
         gdnet = GatedDeltaNet(dummy_cfg)
 
     print(gsdpa(input_batch, mask, cos, sin))
-    print(f"\n{'*'*50}\n")
+    print(f"\n{'*' * 50}\n")
     print(gdnet(input_batch, attn_mask))  # last 2 vectors masked per attention mask

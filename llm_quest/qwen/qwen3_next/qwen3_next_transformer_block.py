@@ -6,9 +6,9 @@ from llm_quest.qwen.qwen3_next.qwen3_next_attention import GatedAttention, Gated
 
 class Qwen3NextTransformerBlock(nn.Module):
     """
-    Qwen3-Next transformer block
+    Qwen3-Next transformer block with hybrid attention architecture.
 
-    Differences from Qwen3:
+    Differences from Qwen3 (qwen3_transformer_block.py):
 
     The layer idx is used to determine which attention module to use:
     - GatedAttention: every cfg["linear_sdpa_ratio"] layers
@@ -19,14 +19,15 @@ class Qwen3NextTransformerBlock(nn.Module):
 
     Args:
         cfg (dict): Configuration dictionary containing model hyperparameters
-        layer_idx (int): Layer index
+        layer_idx (int): Layer index (0-based)
     """
 
     def __init__(self, cfg, layer_idx):
         super().__init__()
+
+        interval = cfg["linear_sdpa_ratio"]
         # hybrid attention architecture: alternating between GatedDeltaNet and GatedAttention
-        ratio = cfg["linear_sdpa_ratio"]
-        self.att = GatedDeltaNet(cfg) if (layer_idx + 1) % ratio else GatedAttention(cfg)
+        self.att = GatedDeltaNet(cfg) if (layer_idx + 1) % interval else GatedAttention(cfg)
         self.norm1 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.moe = Qwen3MoE(cfg=cfg)

@@ -333,8 +333,8 @@ QWEN3_NEXT_SMALL_CONFIG = {
     "context_length": 512,
     # gated deltanet
     "linear_num_qk_heads": 4,
-    "linear_qk_head_dim": 64,
     "linear_num_value_heads": 8,
+    "linear_qk_head_dim": 64,
     "linear_value_head_dim": 64,
     "linear_conv_kernel_size": 4,
     # moe
@@ -347,6 +347,65 @@ QWEN3_NEXT_SMALL_CONFIG = {
     # training
     "p_dropout": 0.1,
 }
+
+
+# Qwen3.5-0.8B config Vision + Text
+# From: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
+QWEN3_5_08B_CONFIG = {
+    # ------ Text config keys ------
+    "model_path": "Qwen/Qwen3.5-0.8B",
+    "vocab_size": 248_320,
+    "emb_dim": 1024,  # hidden_size
+    "hidden_dim": 3584,  # intermediate_size
+    "n_layers": 24,
+    "linear_sdpa_ratio": 4,  # cycle length for hybrid attention. FusedGatedDeltaNet used every 4 blocks, (3:1 ratio)
+    "n_heads": 8,
+    "num_kv_groups": 2,
+    "head_dim": 256,
+    "rope_base": 10_000_000,
+    "partial_rope_factor": 0.25,
+    "context_length": 8192,  # "max_position_embeddings" # 262_144
+    # GDN
+    "linear_num_qk_heads": 16,
+    "linear_num_value_heads": 16,
+    "linear_qk_head_dim": 128,
+    "linear_value_head_dim": 128,
+    "linear_conv_kernel_size": 4,
+    "tie_embeddings": True,
+    "dtype": torch.bfloat16,
+    "p_dropout": 0.0,
+    "training": False,
+    # section sizes for interleaved 3D positional encoding between (T, H, W)
+    # if we sum(mrope_section) we get back head_dim * partial_rope_factor / 2 = 256 * 0.25 / 2 = 32
+    "mrope_section": [11, 11, 10],
+    # ------ Vision config keys ------
+    "vision_n_layers": 12,  # depth
+    "vision_emb_dim": 768,  # hidden_size
+    "vision_hidden_act": "gelu_pytorch_tanh",  # unused key here
+    "vision_hidden_dim": 3072,  # intermediate_size
+    "vision_num_heads": 12,
+    "llm_d_in": 1024,  # also called out_hidden_size, must match text emb_dim
+    "in_channels": 3,
+    "patch_size": 16,
+    "spatial_merge_size": 2,
+    "temporal_patch_size": 2,
+    # max number of spatial patches without spatial_merge_size, sqrt(2304)=48, 48*patch_size=768, max img=768*768
+    # if larger, dynamic res kicks in to downsize (2D interpolation), but not doing variable size imgs here.
+    "num_position_embeddings": 2304,
+    # fixed image size for simplification
+    "img_width": 384,  # not more than 768 since we don't support variable resizing
+    "img_height": 384,  # not more than 768 since we don't support variable resizing
+    "vision_rope_base": 10_000,
+    # Special token IDs
+    "image_token_id": 248056,
+    "vision_start_token_id": 248053,
+    "vision_end_token_id": 248054,
+    "video_token_id": 248057,
+    # taken from their `preprocessor_config.json` file
+    "image_mean": [0.5, 0.5, 0.5],
+    "image_std": [0.5, 0.5, 0.5],
+}
+
 
 # ----------- ALIGNMENT  -----------
 

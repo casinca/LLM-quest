@@ -18,7 +18,7 @@ reducing to logits.*
 
 With text, we tokenize a sequence and then process token embeddings + positional embeddings. Similarly, here we split an
 image as if it was a sequence, into equal-sized patches that could be seen as words (*hence the paper's name*) and then
-project them to `emb_dim`. The whole process is done efficiently via a convolutional layer in the `PatchEmbedding` class.
+project them to `emb_dim`. The whole process is done efficiently via a convolutional layer in the `PatchEmbedding2D` class.
 
 Concerning Positional Encoding, unlike in GPT, we don't need a `nn.Embedding` table because we are not dealing with
 dynamic sequence lengths. In our case all images in a batch have the same `CxHxW` size and therefore the same number of
