@@ -23,6 +23,10 @@ They re-used the same ViT from Qwen3-VL and coupled it with their Qwen3-Next tex
 I'm not going to re-introduce the main text model, Qwen3-Next, it has been implemented from scratch and detailed
 here: https://github.com/casinca/LLM-quest/blob/master/llm_quest/qwen/qwen3_next/
 
+&nbsp;
+
+*High level flow chart for the Qwen3.5 VLM.*
+<img src="_qwen3_5_imgs/_qwen3_5_flow_chart.png" alt="Qwen3.5 flow chart" width="700"/>
 
 &nbsp;
 
@@ -152,7 +156,7 @@ dataset) fed to the from-scratch Multimodal GPT-2 implemented
 
 The GPT-2 VLM was a 5-mins training job, so it's not a very fair comparison, the difference is obviously quite high:
 
-```python
+```text
 prompt = "What do you see in the image?"
 
 max_gen=50, temp=1.0, seed=123
