@@ -2,8 +2,6 @@
 # This is a more explicit approach of RoPE vs Llama impl (which uses complex numbers directly)
 import torch
 
-# TODO now that logic works we might want to refactor duplication in RoPE, VisionRoPE, MRoPE
-
 
 class RoPE:
     @staticmethod
@@ -137,7 +135,7 @@ class RoPE:
         if rotation_factor != 1.0:
             head_dim = RoPE.partial_rotation(head_dim, rotation_factor)
 
-        # YaRN or classic RopE
+        # YaRN or classic RopE for freqs
         if smooth_scaling_cfg is not None:
             theta = RoPE.wavelength_scaling(
                 base,
@@ -170,41 +168,13 @@ class RoPE:
         return cos, sin
 
     @staticmethod
-    def _apply_partial_rope(x, cos, sin, position_ids=None):
-        """
-        Applies partial RoPE to the input tensor x.
-        Separate path in order to avoid repetitive useless splits and concatenations if unused/full RoPE.
-        """
-        seq_length = x.shape[2]
-        rotation_dim = cos.shape[-1]
-        # splitting x into rotated and unrotated parts
-        x_rot, x_rest = x[..., :rotation_dim], x[..., rotation_dim:]
-
+    def rotate_half(x):
+        """helper function to rotate half the hidden dims of the input."""
         # splitting dimensions/features in half (paper splits by pairs instead)
-        h1 = x_rot[..., : rotation_dim // 2]
-        h2 = x_rot[..., rotation_dim // 2 :]
-
-        # preparing 2nd coordinates/dimensions matrix for calc optimization
-        rotated = torch.concat((-h2, h1), dim=-1)
-
-        # slicing cos & sin up to seq_len, shape (ctx_len, head_dim) → (seq_len, head_dim) and cast to x.dtype
-        if position_ids is not None:
-            # cos/sin shape: (ctx_len, head_dim)
-            # position_ids shape: (b, s) → gathered cos/sin: (b, s, head_dim) → unsqueezed: (b, 1, s, head_dim)
-            cos = cos[position_ids].unsqueeze(1).to(x.dtype)
-            sin = sin[position_ids].unsqueeze(1).to(x.dtype)
-        else:
-            # For non-KV cache case, slice from the beginning
-            cos = cos[:seq_length, :].to(x.dtype)
-            sin = sin[:seq_length, :].to(x.dtype)
-
-        # apply RoPE efficiently (vectorized vs classic sparse paper)
-        roped = cos * x_rot + sin * rotated
-
-        # concat back rotated and unrotated dimensions/features into original head_dim
-        res = torch.cat((roped, x_rest), dim=-1)
-
-        return res
+        half_dim = x.shape[-1] // 2
+        h1 = x[..., :half_dim]
+        h2 = x[..., half_dim:]
+        return torch.cat((-h2, h1), dim=-1)
 
     @staticmethod
     def apply(x, cos, sin, position_ids=None):
@@ -247,16 +217,12 @@ class RoPE:
         assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
 
         # If precomputed cos shape doesn't match x's head_dim, we infer that a partial RoPE should be returned
-        if head_dim != cos.shape[-1]:
-            return RoPE._apply_partial_rope(x, cos, sin, position_ids)
+        rotation_dim = cos.shape[-1]
 
-        # Full RoPE
-        # splitting dimensions/features in half (paper splits by pairs instead)
-        h1 = x[..., : head_dim // 2]
-        h2 = x[..., head_dim // 2 :]
-
-        # preparing 2nd coordinates/dimensions matrix for calc optimization
-        rotated = torch.concat((-h2, h1), dim=-1)
+        # if partial RoPE, split x and keep the unrotated rest for later
+        if rotation_dim < head_dim:
+            x_rest = x[..., rotation_dim:]
+            x = x[..., :rotation_dim]
 
         if position_ids is not None:
             # cos/sin shape: (ctx_len, head_dim)
@@ -269,9 +235,12 @@ class RoPE:
             sin = sin[:seq_length, :].to(x.dtype)
 
         # apply RoPE efficiently (vectorized vs classic sparse paper)
-        res = cos * x + sin * rotated
+        roped = cos * x + sin * RoPE.rotate_half(x)
 
-        return res
+        if rotation_dim < head_dim:
+            return torch.cat((roped, x_rest), dim=-1)
+
+        return roped
 
     @staticmethod
     def interleave_mrope_coeffs(cos, sin, mrope_section):
@@ -372,25 +341,21 @@ class RoPE:
             chunked_cos, chunked_sin, mrope_section
         )
 
-        # duplicate back to rotation_dim, then unsqueeze for heads (b, 1, seq_len, rotation_dim)
+        # duplicate back to rotation_dim, then unsqueeze for heads broadcast (b, 1, seq_len, rotation_dim)
         mrope_cos = torch.cat([mrope_cos, mrope_cos], dim=-1).unsqueeze(1).to(x.dtype)
         mrope_sin = torch.cat([mrope_sin, mrope_sin], dim=-1).unsqueeze(1).to(x.dtype)
 
         # --- Rest same as 1D RoPE ---
-        # if partial rotation (rotation_dim < head_dim)
-        if head_dim != rotation_dim:
-            x_rot, x_rest = x[..., :rotation_dim], x[..., rotation_dim:]
-            h1 = x_rot[..., : rotation_dim // 2]
-            h2 = x_rot[..., rotation_dim // 2 :]
-            rotated = torch.concat((-h2, h1), dim=-1)
-            roped = mrope_cos * x_rot + mrope_sin * rotated
+        if rotation_dim < head_dim:
+            x_rest = x[..., rotation_dim:]
+            x = x[..., :rotation_dim]
+
+        roped = mrope_cos * x + mrope_sin * RoPE.rotate_half(x)
+
+        if rotation_dim < head_dim:
             return torch.cat((roped, x_rest), dim=-1)
 
-        # Full rotation (rotation_dim = head_dim)
-        h1 = x[..., :half_dim]
-        h2 = x[..., half_dim:]
-        rotated = torch.concat((-h2, h1), dim=-1)
-        return mrope_cos * x + mrope_sin * rotated
+        return roped
 
 
 class VisionRoPE:
@@ -532,32 +497,7 @@ class VisionRoPE:
         Returns:
             torch.Tensor: The input tensor with RoPE applied/rotated, shape (b, num_heads, seq_length, head_dim)
         """
-        b, n_head, seq_length, head_dim = x.shape
-        assert head_dim % 2 == 0, "head dim must be divisible by 2 as we need pairs"
-
-        # Full RoPE
-        # splitting dimensions/features in half (paper splits by pairs instead)
-        h1 = x[..., : head_dim // 2]
-        h2 = x[..., head_dim // 2 :]
-
-        # preparing 2nd coordinates/dimensions matrix for calc optimization
-        rotated = torch.concat((-h2, h1), dim=-1)
-
-        if position_ids is not None:
-            # cos/sin shape: (ctx_len, head_dim)
-            # position_ids shape: (b, s) → gathered cos/sin: (b, s, head_dim) → unsqueezed: (b, 1, s, head_dim)
-            cos = cos[position_ids].unsqueeze(1).to(x.dtype)
-            sin = sin[position_ids].unsqueeze(1).to(x.dtype)
-        else:
-            # For non-KV cache case, slice from the beginning
-            # In the case of VisionRoPE and fixed size images, this is a no-op, since seq_length is always the same
-            cos = cos[:seq_length, :].to(x.dtype)
-            sin = sin[:seq_length, :].to(x.dtype)
-
-        # apply RoPE efficiently (vectorized vs classic sparse paper)
-        res = cos * x + sin * rotated
-
-        return res
+        return RoPE.apply(x, cos, sin, position_ids)
 
 
 if __name__ == "__main__":
@@ -566,7 +506,9 @@ if __name__ == "__main__":
     batch_size = 2
     num_heads = 2
     head_dim = 6
-    # Dummy test for 1D classic text RoPE
+    # ------------------------------------------------------------
+    # 1D classic text RoPE
+    # ------------------------------------------------------------
     context_len = 5
     queries = torch.randn(batch_size, num_heads, context_len, head_dim)
 
@@ -582,7 +524,9 @@ if __name__ == "__main__":
     print("RoPE output:", rotated_queries)
     print("RoPE output shape:", rotated_queries.shape)
 
-    # Dummy test for VisionRoPE (Axial 2D RoPE)
+    # ------------------------------------------------------------
+    # VisionRoPE axial 2D RoPE
+    # ------------------------------------------------------------
     # a single image/frame of a 2x3 grid of patches (H=2, W=3)
     head_dim = 4
     num_frames = 1
@@ -604,3 +548,30 @@ if __name__ == "__main__":
     rotated_vision_queries = VisionRoPE.apply(vision_queries, cos_vision, sin_vision)
     print("VisionRoPE output:", rotated_vision_queries)
     print("VisionRoPE output shape:", rotated_vision_queries.shape)
+
+    # ------------------------------------------------------------
+    # MRoPE (Multimodal RoPE)
+    # ------------------------------------------------------------
+    head_dim_mrope = 12  # using 12 so half_dim=6 can be easily split into 3 sections of 2
+    seq_len_mrope = 4
+    mrope_section = [2, 2, 2]  # T=2, H=2, W=2 (sum equals head_dim_mrope // 2)
+    ctx_len_mrope = 10
+
+    mrope_queries = torch.randn(batch_size, num_heads, seq_len_mrope, head_dim_mrope)
+
+    # 3D position ids (T, H, W) for each token in the sequence
+    position_ids_3d = torch.randint(0, ctx_len_mrope, (3, batch_size, seq_len_mrope))
+
+    cos_mrope, sin_mrope = RoPE.compute_angles(
+        base=10000,
+        head_dim=head_dim_mrope,
+        ctx_len=ctx_len_mrope,
+        rotation_factor=0.7,
+    )
+
+    print("\nMRoPE input:", mrope_queries)
+    rotated_mrope_queries = RoPE.apply_mrope(
+        mrope_queries, cos_mrope, sin_mrope, position_ids=position_ids_3d, mrope_section=mrope_section
+    )
+    print("MRoPE output:", rotated_mrope_queries)
+    print("MRoPE output shape:", rotated_mrope_queries.shape)
