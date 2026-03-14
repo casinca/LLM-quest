@@ -71,8 +71,8 @@ class GPTModel(nn.Module):
         """
         # Input for Multimodal Early fusion training is already embedded: (b, num_patches + 1 + seq_len, emb_dim)
         # thus bypassing token and positional embedding
+        b, seq_len = x.shape[:2]
         if not input_embedded:
-            b, seq_len = x.shape
             # shape (b, s) → (b, s, emb_dim)
             x = self.emb_dict(x)
 
