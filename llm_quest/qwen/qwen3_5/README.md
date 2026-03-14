@@ -25,7 +25,7 @@ here: https://github.com/casinca/LLM-quest/blob/master/llm_quest/qwen/qwen3_next
 
 &nbsp;
 
-*High level flow chart for the Qwen3.5 VLM.*
+*High level flow chart for the Qwen3.5 VLM.*  
 <img src="_qwen3_5_imgs/_qwen3_5_flow_chart.png" alt="Qwen3.5 flow chart" width="700"/>
 
 &nbsp;
@@ -177,4 +177,6 @@ In the image, two large Doberman pinschers are playing energetically in a snowy 
 - Qwen3.5 Blogpost: https://qwen.ai/blog?id=qwen3.5  
 - Multimodal RoPE / MRoPE (Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution):
  https://arxiv.org/abs/2409.12191
-- MRoPE-I Variant (Revisiting Multimodal Positional Encoding in Vision-Language Models): https://arxiv.org/abs/2510.23095
+- MRoPE-I Variant (Revisiting Multimodal Positional Encoding in Vision-Language Models):
+  https://arxiv.org/abs/2510.23095
+- [@bozheng-hit](https://github.com/bozheng-hit) and [@JJJYmmm](https://github.com/JJJYmmm) for the official HuggingFace Qwen3.5 implementation: https://github.com/huggingface/transformers/pull/43830
