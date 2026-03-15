@@ -1,8 +1,8 @@
-import os
-import json
 import functools
 import itertools
+import json
 import math
+import os
 import re
 import time
 
@@ -165,6 +165,11 @@ def alpaca_deepseek_format(entry, include_response=True):
         )
         # fmt: on
         return instruction + input_txt + response
+
+
+#####################
+# RLVR RELATED
+#####################
 
 
 class ResponseExtractor:
@@ -389,13 +394,18 @@ class CheckpointEvaluator:
         return False
 
 
+#####################
+# KV CACHE
+#####################
+
+
 # Optimizing KVcache:
-# First implementation of KVcache, was concatenating to the existing cache, at each step
-# Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
-# then we replaced concats, with indexing inside a pre-allocated cache of length: context_len
+# - First implementation of KVcache, was concatenating to the existing cache, at each step
+#   Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
+# - then we replaced concats, with indexing inside a pre-allocated cache of length: context_len
 #
-# 3rd update ref: https://github.com/casinca/LLM-quest/commit/85ac4b14950307c74006e6199fd815c49fe172ae
-# optimizing pre-allocated cache by only extending when needed by chunk_size
+# - 3rd update ref: https://github.com/casinca/LLM-quest/commit/85ac4b14950307c74006e6199fd815c49fe172ae
+#   optimizing pre-allocated cache by only extending when needed by chunk_size
 class KVCache:
     """
     KV cache with dynamic size (increased by chunk_size as sequence length increases) and updating by directly indexing
@@ -414,7 +424,7 @@ class KVCache:
         self.prompt_len = prompt_len
         self.context_len = context_len
         self.chunk_size = chunk_size
-        self.kv_capacity = self.prompt_len + initial_chunk_size
+        self.kv_capacity = self.prompt_len + initial_chunk_size  # NOTE: we loose 2^n extension, might be problematic
 
         self.keys_cache = []
         self.values_cache = []
@@ -494,12 +504,13 @@ class KVCache:
         self.batch_size, self.num_heads, new_seq_len, self.head_dim = keys.shape
         self.device, self.dtype = keys.device, keys.dtype
 
+        # init
         if not self.keys_cache and not self.values_cache:
             self._initialize(self.batch_size, self.num_heads, self.head_dim, self.device, self.dtype)
 
         self.end_pos = self.start_pos + new_seq_len
 
-        # check end position against the current layer's KV capacity
+        # check end position against the current layer's KV capacity and grow if needed
         curr_layer_kv_capacity = self.keys_cache[layer_idx].shape[2]
         if self.end_pos > curr_layer_kv_capacity:
             self._grow_kv_capacity(layer_idx)
@@ -517,6 +528,11 @@ class KVCache:
             self.keys_cache[layer_idx][:, :, : self.end_pos, :],
             self.values_cache[layer_idx][:, :, : self.end_pos, :],
         )
+
+
+#####################
+# MANIFOLD HYPERCONNECTIONS
+#####################
 
 
 # NOTE:
@@ -784,6 +800,11 @@ class BirkhoffvonNeumann(torch.nn.Module):
         return self.bvn_composition(weight_a)
 
 
+#####################
+# WEIGHTS LOADING
+#####################
+
+
 def download_hf_weights(hf_model_name):
     """
     Download model weights from Hugging Face and return the state dict.
@@ -809,7 +830,7 @@ def download_hf_weights(hf_model_name):
             weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
             hf_state_dict = load_file(weights_file)
             print(f"Successfully loaded weights from {hf_model_name}")
-            
+
         return hf_state_dict
 
     except Exception as e:
@@ -829,7 +850,7 @@ def convert_weights(hf_state_dict, our_state_dict, remapping_rules, ignored_pref
     """
     if ignored_prefixes is None:
         ignored_prefixes = ()
-        
+
     converted_weights = {}
     skipped = []
 
@@ -868,10 +889,9 @@ def handle_weight_tying(model):
         return
 
     print("\nTie_embeddings=True, trying weight tying...")
-    
     emb_shape = model.emb_dict.weight.shape
     out_shape = model.out_head.weight.shape
-    
+
     if emb_shape != out_shape:
         print(f"WARNING: Shape mismatch for weight tying: {emb_shape} vs {out_shape}")
         return
@@ -923,5 +943,3 @@ def test_generation_with_weights(model, model_cfg, device="cuda"):
 
     generated_text = tokenizer.decode(input_ids[0].tolist())
     print(f"Generated: {generated_text}")
-
-
