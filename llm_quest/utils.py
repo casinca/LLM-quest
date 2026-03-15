@@ -499,7 +499,8 @@ class KVCache:
         Note: In most scenarios new_seq_len should be 1
 
         Returns:
-            A tuple containing the full cached keys and values up to the current sequence length.
+            (cached_keys, cached_values): A tuple containing the full cached keys and values up to the current sequence
+            length.
         """
         self.batch_size, self.num_heads, new_seq_len, self.head_dim = keys.shape
         self.device, self.dtype = keys.device, keys.dtype
@@ -529,6 +530,65 @@ class KVCache:
             self.values_cache[layer_idx][:, :, : self.end_pos, :],
         )
 
+
+# NOTE: for now called Qwen3_5Cache, but in the future could be adapted to other hybrid attention models
+class Qwen3_5Cache:
+    """
+    Hybrid cache for Qwen3.5's mixed attention architecture.
+
+    Handles two different cache types:
+    - Full attention layers (GatedAttention/MRoPEGatedAttention):
+        Nothing changes and inherits from the `KVCache` class from utils.py
+
+    Args:
+        n_layers (int): Total number of transformer layers
+        linear_sdpa_ratio (int): Cycle length for hybrid attention.
+            Layer is full attention if (layer_idx + 1) % ratio == 0, else linear.
+        prompt_len (int): Length of the initial prompt (for KVCache sizing)
+        context_len (int): Maximum sequence length
+    """
+
+    def __init__(self, n_layers, linear_sdpa_ratio, prompt_len, context_len):
+        self.n_layers = n_layers
+        self.linear_sdpa_ratio = linear_sdpa_ratio
+
+        # determine which layers are full attention vs linear
+        self.layer_types = [
+            "full_attention" if (i + 1) % linear_sdpa_ratio == 0 else "linear_attention" for i in range(n_layers)
+        ]
+
+        ### FULL ATTENTION LAYERS ###
+
+        # retrieves the model/global indices for the full attention layers
+        self.full_attn_indices = [i for i, t in enumerate(self.layer_types) if t == "full_attention"]
+
+        # map contiguous internal KVCache layer_idx to global layer_idx
+        self._full_attn_to_kv_idx = {}
+        for internal_idx, global_idx in enumerate(self.full_attn_indices):
+            self._full_attn_to_kv_idx[global_idx] = internal_idx
+
+        self.kv_cache = KVCache(
+            num_layers=len(self.full_attn_indices),
+            prompt_len=prompt_len,
+            context_len=context_len,
+        )
+
+    def get_updated_kv_cache(self, keys, values, layer_idx):
+        """
+        Update and return the KV cache for a full attention layer:
+        Reuse existing KVCache.get_updated_cache() method, with the mapped internal layer_idx.
+
+        Args:
+            keys: (batch, num_kv_heads, seq_len, head_dim)
+            values: (batch, num_kv_heads, seq_len, head_dim)
+            layer_idx: global layer_idx from the model
+
+        Returns:
+            (cached_keys, cached_values): A tuple containing the full cached keys and values up to the current sequence
+            length.
+        """
+        internal_idx = self._full_attn_to_kv_idx[layer_idx]
+        return self.kv_cache.get_updated_cache(keys, values, internal_idx)
 
 #####################
 # MANIFOLD HYPERCONNECTIONS
