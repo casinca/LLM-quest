@@ -117,14 +117,14 @@ def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
             this is a per head and per token scalar factor (same as beta)
             -if ~0 forget almost everything
             -if ~1 remember almost everything
-        prev_state: (b, num_heads, v_head_dim, k_head_dim) previous state/memory.
+        prev_state: (b, num_heads, v_head_dim, qk_head_dim) previous state/memory.
 
     returns:
         attn_output: (b, num_heads, seq_len, v_head_dim) the context tensor
         prev_state: updated state/memory to be used in the next forward pass
     """
     # NOTE: we previously interleaved Q and K to V, thus now num_heads = num_qk_heads = num_v_heads
-    b, num_heads, seq_len, k_head_dim = keys.shape
+    b, num_heads, seq_len, qk_head_dim = keys.shape
     v_head_dim = values.shape[-1]
     scale = queries.shape[-1] ** -0.5  # scaling factor for queries (same as attention scaling)
 
@@ -135,22 +135,22 @@ def gated_delta_rule(queries, keys, values, beta, alpha, prev_state=None):
 
     attn_output = torch.zeros_like(values)
     if prev_state is None:  # same shape/outer product as the paper ie S_t = vk^T (Qwen is doing kv^T = S_t^T))
-        prev_state = torch.zeros(b, num_heads, v_head_dim, k_head_dim, dtype=values.dtype, device=values.device)
+        prev_state = torch.zeros(b, num_heads, v_head_dim, qk_head_dim, dtype=values.dtype, device=values.device)
 
     for t in range(seq_len):
-        k_t = keys[:, :, t, :]  # (b, num_heads, k_head_dim)
+        k_t = keys[:, :, t, :]  # (b, num_heads, qk_head_dim)
         v_t = values[:, :, t, :]
         q_t = queries[:, :, t, :]
         beta_t = beta[:, :, t].unsqueeze(-1)  # (b, num_v_heads, 1)
         alpha_t = alpha[:, :, t].unsqueeze(-1).unsqueeze(-1)  # (b, num_v_heads, 1, 1)
 
         # applying, per head for that token the decay factor to previous state (scalar product)
-        gated_prev_state = alpha_t * prev_state  # (b, num_heads, v_head_dim, k_head_dim)
+        gated_prev_state = alpha_t * prev_state  # (b, num_heads, v_head_dim, qk_head_dim)
         # retrieving old value associated to current key, in order to calc the error/delta (doing vector matrix product)
         v_old = gated_prev_state @ k_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
         delta = v_t - v_old.squeeze(-1)  # (b, num_heads, v_head_dim)
         scaled_delta = beta_t * delta  # scalar product
-        state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)  # (b, num_heads, v_head_dim, k_head_dim)
+        state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)  # (b, num_heads, v_head_dim, qk_head_dim)
         prev_state = gated_prev_state + state_update  # now is S_t
 
         attn_t = prev_state @ q_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
