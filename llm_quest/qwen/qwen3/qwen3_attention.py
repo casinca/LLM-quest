@@ -82,7 +82,8 @@ class GroupedQueryAttention(nn.Module):
         """
         args:
             x: (b, seq_len, d_in)
-            mask: (b, seq_len) Causal mask (passed as True = future tokens/upper right triangle)
+            mask: (ctx_len, ctx_len) Causal mask; dim0=query pos, dim1=key pos.
+                (passed as True = future tokens/upper right triangle)
             attn_mask: (b, seq_len) Attention mask (passed as True = real tokens)
             kv_cache: KVCache instance/object
             position_ids: (b, s/1) (long tensor), containing the position of each token in the sequence
@@ -125,6 +126,7 @@ class GroupedQueryAttention(nn.Module):
         q_seq_len = queries.shape[2]
         k_seq_len = keys.shape[2]
         # masking: causal mask and attn_mask
+        # mask is (ctx_len, ctx_len): [query_pos, key_pos], we slice to (q_seq_len, k_seq_len)
         if k_seq_len > q_seq_len:  # imply KVCache is used
             q_start_pos = k_seq_len - q_seq_len  # q_seq_len should be 1 for classic NTP KVCache inference
             current_mask = mask[q_start_pos:k_seq_len, :k_seq_len]
