@@ -538,7 +538,12 @@ class Qwen3_5Cache:
 
     Handles two different cache types:
     - Full attention layers (GatedAttention/MRoPEGatedAttention):
-        Nothing changes and inherits from the `KVCache` class from utils.py
+        Nothing changes compared to Qwen3 KVcache and inherits from the `KVCache` class from utils.py
+
+    - Linear attention layers (FusedGatedDeltaNet):
+        2 non growing caches:
+        - conv_stat[list of tensors]: each tensor is (b, fused_dim, kernel_size - 1)
+        - recurrent_state[list of tensors]: each tensor is (batch, num_heads, v_head_dim, qk_head_dim)
 
     Args:
         n_layers (int): Total number of transformer layers
@@ -573,6 +578,12 @@ class Qwen3_5Cache:
             context_len=context_len,
         )
 
+        ### LINEAR ATTENTION LAYERS ###
+
+        # 2 caches: conv_state + recurrent_state (lazy init during forward)
+        self.conv_states = [None] * n_layers
+        self.recurrent_states = [None] * n_layers
+
     def get_updated_kv_cache(self, keys, values, layer_idx):
         """
         Update and return the KV cache for a full attention layer:
@@ -589,6 +600,29 @@ class Qwen3_5Cache:
         """
         internal_idx = self._full_attn_to_kv_idx[layer_idx]
         return self.kv_cache.get_updated_cache(keys, values, internal_idx)
+
+    @property
+    def has_previous_state(self):
+        """Check if the cache has been populated (ie we've done at least 1 prefill pass)."""
+        # if any linear attention layer has a non-None conv_state
+        return any(
+            state is not None
+            for attn_type, state in zip(self.layer_types, self.conv_states)
+            if attn_type == "linear_attention"
+        )
+
+    def get_conv_state(self, layer_idx):
+        return self.conv_states[layer_idx]
+
+    def set_conv_state(self, layer_idx, conv_state):
+        self.conv_states[layer_idx] = conv_state
+
+    def get_recurrent_state(self, layer_idx):
+        return self.recurrent_states[layer_idx]
+
+    def set_recurrent_state(self, layer_idx, recurrent_state):
+        self.recurrent_states[layer_idx] = recurrent_state
+
 
 #####################
 # MANIFOLD HYPERCONNECTIONS
