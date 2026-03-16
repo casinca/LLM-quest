@@ -153,14 +153,15 @@ class MRoPEGatedAttention(GatedAttention):
     Same as GatedAttention but with Multimodal RoPE (MRoPE) for multimodal inputs. That's it.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx=None):
         super().__init__(cfg)
+        self.layer_idx = layer_idx
         self.mrope_section = cfg["mrope_section"]
 
-    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None, cache=None):
         # This is only when using the text model `Qwen3_5TextModel` on its own for testing in `qwen3_5_generate_text.py`
         # This won't be triggered when using text-only via the VLM `Qwen3_5VLM`
-        if position_ids is None:
+        if position_ids is None and cache is None:
             return super().forward(x, mask, cos, sin, attn_mask=attn_mask)
 
         b, seq_len, d_in = x.shape
@@ -185,9 +186,21 @@ class MRoPEGatedAttention(GatedAttention):
         queries = RoPE.apply_mrope(queries, cos, sin, position_ids, self.mrope_section)
         keys = RoPE.apply_mrope(keys, cos, sin, position_ids, self.mrope_section)
 
-        curr_mask = mask[:seq_len, :seq_len]
+        # KVCache
+        if cache is not None:
+            keys, values = cache.get_updated_kv_cache(keys, values, self.layer_idx)
+
+        q_seq_len = queries.shape[2]
+        k_seq_len = keys.shape[2]
+
+        if k_seq_len > q_seq_len:  # ie KVCache is active
+            q_start_pos = k_seq_len - q_seq_len
+            curr_mask = mask[q_start_pos:k_seq_len, :k_seq_len]
+        else:
+            curr_mask = mask[:q_seq_len, :k_seq_len]
+
         if attn_mask is not None:
-            curr_mask = curr_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+            curr_mask = curr_mask.unsqueeze(0).unsqueeze(0) | ~attn_mask.unsqueeze(1).unsqueeze(1)
 
         ctx_tensor = nn.functional.scaled_dot_product_attention(
             queries,
@@ -227,12 +240,16 @@ class Qwen3_5TransformerBlock(nn.Module):
 
         interval = cfg["linear_sdpa_ratio"]
         # hybrid attention architecture: alternating between FusedGatedDeltaNet and MRoPEGatedAttention
-        self.att = FusedGatedDeltaNet(cfg) if (layer_idx + 1) % interval else MRoPEGatedAttention(cfg)
+        self.att = (
+            FusedGatedDeltaNet(cfg, layer_idx=layer_idx)
+            if (layer_idx + 1) % interval
+            else MRoPEGatedAttention(cfg, layer_idx=layer_idx)
+        )
         self.norm1 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None, cache=None):
         """
         args:
             x: (b, seq_len, emb_dim)
@@ -240,15 +257,16 @@ class Qwen3_5TransformerBlock(nn.Module):
             cos, sin: RoPE cos/sin buffers (ctx_len, rotation_dim*) *head_dim or partial
             position_ids: (3, b, seq_len) MRoPE position IDs
             attn_mask: (b, seq_len) 1=real token, 0=padding
+            cache: Qwen3_5Cache for inference
         """
         residual = x
         x = self.norm1(x)
 
         # dispatching based on attention type (full/classic attention or linear attention)
         x = (
-            self.att(x, mask, cos, sin, position_ids, attn_mask)
+            self.att(x, mask, cos, sin, position_ids, attn_mask, cache)
             if isinstance(self.att, MRoPEGatedAttention)
-            else self.att(x, attn_mask)  # FusedGatedDeltaNet (linear attention)
+            else self.att(x, attn_mask, cache)  # FusedGatedDeltaNet (linear attention)
         )
 
         x = x + residual
@@ -321,7 +339,7 @@ class Qwen3_5TextModel(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x=None, attn_mask=None, inputs_embs=None, position_ids=None):
+    def forward(self, x=None, attn_mask=None, inputs_embs=None, position_ids=None, cache=None):
         """
         Forward pass supporting both text-only (token ids) and multimodal inputs (already as embeddings).
 
@@ -332,6 +350,7 @@ class Qwen3_5TextModel(nn.Module):
                             If provided, skips the embedding lookup from x.
             position_ids: (3, b, s) MRoPE position IDs (temporal/time, height, width).
                             If None, just use classic 1D RoPE (text-only mode).
+            cache: Qwen3_5Cache for inference
 
         Returns:
             logits: (b, s, vocab_size)
@@ -344,7 +363,7 @@ class Qwen3_5TextModel(nn.Module):
             x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin, position_ids, attn_mask)
+            x = block(x, self.mask, self.cos, self.sin, position_ids, attn_mask, cache)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
