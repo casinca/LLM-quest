@@ -542,7 +542,7 @@ class Qwen3_5Cache:
 
     - Linear attention layers (FusedGatedDeltaNet):
         2 non growing caches:
-        - conv_stat[list of tensors]: each tensor is (b, fused_dim, kernel_size - 1)
+        - conv_states[list of tensors]: each tensor is (b, fused_dim, kernel_size)
         - recurrent_state[list of tensors]: each tensor is (batch, num_heads, v_head_dim, qk_head_dim)
 
     Args:
