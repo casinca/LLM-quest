@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.common.rope import RoPE
@@ -43,8 +44,9 @@ class FusedGatedDeltaNet(nn.Module):
     Rest is the same, we re-use: l2_norm(), compute_alpha_factor(), gated_delta_rule() from `qwen3_next_attention.py`
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx=None):
         super().__init__()
+        self.layer_idx = layer_idx
 
         self.d_in = cfg["emb_dim"]
         self.num_qk_heads = cfg["linear_num_qk_heads"]
@@ -88,13 +90,17 @@ class FusedGatedDeltaNet(nn.Module):
         self.post_norm = PytorchRMSNorm(self.vg_head_dim, dtype=torch.float32)  # in fp32, being explicit about it
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, cache=None):
         """
         args:
             x: (b, seq_len, d_in)
             attn_mask (optional): (b, seq_len) used for padding tokens, from collators 1=real token, 0=padding
+            cache (Qwen3_5Cache, optional): hybrid cache for inference
         """
         b, seq_len, d_in = x.shape
+
+        use_cache = cache is not None
+        use_precomputed_states = use_cache and cache.has_previous_state and seq_len == 1
 
         # Mask padding tokens at the beginning for the conv layer (same as Qwen3-Next GDN)
         if attn_mask is not None:
@@ -108,9 +114,25 @@ class FusedGatedDeltaNet(nn.Module):
         alpha = compute_alpha_factor(self.log_A, token_projs, self.dt_bias).transpose(1, 2).contiguous()
 
         # Temporal convolution on fused QKV (ie over the sequence length)
-        # shape (b, seq_len, d_out) → (b, d_out, seq_len) for Conv1D expecting that shape
+        # shape (b, seq_len, fused_dim) → (b, fused_dim, seq_len) for Conv1D expecting that shape
         fused_qkv = fused_qkv.transpose(1, 2)
-        fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+
+        # ##### OLD - without cache #####
+        # fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+
+        # ##### NEW - with conv_state cache logic #####
+        if use_precomputed_states:
+            # cache mode: single-step causal conv update using cached conv_state
+            conv_state = cache.get_conv_state(self.layer_idx)
+            fused_qkv = _causal_conv1d_update(fused_qkv, conv_state, self.conv1d.weight.squeeze(1), self.conv1d.bias)
+        else:
+            # fill cache: run full conv1d
+            if use_cache:
+                # Save conv_state: the last kernel_size timesteps of fused_qkv for future decode steps
+                conv_state = F.pad(fused_qkv, (self.conv_kernel_size - fused_qkv.shape[-1], 0))
+                cache.set_conv_state(self.layer_idx, conv_state)  # shape: (b, fused_dim, kernel_size)
+            fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+
         fused_qkv = fused_qkv.transpose(1, 2)  # back to (b, seq_len, fused_dim)
 
         # Split back into Q, K, V after convolution
