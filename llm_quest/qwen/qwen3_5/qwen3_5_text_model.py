@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from llm_quest.common.buffers import GlobalBuffers
 from llm_quest.common.rope import RoPE
@@ -36,15 +37,19 @@ class FusedGatedDeltaNet(nn.Module):
     """
     Fused Gated DeltaNet for Qwen3.5.
 
-    Same as our Qwen3-Next `GatedDeltaNet` class but with some fused weights:
-    - QKV are projected in a single fused linear (w_qkv) instead of 3 separate ones
-    - A single Conv1d is used on the fused QKV output instead of 3 separate Conv1ds
+    Same as our Qwen3-Next `GatedDeltaNet` class but with:
+    - Fused weights:
+        - QKV are projected in a single fused linear (w_qkv) instead of 3 separate ones
+        - A single Conv1d is used on the fused QKV output instead of 3 separate Conv1ds
+
+    - Updated for cache support: old path (no cache) is commented out, new path (with optional cache) is used
 
     Rest is the same, we re-use: l2_norm(), compute_alpha_factor(), gated_delta_rule() from `qwen3_next_attention.py`
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx=None):
         super().__init__()
+        self.layer_idx = layer_idx
 
         self.d_in = cfg["emb_dim"]
         self.num_qk_heads = cfg["linear_num_qk_heads"]
@@ -88,13 +93,17 @@ class FusedGatedDeltaNet(nn.Module):
         self.post_norm = PytorchRMSNorm(self.vg_head_dim, dtype=torch.float32)  # in fp32, being explicit about it
         self.out_proj = nn.Linear(self.d_out_vg, self.d_in, bias=False, dtype=self.dtype)
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, cache=None):
         """
         args:
             x: (b, seq_len, d_in)
             attn_mask (optional): (b, seq_len) used for padding tokens, from collators 1=real token, 0=padding
+            cache (Qwen3_5Cache, optional): hybrid cache for inference
         """
         b, seq_len, d_in = x.shape
+
+        use_cache = cache is not None
+        use_precomputed_states = use_cache and cache.has_previous_state and seq_len == 1
 
         # Mask padding tokens at the beginning for the conv layer (same as Qwen3-Next GDN)
         if attn_mask is not None:
@@ -108,9 +117,28 @@ class FusedGatedDeltaNet(nn.Module):
         alpha = compute_alpha_factor(self.log_A, token_projs, self.dt_bias).transpose(1, 2).contiguous()
 
         # Temporal convolution on fused QKV (ie over the sequence length)
-        # shape (b, seq_len, d_out) → (b, d_out, seq_len) for Conv1D expecting that shape
+        # shape (b, seq_len, fused_dim) → (b, fused_dim, seq_len) for Conv1D expecting that shape
         fused_qkv = fused_qkv.transpose(1, 2)
-        fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+
+        # ##### OLD - without cache #####
+        # fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+
+        # ##### NEW - with conv_state cache logic ##### (This block is almost 1:1 with Hugging Face's Qwen3.5 impl)
+        if use_precomputed_states:
+            # cache mode: single-step causal conv update using cached conv_state
+            conv_state = cache.get_conv_state(self.layer_idx)
+            fused_qkv = _causal_conv1d_update(fused_qkv, conv_state, self.conv1d.weight.squeeze(1), self.conv1d.bias)
+        else:
+            # fill cache: run full conv1d
+            if use_cache:
+                # Save conv_state: the last kernel_size timesteps of fused_qkv for future decode steps
+                # now dynamically pad to make sure is `kernel_size` long, pad with 0 if shorter or crop if longer
+                conv_state = F.pad(fused_qkv, (self.conv_kernel_size - fused_qkv.shape[-1], 0))
+                cache.set_conv_state(self.layer_idx, conv_state)  # shape: (b, fused_dim, kernel_size)
+            fused_qkv = self.conv1d(fused_qkv)[..., :seq_len]
+
+        fused_qkv = self.activation(fused_qkv)
+
         fused_qkv = fused_qkv.transpose(1, 2)  # back to (b, seq_len, fused_dim)
 
         # Split back into Q, K, V after convolution
@@ -133,7 +161,22 @@ class FusedGatedDeltaNet(nn.Module):
             query = query.repeat_interleave(self.num_repeat, dim=1)
             key = key.repeat_interleave(self.num_repeat, dim=1)
 
-        ctx_tensor, prev_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+        # ##### OLD - without cache #####
+        # ctx_tensor, prev_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+
+        # ##### NEW - with cache #####
+        # Gated Delta Rule: prefill (chunk/full) vs decode (recurrent single-step)
+        if not use_precomputed_states:
+            # fill cache: run full gated delta rule
+            ctx_tensor, last_recurrent_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+            if use_cache:
+                # shape: (batch, num_heads, v_head_dim, qk_head_dim)
+                cache.set_recurrent_state(self.layer_idx, last_recurrent_state)
+        else:
+            # cache mode: single-step update using saved recurrent state
+            recurrent_state = cache.get_recurrent_state(self.layer_idx)
+            ctx_tensor, last_recurrent_state = _gated_delta_rule_step(query, key, value, beta, alpha, recurrent_state)
+            cache.set_recurrent_state(self.layer_idx, last_recurrent_state)
 
         # The norm+gate is done in fp32
         ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
@@ -151,16 +194,20 @@ class FusedGatedDeltaNet(nn.Module):
 class MRoPEGatedAttention(GatedAttention):
     """
     Same as GatedAttention but with Multimodal RoPE (MRoPE) for multimodal inputs. That's it.
+
+    Updated for cache support: Same as Qwen3 KVCache
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, layer_idx=None):
         super().__init__(cfg)
+        self.layer_idx = layer_idx
         self.mrope_section = cfg["mrope_section"]
 
-    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
-        # This is only when using the text model `Qwen3_5TextModel` on its own for testing in `qwen3_5_generate_text.py`
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None, cache=None):
+        # This is only when using the text model `Qwen3_5TextModel` on its own and without Cache for testing in
+        # `qwen3_5_generate_text_only.py`
         # This won't be triggered when using text-only via the VLM `Qwen3_5VLM`
-        if position_ids is None:
+        if position_ids is None and cache is None:
             return super().forward(x, mask, cos, sin, attn_mask=attn_mask)
 
         b, seq_len, d_in = x.shape
@@ -185,9 +232,21 @@ class MRoPEGatedAttention(GatedAttention):
         queries = RoPE.apply_mrope(queries, cos, sin, position_ids, self.mrope_section)
         keys = RoPE.apply_mrope(keys, cos, sin, position_ids, self.mrope_section)
 
-        curr_mask = mask[:seq_len, :seq_len]
+        # KVCache
+        if cache is not None:
+            keys, values = cache.get_updated_kv_cache(keys, values, self.layer_idx)
+
+        q_seq_len = queries.shape[2]
+        k_seq_len = keys.shape[2]
+
+        if k_seq_len > q_seq_len:  # ie KVCache is active
+            q_start_pos = k_seq_len - q_seq_len
+            curr_mask = mask[q_start_pos:k_seq_len, :k_seq_len]
+        else:
+            curr_mask = mask[:q_seq_len, :k_seq_len]
+
         if attn_mask is not None:
-            curr_mask = curr_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+            curr_mask = curr_mask.unsqueeze(0).unsqueeze(0) | ~attn_mask.unsqueeze(1).unsqueeze(1)
 
         ctx_tensor = nn.functional.scaled_dot_product_attention(
             queries,
@@ -227,12 +286,16 @@ class Qwen3_5TransformerBlock(nn.Module):
 
         interval = cfg["linear_sdpa_ratio"]
         # hybrid attention architecture: alternating between FusedGatedDeltaNet and MRoPEGatedAttention
-        self.att = FusedGatedDeltaNet(cfg) if (layer_idx + 1) % interval else MRoPEGatedAttention(cfg)
+        self.att = (
+            FusedGatedDeltaNet(cfg, layer_idx=layer_idx)
+            if (layer_idx + 1) % interval
+            else MRoPEGatedAttention(cfg, layer_idx=layer_idx)
+        )
         self.norm1 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.norm2 = ZeroCenteredRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None):
+    def forward(self, x, mask, cos, sin, position_ids=None, attn_mask=None, cache=None):
         """
         args:
             x: (b, seq_len, emb_dim)
@@ -240,15 +303,16 @@ class Qwen3_5TransformerBlock(nn.Module):
             cos, sin: RoPE cos/sin buffers (ctx_len, rotation_dim*) *head_dim or partial
             position_ids: (3, b, seq_len) MRoPE position IDs
             attn_mask: (b, seq_len) 1=real token, 0=padding
+            cache: Qwen3_5Cache for inference
         """
         residual = x
         x = self.norm1(x)
 
         # dispatching based on attention type (full/classic attention or linear attention)
         x = (
-            self.att(x, mask, cos, sin, position_ids, attn_mask)
+            self.att(x, mask, cos, sin, position_ids, attn_mask, cache)
             if isinstance(self.att, MRoPEGatedAttention)
-            else self.att(x, attn_mask)  # FusedGatedDeltaNet (linear attention)
+            else self.att(x, attn_mask, cache)  # FusedGatedDeltaNet (linear attention)
         )
 
         x = x + residual
@@ -321,7 +385,7 @@ class Qwen3_5TextModel(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
-    def forward(self, x=None, attn_mask=None, inputs_embs=None, position_ids=None):
+    def forward(self, x=None, attn_mask=None, inputs_embs=None, position_ids=None, cache=None):
         """
         Forward pass supporting both text-only (token ids) and multimodal inputs (already as embeddings).
 
@@ -332,6 +396,7 @@ class Qwen3_5TextModel(nn.Module):
                             If provided, skips the embedding lookup from x.
             position_ids: (3, b, s) MRoPE position IDs (temporal/time, height, width).
                             If None, just use classic 1D RoPE (text-only mode).
+            cache: Qwen3_5Cache for inference
 
         Returns:
             logits: (b, s, vocab_size)
@@ -344,12 +409,102 @@ class Qwen3_5TextModel(nn.Module):
             x = self.emb_dict(x)
 
         for block in self.trf_blocks:
-            x = block(x, self.mask, self.cos, self.sin, position_ids, attn_mask)
+            x = block(x, self.mask, self.cos, self.sin, position_ids, attn_mask, cache)
 
         x = self.final_norm(x)
         logits = self.out_head(x)
 
         return logits
+
+
+#### These are Helper functions for the Cache update #####
+#
+# _causal_conv1d_update() is a copy from the original HF Qwen3.5 implementation except I'm refactoring the SiLU activ
+
+
+def _causal_conv1d_update(hidden_states, conv_state, weight, bias=None):
+    """
+    Single-step causal convolution update for the decode path.
+    Mirrors Hugging Face's `torch_causal_conv1d_update` from the official Qwen3.5 implementation without SiLU
+    activation.
+
+    Instead of running the full conv1d over the entire sequence, we:
+        - Prepend the saved conv_state (last kernel_size timesteps) to the new single timestep
+        - Run a depthwise conv on this short window
+        - Save the updated conv_state for next step
+        - Apply SiLU activation
+
+    Args:
+        hidden_states: (b, channels, seq_len=1) new single timestep
+        conv_state: (b, channels, kernel_size) saved state from previous step
+        weight: (channels, kernel_size) conv weights (already squeezed from conv1d.weight)
+        bias: optional conv bias
+
+    Returns:
+        (b, channels, seq_len=1) convolved output with SiLU activation
+    """
+    _, hidden_size, seq_len = hidden_states.shape
+    state_len = conv_state.shape[-1]
+
+    # prepend saved state to new input
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    # shift state: keep last state_len timesteps for next call
+    conv_state.copy_(hidden_states_new[:, :, -state_len:])
+    # depthwise conv on short window
+    out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
+    out = out[:, :, -seq_len:]
+    return out.to(hidden_states.dtype)
+
+
+def _gated_delta_rule_step(query, key, value, beta, alpha, prev_state):
+    """
+    Single-step recurrent gated delta rule for the decode path.
+    Mirrors our Qwen3-Next `gated_delta_rule()` but for seq_len=1.
+
+    Instead of looping over the whole sequence, we process just the new single token with the last saved prev/recurrent
+    state.
+
+    Just like our `gated_delta_rule()` this is slightly different from Hugging Face's `torch_recurrent_gated_delta_rule`
+    because we don't do the exact same GDN calculation.
+
+    Args:
+        query: (b, num_heads, 1, qk_head_dim)
+        key: (b, num_heads, 1, qk_head_dim)
+        value: (b, num_heads, 1, v_head_dim)
+        beta: (b, num_heads, 1) writing strength
+        alpha: (b, num_heads, 1) state decay factor
+        prev_state: (b, num_heads, v_head_dim, qk_head_dim)
+
+    Returns:
+        (output, updated_state):
+            output: (b, num_heads, 1, v_head_dim)
+            updated_state: (b, num_heads, v_head_dim, qk_head_dim)
+    """
+    initial_dtype = query.dtype
+    query, key, value, beta, alpha = map(lambda t: t.to(torch.float32), (query, key, value, beta, alpha))
+    scale = query.shape[-1] ** -0.5
+    query *= scale
+
+    # Squeeze the seq_len=1 dimension for computation
+    k_t = key.squeeze(2)  # (b, num_heads, qk_head_dim)
+    q_t = query.squeeze(2)
+    v_t = value.squeeze(2)  # (b, num_heads, v_head_dim)
+    beta_t = beta.unsqueeze(-1)  # (b, num_heads, 1, 1)
+    alpha_t = alpha.unsqueeze(-1)
+
+    gated_prev_state = prev_state.to(torch.float32) * alpha_t
+
+    v_old = gated_prev_state @ k_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+    delta = v_t - v_old.squeeze(-1)  # (b, num_heads, v_head_dim)
+    scaled_delta = beta_t.squeeze(-1) * delta
+
+    state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)
+    state = gated_prev_state + state_update
+
+    attn_out = state @ q_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+    attn_out = attn_out.squeeze(-1).unsqueeze(2)  # (b, num_heads, 1, v_head_dim)
+
+    return attn_out.to(initial_dtype), state
 
 
 # quick inline tests

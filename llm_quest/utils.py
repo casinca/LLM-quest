@@ -1,8 +1,8 @@
-import os
-import json
 import functools
 import itertools
+import json
 import math
+import os
 import re
 import time
 
@@ -165,6 +165,11 @@ def alpaca_deepseek_format(entry, include_response=True):
         )
         # fmt: on
         return instruction + input_txt + response
+
+
+#####################
+# RLVR RELATED
+#####################
 
 
 class ResponseExtractor:
@@ -389,13 +394,18 @@ class CheckpointEvaluator:
         return False
 
 
+#####################
+# KV CACHE
+#####################
+
+
 # Optimizing KVcache:
-# First implementation of KVcache, was concatenating to the existing cache, at each step
-# Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
-# then we replaced concats, with indexing inside a pre-allocated cache of length: context_len
+# - First implementation of KVcache, was concatenating to the existing cache, at each step
+#   Old KVcache ref: https://github.com/casinca/LLM-quest/commit/0cbf60a078560e77e96cd0ef9a16803f7e5e3240
+# - then we replaced concats, with indexing inside a pre-allocated cache of length: context_len
 #
-# 3rd update ref: https://github.com/casinca/LLM-quest/commit/85ac4b14950307c74006e6199fd815c49fe172ae
-# optimizing pre-allocated cache by only extending when needed by chunk_size
+# - 3rd update ref: https://github.com/casinca/LLM-quest/commit/85ac4b14950307c74006e6199fd815c49fe172ae
+#   optimizing pre-allocated cache by only extending when needed by chunk_size
 class KVCache:
     """
     KV cache with dynamic size (increased by chunk_size as sequence length increases) and updating by directly indexing
@@ -414,7 +424,7 @@ class KVCache:
         self.prompt_len = prompt_len
         self.context_len = context_len
         self.chunk_size = chunk_size
-        self.kv_capacity = self.prompt_len + initial_chunk_size
+        self.kv_capacity = self.prompt_len + initial_chunk_size  # NOTE: we loose 2^n extension, might be problematic
 
         self.keys_cache = []
         self.values_cache = []
@@ -489,17 +499,19 @@ class KVCache:
         Note: In most scenarios new_seq_len should be 1
 
         Returns:
-            A tuple containing the full cached keys and values up to the current sequence length.
+            (cached_keys, cached_values): A tuple containing the full cached keys and values up to the current sequence
+            length.
         """
         self.batch_size, self.num_heads, new_seq_len, self.head_dim = keys.shape
         self.device, self.dtype = keys.device, keys.dtype
 
+        # init
         if not self.keys_cache and not self.values_cache:
             self._initialize(self.batch_size, self.num_heads, self.head_dim, self.device, self.dtype)
 
         self.end_pos = self.start_pos + new_seq_len
 
-        # check end position against the current layer's KV capacity
+        # check end position against the current layer's KV capacity and grow if needed
         curr_layer_kv_capacity = self.keys_cache[layer_idx].shape[2]
         if self.end_pos > curr_layer_kv_capacity:
             self._grow_kv_capacity(layer_idx)
@@ -517,6 +529,104 @@ class KVCache:
             self.keys_cache[layer_idx][:, :, : self.end_pos, :],
             self.values_cache[layer_idx][:, :, : self.end_pos, :],
         )
+
+
+# NOTE: for now called Qwen3_5Cache, but in the future could be adapted to other hybrid attention models
+class Qwen3_5Cache:
+    """
+    Hybrid cache for Qwen3.5's mixed attention architecture.
+
+    Handles two different cache types:
+    - Full attention layers (GatedAttention/MRoPEGatedAttention):
+        Nothing changes compared to Qwen3 KVcache and inherits from the `KVCache` class from utils.py
+
+    - Linear attention layers (FusedGatedDeltaNet):
+        2 non growing caches:
+        - conv_states[list of tensors]: each tensor is (b, fused_dim, kernel_size)
+        - recurrent_state[list of tensors]: each tensor is (batch, num_heads, v_head_dim, qk_head_dim)
+
+    Args:
+        n_layers (int): Total number of transformer layers
+        linear_sdpa_ratio (int): Cycle length for hybrid attention.
+            Layer is full attention if (layer_idx + 1) % ratio == 0, else linear.
+        prompt_len (int): Length of the initial prompt (for KVCache sizing)
+        context_len (int): Maximum sequence length
+    """
+
+    def __init__(self, n_layers, linear_sdpa_ratio, prompt_len, context_len):
+        self.n_layers = n_layers
+        self.linear_sdpa_ratio = linear_sdpa_ratio
+
+        # determine which layers are full attention vs linear
+        self.layer_types = [
+            "full_attention" if (i + 1) % linear_sdpa_ratio == 0 else "linear_attention" for i in range(n_layers)
+        ]
+
+        ### FULL ATTENTION LAYERS ###
+
+        # retrieves the model/global indices for the full attention layers
+        self.full_attn_indices = [i for i, t in enumerate(self.layer_types) if t == "full_attention"]
+
+        # map contiguous internal KVCache layer_idx to global layer_idx
+        self._full_attn_to_kv_idx = {}
+        for internal_idx, global_idx in enumerate(self.full_attn_indices):
+            self._full_attn_to_kv_idx[global_idx] = internal_idx
+
+        self.kv_cache = KVCache(
+            num_layers=len(self.full_attn_indices),
+            prompt_len=prompt_len,
+            context_len=context_len,
+        )
+
+        ### LINEAR ATTENTION LAYERS ###
+
+        # 2 caches: conv_state + recurrent_state (lazy init during forward)
+        self.conv_states = [None] * n_layers
+        self.recurrent_states = [None] * n_layers
+
+    def get_updated_kv_cache(self, keys, values, layer_idx):
+        """
+        Update and return the KV cache for a full attention layer:
+        Reuse existing KVCache.get_updated_cache() method, with the mapped internal layer_idx.
+
+        Args:
+            keys: (batch, num_kv_heads, seq_len, head_dim)
+            values: (batch, num_kv_heads, seq_len, head_dim)
+            layer_idx: global layer_idx from the model
+
+        Returns:
+            (cached_keys, cached_values): A tuple containing the full cached keys and values up to the current sequence
+            length.
+        """
+        internal_idx = self._full_attn_to_kv_idx[layer_idx]
+        return self.kv_cache.get_updated_cache(keys, values, internal_idx)
+
+    @property
+    def has_previous_state(self):
+        """Check if the cache has been populated (ie we've done at least 1 prefill pass)."""
+        # if any linear attention layer has a non-None conv_state
+        return any(
+            state is not None
+            for attn_type, state in zip(self.layer_types, self.conv_states)
+            if attn_type == "linear_attention"
+        )
+
+    def get_conv_state(self, layer_idx):
+        return self.conv_states[layer_idx]
+
+    def set_conv_state(self, layer_idx, conv_state):
+        self.conv_states[layer_idx] = conv_state
+
+    def get_recurrent_state(self, layer_idx):
+        return self.recurrent_states[layer_idx]
+
+    def set_recurrent_state(self, layer_idx, recurrent_state):
+        self.recurrent_states[layer_idx] = recurrent_state
+
+
+#####################
+# MANIFOLD HYPERCONNECTIONS
+#####################
 
 
 # NOTE:
@@ -784,6 +894,11 @@ class BirkhoffvonNeumann(torch.nn.Module):
         return self.bvn_composition(weight_a)
 
 
+#####################
+# WEIGHTS LOADING
+#####################
+
+
 def download_hf_weights(hf_model_name):
     """
     Download model weights from Hugging Face and return the state dict.
@@ -809,7 +924,7 @@ def download_hf_weights(hf_model_name):
             weights_file = hf_hub_download(repo_id=hf_model_name, filename="model.safetensors")
             hf_state_dict = load_file(weights_file)
             print(f"Successfully loaded weights from {hf_model_name}")
-            
+
         return hf_state_dict
 
     except Exception as e:
@@ -829,7 +944,7 @@ def convert_weights(hf_state_dict, our_state_dict, remapping_rules, ignored_pref
     """
     if ignored_prefixes is None:
         ignored_prefixes = ()
-        
+
     converted_weights = {}
     skipped = []
 
@@ -868,10 +983,9 @@ def handle_weight_tying(model):
         return
 
     print("\nTie_embeddings=True, trying weight tying...")
-    
     emb_shape = model.emb_dict.weight.shape
     out_shape = model.out_head.weight.shape
-    
+
     if emb_shape != out_shape:
         print(f"WARNING: Shape mismatch for weight tying: {emb_shape} vs {out_shape}")
         return
@@ -923,5 +1037,3 @@ def test_generation_with_weights(model, model_cfg, device="cuda"):
 
     generated_text = tokenizer.decode(input_ids[0].tolist())
     print(f"Generated: {generated_text}")
-
-
