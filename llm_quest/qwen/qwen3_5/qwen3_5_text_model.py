@@ -37,9 +37,12 @@ class FusedGatedDeltaNet(nn.Module):
     """
     Fused Gated DeltaNet for Qwen3.5.
 
-    Same as our Qwen3-Next `GatedDeltaNet` class but with some fused weights:
-    - QKV are projected in a single fused linear (w_qkv) instead of 3 separate ones
-    - A single Conv1d is used on the fused QKV output instead of 3 separate Conv1ds
+    Same as our Qwen3-Next `GatedDeltaNet` class but with:
+    - Fused weights:
+        - QKV are projected in a single fused linear (w_qkv) instead of 3 separate ones
+        - A single Conv1d is used on the fused QKV output instead of 3 separate Conv1ds
+
+    - Updated for cache support: old path (no cache) is commented out, new path (with optional cache) is used
 
     Rest is the same, we re-use: l2_norm(), compute_alpha_factor(), gated_delta_rule() from `qwen3_next_attention.py`
     """
@@ -120,7 +123,7 @@ class FusedGatedDeltaNet(nn.Module):
         # ##### OLD - without cache #####
         # fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
 
-        # ##### NEW - with conv_state cache logic #####
+        # ##### NEW - with conv_state cache logic ##### (This block is almost 1:1 with Hugging Face's Qwen3.5 impl)
         if use_precomputed_states:
             # cache mode: single-step causal conv update using cached conv_state
             conv_state = cache.get_conv_state(self.layer_idx)
@@ -129,9 +132,12 @@ class FusedGatedDeltaNet(nn.Module):
             # fill cache: run full conv1d
             if use_cache:
                 # Save conv_state: the last kernel_size timesteps of fused_qkv for future decode steps
+                # now dynamically pad to make sure is `kernel_size` long, pad with 0 if shorter or crop if longer
                 conv_state = F.pad(fused_qkv, (self.conv_kernel_size - fused_qkv.shape[-1], 0))
                 cache.set_conv_state(self.layer_idx, conv_state)  # shape: (b, fused_dim, kernel_size)
-            fused_qkv = self.activation(self.conv1d(fused_qkv)[..., :seq_len])
+            fused_qkv = self.conv1d(fused_qkv)[..., :seq_len]
+
+        fused_qkv = self.activation(fused_qkv)
 
         fused_qkv = fused_qkv.transpose(1, 2)  # back to (b, seq_len, fused_dim)
 
@@ -169,9 +175,7 @@ class FusedGatedDeltaNet(nn.Module):
         else:
             # cache mode: single-step update using saved recurrent state
             recurrent_state = cache.get_recurrent_state(self.layer_idx)
-            ctx_tensor, last_recurrent_state = _recurrent_gated_delta_rule_step(
-                query, key, value, beta, alpha, recurrent_state
-            )
+            ctx_tensor, last_recurrent_state = _gated_delta_rule_step(query, key, value, beta, alpha, recurrent_state)
             cache.set_recurrent_state(self.layer_idx, last_recurrent_state)
 
         # The norm+gate is done in fp32
@@ -190,6 +194,8 @@ class FusedGatedDeltaNet(nn.Module):
 class MRoPEGatedAttention(GatedAttention):
     """
     Same as GatedAttention but with Multimodal RoPE (MRoPE) for multimodal inputs. That's it.
+
+    Updated for cache support: Same as Qwen3 KVCache
     """
 
     def __init__(self, cfg, layer_idx=None):
@@ -408,6 +414,96 @@ class Qwen3_5TextModel(nn.Module):
         logits = self.out_head(x)
 
         return logits
+
+
+#### These are Helper functions for the Cache update #####
+#
+# _causal_conv1d_update() is a copy from the original HF Qwen3.5 implementation except I'm refactoring the SiLU activ
+
+
+def _causal_conv1d_update(hidden_states, conv_state, weight, bias=None):
+    """
+    Single-step causal convolution update for the decode path.
+    Mirrors Hugging Face's `torch_causal_conv1d_update` from the official Qwen3.5 implementation without SiLU
+    activation.
+
+    Instead of running the full conv1d over the entire sequence, we:
+        - Prepend the saved conv_state (last kernel_size timesteps) to the new single timestep
+        - Run a depthwise conv on this short window
+        - Save the updated conv_state for next step
+        - Apply SiLU activation
+
+    Args:
+        hidden_states: (b, channels, seq_len=1) new single timestep
+        conv_state: (b, channels, kernel_size) saved state from previous step
+        weight: (channels, kernel_size) conv weights (already squeezed from conv1d.weight)
+        bias: optional conv bias
+
+    Returns:
+        (b, channels, seq_len=1) convolved output with SiLU activation
+    """
+    _, hidden_size, seq_len = hidden_states.shape
+    state_len = conv_state.shape[-1]
+
+    # prepend saved state to new input
+    hidden_states_new = torch.cat([conv_state, hidden_states], dim=-1).to(weight.dtype)
+    # shift state: keep last state_len timesteps for next call
+    conv_state.copy_(hidden_states_new[:, :, -state_len:])
+    # depthwise conv on short window
+    out = F.conv1d(hidden_states_new, weight.unsqueeze(1), bias, padding=0, groups=hidden_size)
+    out = out[:, :, -seq_len:]
+    return out.to(hidden_states.dtype)
+
+
+def _gated_delta_rule_step(query, key, value, beta, alpha, prev_state):
+    """
+    Single-step recurrent gated delta rule for the decode path.
+    Mirrors our Qwen3-Next `gated_delta_rule()` but for seq_len=1.
+
+    Instead of looping over the whole sequence, we process just the new single token with the last saved prev/recurrent
+    state.
+
+    Just like our `gated_delta_rule()` this is slightly different from Hugging Face's `torch_recurrent_gated_delta_rule`
+    because we don't do the exact same GDN calculation.
+
+    Args:
+        query: (b, num_heads, 1, qk_head_dim)
+        key: (b, num_heads, 1, qk_head_dim)
+        value: (b, num_heads, 1, v_head_dim)
+        beta: (b, num_heads, 1) writing strength
+        alpha: (b, num_heads, 1) state decay factor
+        prev_state: (b, num_heads, v_head_dim, qk_head_dim)
+
+    Returns:
+        (output, updated_state):
+            output: (b, num_heads, 1, v_head_dim)
+            updated_state: (b, num_heads, v_head_dim, qk_head_dim)
+    """
+    initial_dtype = query.dtype
+    query, key, value, beta, alpha = map(lambda t: t.to(torch.float32), (query, key, value, beta, alpha))
+    scale = query.shape[-1] ** -0.5
+    query *= scale
+
+    # Squeeze the seq_len=1 dimension for computation
+    k_t = key.squeeze(2)  # (b, num_heads, qk_head_dim)
+    q_t = query.squeeze(2)
+    v_t = value.squeeze(2)  # (b, num_heads, v_head_dim)
+    beta_t = beta.unsqueeze(-1)  # (b, num_heads, 1, 1)
+    alpha_t = alpha.unsqueeze(-1)
+
+    gated_prev_state = prev_state.to(torch.float32) * alpha_t
+
+    v_old = gated_prev_state @ k_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+    delta = v_t - v_old.squeeze(-1)  # (b, num_heads, v_head_dim)
+    scaled_delta = beta_t.squeeze(-1) * delta
+
+    state_update = scaled_delta.unsqueeze(-1) @ k_t.unsqueeze(2)
+    state = gated_prev_state + state_update
+
+    attn_out = state @ q_t.unsqueeze(-1)  # (b, num_heads, v_head_dim, 1)
+    attn_out = attn_out.squeeze(-1).unsqueeze(2)  # (b, num_heads, 1, v_head_dim)
+
+    return attn_out.to(initial_dtype), state
 
 
 # quick inline tests
