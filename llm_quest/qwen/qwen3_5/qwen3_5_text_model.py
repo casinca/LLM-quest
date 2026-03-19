@@ -155,7 +155,24 @@ class FusedGatedDeltaNet(nn.Module):
             query = query.repeat_interleave(self.num_repeat, dim=1)
             key = key.repeat_interleave(self.num_repeat, dim=1)
 
-        ctx_tensor, prev_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+        # ##### OLD - without cache #####
+        # ctx_tensor, prev_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+
+        # ##### NEW - with cache #####
+        # Gated Delta Rule: prefill (chunk/full) vs decode (recurrent single-step)
+        if not use_precomputed_states:
+            # fill cache: run full gated delta rule
+            ctx_tensor, last_recurrent_state = gated_delta_rule(query, key, value, beta, alpha, prev_state=None)
+            if use_cache:
+                # shape: (batch, num_heads, v_head_dim, qk_head_dim)
+                cache.set_recurrent_state(self.layer_idx, last_recurrent_state)
+        else:
+            # cache mode: single-step update using saved recurrent state
+            recurrent_state = cache.get_recurrent_state(self.layer_idx)
+            ctx_tensor, last_recurrent_state = _recurrent_gated_delta_rule_step(
+                query, key, value, beta, alpha, recurrent_state
+            )
+            cache.set_recurrent_state(self.layer_idx, last_recurrent_state)
 
         # The norm+gate is done in fp32
         ctx_tensor = self.post_norm(ctx_tensor.to(torch.float32))
