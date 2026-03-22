@@ -1,5 +1,20 @@
 # Qwen3-Next from scratch
 
+## Table of Contents
+
+- [Overview](#qwen3-next-from-scratch)
+- [Changes from Qwen3 MoE models](#changes-from-qwen3-moe-models)
+  - [Gated Attention](#gated-attention)
+  - [Zero-Centered RMSNorm](#zero-centered-rmsnorm)
+  - [Gated DeltaNet](#gated-deltanet)
+  - [Making sense of the Gated Delta Rule equation and the code](#making-sense-of-the-gated-delta-rule-equation-and-the-code)
+- [Implementation differences with Official Qwen3-Next](#implementation-differences-with-official-qwen3-next)
+- [Acknowledgements](#acknowledgements)
+
+---
+
+&nbsp;
+
 At the time of writing, [Qwen3-Next](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list) is the most complex open-source LLM architecture (text-only) from a top lab,
 incorporating SOTA subquadratic attention variant and their own, more classic, Gated Attention in a hybrid package.
 
@@ -52,6 +67,10 @@ architecture which balances speed, efficiency and performance.
 
 <div align="center">
   <img src="_qwen3_next_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%">
+  
+  <div style="margin-top: 8px; font-style: italic;">
+    Figure 1 from the Qwen3-Next blogpost, edited for the missing sigmoid activation (in GDN).
+  </div>
 </div>
 
 &nbsp;
@@ -100,6 +119,8 @@ behavior/bias that gives unreasonably high attention score directed towards the 
 non-linearity to it, but in practice they showed that some different combinations of gating had contrasted results.
 </details>
 
+&nbsp;
+
 ### Zero-Centered RMSNorm
 Zero-Centered RMSNorm is not what it seems/interpreted as doing:
 
@@ -130,6 +151,8 @@ classic RMSNorm, weights = coeff = potential explosion).
 All in all, making a RMSNorm with L2 possible and keeping weights in stable range.  
 This is more of an optimizer detail (where normalization layers are included in the optimizer step) than an
 architectural change. This is not always the case, for example: https://github.com/karpathy/minGPT/issues/23.
+
+&nbsp;
 
 ### Gated DeltaNet
 
@@ -224,8 +247,10 @@ $o_t = S_t q_t$ as `attn_t = prev_state @ q_t.unsqueeze(-1)`
 
 For readability and simplicity, there are some differences compared to the efficient Qwen's own implementation:
 - Not using FLA with the chunked Gated delta rule algorithm, but the recurrent simpler version.
-- Not fusing the linear and convolutional layers. We are performing 6 separate projections (Q, K, V, gate, alpha, and
-  beta), this is easier to follow along with the architecture picture above.
+- ~~Not fusing the linear and convolutional layers. We are performing 6 separate projections (Q, K, V, gate, alpha, and
+  beta), this is easier to follow along with the architecture picture above.~~  
+  Was later fused to use as a parent class for Qwen3.5, the old unfused path is still available in the code (commented
+  out, to remember).
 
   &nbsp;
 
@@ -257,4 +282,3 @@ All resources mentioned have already been at least hyperlinked through the readm
 - $\sigma$-MoE initialization: https://arxiv.org/abs/2310.10837
 - Mamba: https://arxiv.org/abs/2312.00752
 - Venn diagram source: https://www.nature.com/articles/s42256-025-01034-6
-
