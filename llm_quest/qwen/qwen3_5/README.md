@@ -25,7 +25,7 @@ here: https://github.com/casinca/LLM-quest/blob/master/llm_quest/qwen/qwen3_next
 
 &nbsp;
 
-*High level flow chart for the Qwen3.5 VLM.*  
+*High level flowchart for the Qwen3.5 VLM.*  
 <img src="_qwen3_5_imgs/_qwen3_5_flow_chart.png" alt="Qwen3.5 flow chart" width="700"/>
 
 &nbsp;
@@ -37,7 +37,7 @@ These changes are from the Qwen3-Next implementation, and only concern text (lat
 - Switch from MoE to dense arch/FFN for loading smaller versions of the Qwen3.5 lineup and for local generation tests
 - Fuse:
     - GatedAttention's Q and the Gate projections to match HF for loading pretrained weights: `MRoPEGatedAttention`
-    - Q,K,V and the 3x 1D convolutional layers in GatedDeltaNet: `FusedGatedDeltaNet`
+    - Q, K, V projections and the 3x 1D convolutional layers in GatedDeltaNet: `FusedGatedDeltaNet`
 - More rigorous with dtypes now, all weights are in bf16 except:
     - `ZeroCenteredRMSNorm` in fp32 only for GDN (linear attention)
     - `log_A` in fp32 in GDN
@@ -52,8 +52,8 @@ changes are architectural:
 
 - We switch from 2D ($H \times W$ image only) to 3D patch embeddings (with extra temporal/time dimension, 
 $T \times H \times W$)
-- Q, K, V in vision attention (i.e., bidirectional/full/non-causal) are fused to load pretrained weights
-- Q, K, V have biases added
+- Q, K, V projections in vision attention (i.e., bidirectional/full/non-causal) are fused to load pretrained weights
+- Q, K, V projections have biases added
 - Specific Axial 2D RoPE (but classic learned positional embeddings are also kept on top)
 - The Qwen3 ViT patch embedding also performs temporal downsampling (reducing the number of frames/time dimension)
   controlled by the `temporal_patch_size` argument, whereas our original `ViTAdapter` was only doing feature
@@ -109,6 +109,7 @@ incremented  together for text tokens).
 The same prompt with the `Qwen3_5VLM` model and `Qwen3_5TextModel` yields the same response. This can be compared in
 `qwen3_5_generate_text_only.py`.
 
+&nbsp;
 
 ### MRoPE-I variant
 
@@ -119,9 +120,13 @@ frequencies) and all the Height(H) and Width(W) would fill the second and third 
 mid and low frequencies).
 
 We would end up with a less accurate representation of patch orders, per "stacked dimensional" information.  
-So the Qwen team further revisited their MRoPE, and instead interleaved the rotary coefficients 
-`[T,H,W, T,H,W, ...,]` among all 3 dimensions, which gives a better and enriched representation of patch orders, where
-all 3 dimensions are exposed to all frequencies, ranging from high to low.
+That is a bit of an awkward fit for vision patches, where each token is naturally a single 3D coordinate (T, H, W): it
+is more intuitive to keep those three components together per patch than to pool all T components in one frequency range
+and all H and W in others.
+
+So the Qwen team further revisited their MRoPE, and instead interleaved the rotary coefficients `[T,H,W, T,H,W, ...,]`
+among all 3 dimensions, which gives a better and enriched representation of patch orders, where all 3 dimensions are
+exposed to all frequencies, ranging from high to low. It gives a more natural "per patch" sequential ordering.
 
 &nbsp;
 
@@ -134,13 +139,24 @@ all 3 dimensions are exposed to all frequencies, ranging from high to low.
 This is done in the `RoPE.interleave_mrope_coeffs` following HuggingFace implementation and the `mrope_section` argument
 determines the splits between the 3 dimensions (T, H, W).
 
+&nbsp;
+
 ### Additional notes:
 
-When an input is multimodal, it should already be "prepared" (at least the way HF does it and here).  
-This means the text sequence length doesn't change, in the model because of vision input: we are not concatenating the
+- When an input is multimodal, it should already be "prepared" (at least the way HF does it and here).  
+This means the text sequence length doesn't change in the model because of the vision input: we are not concatenating the
 prompt with the vision tokens during the forward or in the `__init__`, the text input is already expanded with image
 placeholder/special tokens IDs that match the number of real vision tokens/patches.  
-Therefore, we simply use a mask to replace the image placeholder/special token IDs in the input sequence with the vision token/patch embeddings from the vision model. This is done in the `Qwen3_5VLM.forward` method.
+Therefore, we simply use a mask to replace the image placeholder/special token IDs in the input sequence with the vision
+token/patch embeddings from the vision model. This is done in the `Qwen3_5VLM.forward` method.
+
+- Later added support for caches in https://github.com/casinca/LLM-quest/pull/27:
+
+  - Gated attention re-use classic KVCache logic from our Qwen3
+  - GDN cache however, for conv states and prev/ last recurrent state, is heavily inspired by the cache logic from the HuggingFace official implementation for repro and correctness.
+  - Both caches (for GDN+Gated attn) are wrapped under a Qwen3_5Cache class.
+  - Why no cache for the `Qwen3_5VisionModel`? We are only doing a single pass (once) to retrieve the vision
+    embeddings, so there's no need for a cache.
 
 &nbsp;
 
