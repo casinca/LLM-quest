@@ -49,7 +49,7 @@ architecture which balances speed, efficiency and performance.
   from earlier this year.
 
 - Also related to MoE (but only relevant for pretraining), they initialize the router/gate weights following 
-  [$\sigma$-MoE initialization](https://arxiv.org/abs/2310.10837) in order to get a better starting point for training.  
+  [σ-MoE initialization](https://arxiv.org/abs/2310.10837) in order to get a better starting point for training.  
   The idea is to normalize rows (vectors) of the matrix to unit length, removing the initial random influence of their
   magnitudes. Consequently, initial routings (dot products), will only be based on cosine
   similarity/direction alignment.
