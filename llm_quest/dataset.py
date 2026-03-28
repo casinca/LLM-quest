@@ -736,7 +736,8 @@ class RPTStructuredDataset(Dataset):
 # chunk/continuation of the text length.
 # NOTE: This version was initially made up for unstructured datasets (eg corpus of text) without defined samples.
 # This deviates from the RPT paper but can be useful for experimenting on "truer" pretraining type of tasks?
-# see why it's problematic and deviates from the paper: TODO
+# see why it's problematic and deviates from the paper:
+# https://github.com/casinca/LLM-quest/blob/master/llm_quest/reinforcement_pretraining/README.md#rpt-structured-datasets-vs-continuous-corpus-of-text
 class RPTContinuousDataset(Dataset):
     """
     PyTorch Dataset for preparing Reinforcement Pre-Training (RPT) data.
