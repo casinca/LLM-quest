@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 
 import config
-from llm_quest.alignment.gspo.gspo_engine import gspo_loss, log_probs_per_seq
 from llm_quest.generate import generate_batched_loop, generate_batched_loop_kv_cache
 from llm_quest.utils import CheckpointEvaluator
 
@@ -218,7 +217,6 @@ def evaluate_reward_model(val_loader, reward_model, eval_num_batches=None, beta=
     reward_model.eval()
     with torch.inference_mode():
         for i, batch in enumerate(val_loader):
-
             if i >= num_batches_to_eval:
                 break
 
@@ -463,6 +461,34 @@ def log_probs_per_token_optimized(logits, inputs):
     return label_log_probs  # shape (b, s-1)
 
 
+# logprobs_per_token are computed with log_probs_per_token() above
+# separation of concerns:
+# - In case we want to use KL div with GSPO, we keep the logprobs_per_token without having to recompute it later
+# - for the policy ratio per sequence, we just need to call this function twice for old/new logprobs.
+#
+# It would have been more efficient to compute the ratio per token once and then normalize. For flexibility, in case of
+# future variants, I keep the normalization per logprobs.
+def log_probs_per_seq(logprobs_per_token, loss_mask):
+    """
+    Compute the log probabilities per sequence.
+
+    Args:
+        logprobs_per_token (torch.Tensor): Tensor of shape (B*, S*) containing the log probabilities per token.
+        loss_mask (torch.Tensor, optional): Tensor of shape (B*, S*) for masking prompt+padding tokens, this should be
+        the reward mask.
+
+        *considering B as batch_size * num_samples and S as prompt_len+max_gen.
+
+    Returns:
+        torch.Tensor: Tensor of shape (B,) containing the log probabilities per sequence.
+    """
+    # NOTE: here the mask is not optional as we don't want padding+prompt tokens to be considered for the mean
+    # (if token-level, we can delay the masking until the loss calculation)
+    seq_logprobs = (logprobs_per_token * loss_mask).sum(dim=1) / loss_mask.sum(dim=1)  # shape: (B,)
+
+    return seq_logprobs
+
+
 def kl_div_per_token(policy_logprobs, reference_logprobs, policy_ratio=None):
     """
     Compute the KL divergence per token between the policy and reference log probabilities.
@@ -528,7 +554,133 @@ def off_policy_seq_mask(kl_div_per_token, advantages, loss_mask, delta=0.5):
     return off_policy_mask
 
 
-def grpo_loss(
+class GRPOLoss:
+    """
+    Computes various GRPO-family loss variants
+
+    - Hard-clipped surrogate: GRPO, DAPO, Dr. GRPO
+    - Soft-gate surrogate: SAPO
+    - Sequence-level: GSPO
+    """
+
+    @staticmethod
+    def compute(
+        policy_ratio,
+        advantages,
+        loss_mask,
+        min_clip,
+        max_clip,
+        beta,
+        kl_div,
+        num_samples,
+        max_gen=1,
+        variant="grpo",
+        off_policy_mask=None,
+    ):
+        ### SEQ LEVEL ###
+        if variant == "gspo":
+            # GSPO is seq-level, handle it cleanly with _compute_gspo_loss
+            return GRPOLoss._compute_gspo_loss(policy_ratio, advantages, min_clip, max_clip, off_policy_mask)
+
+        ### TOKEN LEVEL ###
+        # For token-level variants, broadcast advantages to (B, 1)
+        advantages_broadcast = advantages.unsqueeze(-1)
+
+        # surrogate objectives
+        if variant in ("grpo", "dapo", "dr_grpo"):
+            surr_obj_per_token = GRPOLoss._compute_clipped_surrogate(
+                policy_ratio, advantages_broadcast, min_clip, max_clip
+            )
+        elif variant == "sapo":
+            surr_obj_per_token = GRPOLoss._compute_sapo_surrogate(policy_ratio, advantages_broadcast)
+        else:
+            raise ValueError(f"Unknown loss type: {variant}")
+
+        # DS V3.2 OPSM: apply off-policy mask to the surrogate objective separately, decoupling from KL divergence!
+        if off_policy_mask is not None:
+            surr_obj_per_token *= off_policy_mask
+
+        # (SAPO can use KL div but by default beta=0)
+        loss_per_token = -(surr_obj_per_token - beta * kl_div)
+        loss_per_token *= loss_mask  # final masking: prompt + padding tokens
+
+        return GRPOLoss._aggregate(loss_per_token, loss_mask, num_samples, max_gen, variant)
+
+    @staticmethod
+    def _compute_clipped_surrogate(policy_ratio, advantages_broadcast, min_clip, max_clip):
+        unclipped_surr_obj_per_token = policy_ratio * advantages_broadcast
+        clipped_surr_obj_per_token = torch.clip(policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages_broadcast
+        return torch.min(unclipped_surr_obj_per_token, clipped_surr_obj_per_token)
+
+    @staticmethod
+    def _compute_sapo_surrogate(policy_ratio, advantages_broadcast, temp_pos_tokens=1.0, temp_neg_tokens=1.05):
+        """
+        Compute the SAPO (Soft Adaptive Policy Optimization) surrogate from Qwen.
+        See PR description for more details: https://github.com/casinca/LLM-quest/pull/15
+        https://arxiv.org/abs/2511.20347
+
+        Per the paper, fig.5 t_neg>t_pos, yields the best stability results.
+        """
+        temps = torch.where(advantages_broadcast > 0, temp_pos_tokens, temp_neg_tokens)
+        soft_gate = torch.sigmoid(temps * (policy_ratio - 1)) * 4 / temps
+        return soft_gate * advantages_broadcast
+
+    @staticmethod
+    def _compute_gspo_loss(masked_policy_ratio, advantages, min_clip, max_clip, off_policy_mask=None):
+        """
+        Compute the classic GSPO loss.
+        The policy ratio should already be masked for padding+prompt tokens via log_probs_per_seq()
+
+        Args:
+            masked_policy_ratio (torch.Tensor): Tensor of shape (B,) containing the policy ratio masked for padding+prompt
+            tokens.
+            advantages (torch.Tensor): Tensor of shape (B,) containing the advantages.
+            min_clip (float): Minimum epsilon clip value.
+            max_clip (float): Maximum epsilon clip value.
+            off_policy_mask (torch.Tensor, optional): Tensor of shape (B, 1) containing the off-policy mask.
+
+        Returns:
+            torch.Tensor: Tensor of shape (1,) containing the GSPO loss.
+
+        """
+        surr_obj = masked_policy_ratio * advantages
+        clipped_surr_obj = torch.clip(masked_policy_ratio, min=1 - min_clip, max=1 + max_clip) * advantages
+
+        surr_obj = torch.min(surr_obj, clipped_surr_obj)
+        if off_policy_mask is not None:
+            surr_obj *= off_policy_mask.squeeze(-1)
+
+        gspo_loss = -surr_obj
+        gspo_loss_batch = gspo_loss.mean()
+
+        return gspo_loss_batch
+
+    @staticmethod
+    def _aggregate(loss_per_token, loss_mask, num_samples, max_gen, variant):
+        if variant in ("grpo", "sapo"):
+            # grpo loss per response
+            grpo_loss_seq = loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
+
+            # TODO (this part can be simplified to a single .mean() since groups are equal size)
+            # if the vGRPO variant doesn't work, revert this
+            # grpo loss per group/num_samples
+            grpo_loss_group = grpo_loss_seq.view(-1, num_samples).mean(dim=1)
+            # grpo loss for the batch
+            return grpo_loss_group.mean()
+
+        # DAPO paper: https://arxiv.org/abs/2503.14476 equation 8 and "3.3 Rebalancing Act"
+        elif variant == "dapo":
+            return loss_per_token.sum() / loss_mask.sum().clamp(min=1)
+
+        # Dr. GRPO paper: https://arxiv.org/abs/2503.20783 - Figure 1
+        # removing length normalization bias
+        elif variant == "dr_grpo":
+            return loss_per_token.sum() / (loss_per_token.shape[0] * max_gen)
+
+        raise ValueError(f"Unknown loss type: {variant}")
+
+
+def deprecated_grpo_loss(
     policy_ratio,
     advantages,
     loss_mask,
@@ -542,42 +694,17 @@ def grpo_loss(
     off_policy_mask=None,
 ):
     """
-    Compute chosen loss variant among:
-    - GRPO
-    - DAPO
-    - Dr. GRPO
-    - GSPO
-    - SAPO
-
-    credit to @qgallouedec's TRL doc for enumerating the DAPO and Dr. GRPO variants with their papers, which made it
-    faster to implement.
-
-    Args:
-        policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio per token.
-        advantages (torch.Tensor): Tensor of shape (B,) containing the advantages per response.
-        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask.
-        min_clip (float): Minimum clip parameter ϵ for the clipped surrogate objective.
-        max_clip (float): Maximum clip parameter ϵ for the clipped surrogate objective.
-        beta (float): Beta for the KL divergence penalty term.
-        kl_div (torch.Tensor): Tensor of shape (B, S-1) containing the KL divergence per token.
-        num_samples (int): Number of samples per group (simply used for reshaping per groups).
-        max_gen (int, optional): used for Length Bias in the Dr. GRPO loss (in p.7 of the Dr. GRPO paper)
-                                Defaults to 1. (no effect)
-        variant (str): Variant of the GRPO loss to compute, default is `grpo` alt: `dapo`, `dr_grpo`, `gspo`, `sapo`.
-        off_policy_mask (torch.Tensor, optional): Tensor of shape (B, 1) containing the off-policy sequence mask.
-                                            When provided, it's applied only to the surrogate objective, not KL div.
-                                            Defaults to None.
-
-    Returns:
-        torch.Tensor: Tensor of shape (1,) containing the GRPO loss for a batch.
+    Deprecated original implementation. Kept for reference.
     """
-    assert not (
-        variant in ["sapo", "gspo"] and off_policy_mask is not None
-    ), f"not incompatible with {variant} but needs a cleaner implementation with current code"
+    assert not (variant in ["sapo", "gspo"] and off_policy_mask is not None), (
+        f"not incompatible with {variant} but needs a cleaner implementation with current code"
+    )
 
     # depending on the policy ratio level, either we use GRPO token-level variants or the classic GSPO seq-level loss
     if variant == "gspo":
-        return gspo_loss(policy_ratio, advantages, min_clip, max_clip)  # already masked for padding+prompt
+        return GRPOLoss._compute_gspo_loss(
+            policy_ratio, advantages, min_clip, max_clip
+        )  # already masked for padding+prompt
 
     # (PyTorch will broadcast the advantages anyway, unsqueezing to emphasize advantages aren't per tokens)
     # ie, each trajectory gets a single advantage.
@@ -603,7 +730,6 @@ def grpo_loss(
     if variant == "grpo":
         # grpo loss per response
         grpo_loss_seq = grpo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
-
         # TODO (this part can be simplified to a single .mean() since groups are equal size)
         # if the vGRPO variant doesn't work, revert this
         # grpo loss per group/num_samples
@@ -624,34 +750,6 @@ def grpo_loss(
         raise ValueError(f"Unknown loss type: {variant}")
 
     return grpo_loss_batch
-
-
-def sapo_loss(policy_ratio, advantages, loss_mask, temp_pos_tokens=1.0, temp_neg_tokens=1.05):
-    """
-    Compute the SAPO (Soft Adaptive Policy Optimization) loss from Qwen.
-    See PR description for more details: https://github.com/casinca/LLM-quest/pull/15
-    https://arxiv.org/abs/2511.20347
-
-    Args:
-        policy_ratio (torch.Tensor): Tensor of shape (B, S-1) containing the policy ratio.
-        advantages (torch.Tensor): Tensor of shape (B, 1) containing the advantages per sequence (broadcasted)
-        loss_mask (torch.Tensor): Tensor of shape (B, S-1) containing the loss mask, this should be the reward mask.
-        temp_pos_tokens (float, optional): Temperature (tau_pos in the paper) for positive tokens. Defaults to 1.0.
-        temp_neg_tokens (float, optional): Temperature (tau_neg in the paper) for non-positive tokens. Defaults to 1.05.
-                                            it's called "neg" but it's for <=0 advantages.
-
-        Per the paper, fig.5 t_neg>t_pos, yields the best stability results.
-    """
-    temps = torch.where(advantages > 0, temp_pos_tokens, temp_neg_tokens)
-
-    soft_gate = torch.sigmoid(temps * (policy_ratio - 1)) * 4 / temps
-    sapo_loss_per_token = -soft_gate * advantages
-    sapo_loss_per_token *= loss_mask
-
-    sapo_loss_seq = sapo_loss_per_token.sum(dim=-1) / loss_mask.sum(dim=-1).clamp(min=1)
-    sapo_loss_batch = sapo_loss_seq.mean()
-
-    return sapo_loss_batch
 
 
 # NOTE: oldest GRPO version with single batch was removed in commit:
@@ -797,7 +895,7 @@ def grpo_training_loop_variant_experimental(
                 kl_div = kl_div_per_token(policy_logprobs, old_and_ref_logprobs)
 
                 # loss, backprop, update
-                grpo_loss_batch = grpo_loss(
+                grpo_loss_batch = GRPOLoss.compute(
                     policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,
@@ -1000,7 +1098,7 @@ def rlhf_grpo_training_loop(
                     kl_div = kl_div_per_token(policy_logprobs, reference_logprobs)
 
                 # loss, backprop, update
-                grpo_loss_batch = grpo_loss(
+                grpo_loss_batch = GRPOLoss.compute(
                     policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,

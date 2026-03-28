@@ -3,12 +3,12 @@ import os
 import torch
 
 import config
-from llm_quest.alignment.gspo.gspo_engine import log_probs_per_seq
 from llm_quest.alignment.rlhf_grpo.grpo_engine import (
     GRPOEvaluator,
+    GRPOLoss,
     batched_responses_collator,
-    grpo_loss,
     kl_div_per_token,
+    log_probs_per_seq,
     log_probs_per_token,
     off_policy_seq_mask,
     z_scores,
@@ -66,7 +66,6 @@ class VerifiableRewardCalculator:
         rewards_list = []
 
         for response_string, correct_answer in zip(response_strings, correct_answers):
-
             raw_model_answer = ResponseExtractor.get_answer(response_string)
             sanitized_model_answer = ResponseExtractor.sanitize_answer(raw_model_answer)
             sanitized_correct_answer = ResponseExtractor.sanitize_answer(correct_answer)
@@ -340,7 +339,7 @@ def rlvr_grpo_training_loop(
                     off_policy_mask = None
 
                 # loss, backprop, update
-                grpo_loss_batch = grpo_loss(
+                grpo_loss_batch = GRPOLoss.compute(
                     policy_ratio=policy_ratio,
                     advantages=advantages,
                     loss_mask=loss_mask,

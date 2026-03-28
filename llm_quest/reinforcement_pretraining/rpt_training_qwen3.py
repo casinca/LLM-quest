@@ -84,7 +84,6 @@ instruction = (
 
 
 if __name__ == "__main__":
-
     config.use_phantom_reward = True  # overriding config to use phantom reward specifically for RPT
     torch.manual_seed(123)
 
