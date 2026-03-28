@@ -93,7 +93,8 @@ GEMMA3_SMALL_CONFIG = {
     "num_kv_groups": 6,
     "hidden_dim": 4 * 768,
     "window_size": 3,
-    "local_global_att_ratio": 5,  # O = full global & 'n_layers' = full SWA
+    # if = 0 → full global attn, if = "n_layers" → full SWA, else alternating every "local_global_att_ratio"
+    "local_global_att_ratio": 5,
     "rope_base": 10_000,
     "rope_freq": {
         "factor": 32.0,
