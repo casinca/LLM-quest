@@ -130,20 +130,17 @@ class VectorizedSharedExperts(nn.Module):
 
 
 class DeepSeekMoE(nn.Module):
-
-    def __init__(
-        self,
-        cfg,
-        num_experts=8,
-        num_shared_experts=1,
-        top_k=3,
-        scaling_factor: str | float = "auto",
-        bias_update_rate=1e-3,
-    ):
+    def __init__(self, cfg):
         super().__init__()
+        num_experts = cfg["num_experts"]
+        num_shared_experts = cfg["num_shared_experts"]
+        top_k = cfg["top_k"]
+        scaling_factor = cfg["moe_scaling_factor"]
+        bias_update_rate = cfg["moe_bias_update_rate"]
+
         # some basic checks
         if scaling_factor == "auto" or scaling_factor != 1:
-            assert (top_k + num_shared_experts) %2 == 0, (
+            assert (top_k + num_shared_experts) % 2 == 0, (
                 f"Total 'active' experts: ({top_k} routed + {num_shared_experts} shared) must be even "
                 "for better hidden_dim alignment when scaling_factor != 1"
             )
@@ -255,15 +252,14 @@ if __name__ == "__main__":
         "emb_dim": 64,
         "hidden_dim": 128,
         "dtype": torch.float32,
+        "num_experts": 10,
+        "num_shared_experts": 1,
+        "top_k": 4,
+        "moe_scaling_factor": 1,
+        "moe_bias_update_rate": 1e-3,
     }
 
-    model = DeepSeekMoE(
-        cfg,
-        num_experts=10,
-        num_shared_experts=1,
-        top_k=4,
-        scaling_factor=1,
-    )
+    model = DeepSeekMoE(cfg)
 
     x = torch.randn(2, 16, 64)
     output = model(x)

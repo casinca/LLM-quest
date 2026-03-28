@@ -125,6 +125,7 @@ class TransformerBlock(nn.Module):
             - context_length (int): Context length for attention
             - n_heads (int): Number of attention heads
             - num_ffn (int): Number of FFN layers
+            - MoE hyperparameters
         layer (int): layer index
 
     """

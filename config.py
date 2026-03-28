@@ -106,8 +106,6 @@ GEMMA3_SMALL_CONFIG = {
     "dtype": torch.float32,
 }
 
-# TODO remove hardcoded values for DeepSeekMoE and add it to the config
-
 DEEPSEEK_SMALL_CONFIG = {
     "vocab_size": 50304,
     "context_length": 512,
@@ -116,6 +114,11 @@ DEEPSEEK_SMALL_CONFIG = {
     "n_layers": 12,
     "hidden_dim": 4 * 768,
     "num_ffn": 3,  # number of FFN layers, remaining will be MoE
+    "num_experts": 8,
+    "num_shared_experts": 1,
+    "top_k": 3,
+    "moe_scaling_factor": "auto",  # "auto" → width scaled by 1 / (top_k + num_shared_experts)
+    "moe_bias_update_rate": 1e-3,
     "mtp_depth": 2,  # number of MTP modules (depth of the multi token prediction)
     "mtp_loss_coeff": 0.2,  # for now static, DeepSeek mentions 0.1 for first 10T tokens, 0.3 for the remaining 4.8T
     "rope_base": 10_000,
@@ -149,6 +152,9 @@ MIMO_V2_SMALL_CONFIG = {
     "mtp_loss_coeff": 0.3,
     "num_experts": 8,  # scaled down from 256
     "top_k": 2,  # scaled down from 8
+    "num_shared_experts": 0,
+    "moe_scaling_factor": 1.0,  # full hidden_dim per expert (no width scaling)
+    "moe_bias_update_rate": 1e-3,
     "dtype": torch.float32,
 }
 
@@ -353,6 +359,7 @@ QWEN3_NEXT_SMALL_CONFIG = {
 # Qwen3.5-0.8B config Vision + Text
 # From: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
 QWEN3_5_08B_CONFIG = {
+    # ###############################
     # ------ Text config keys ------
     "model_path": "Qwen/Qwen3.5-0.8B",
     "vocab_size": 248_320,
@@ -379,6 +386,7 @@ QWEN3_5_08B_CONFIG = {
     # section sizes for interleaved 3D positional encoding between (T, H, W)
     # if we sum(mrope_section) we get back head_dim * partial_rope_factor / 2 = 256 * 0.25 / 2 = 32
     "mrope_section": [11, 11, 10],
+    # ###############################
     # ------ Vision config keys ------
     "vision_n_layers": 12,  # depth
     "vision_emb_dim": 768,  # hidden_size

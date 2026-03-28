@@ -73,13 +73,7 @@ class TransformerBlock(nn.Module):
         # Feed Forward
         if use_moe:
             # reusing DeepSeekMoE but with 0 shared experts as per MiMo-V2-Flash paper
-            self.feed_forward = DeepSeekMoE(
-                cfg,
-                num_experts=cfg["num_experts"],
-                num_shared_experts=0,
-                top_k=cfg["top_k"],
-                scaling_factor=1.0,  # we use hidden_dim provided in cfg as it is
-            )
+            self.feed_forward = DeepSeekMoE(cfg)
         else:
             self.feed_forward = FFN(cfg)
 
