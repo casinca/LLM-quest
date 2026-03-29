@@ -43,6 +43,9 @@ class LayerNorm(nn.Module):
         return self.scale * norm_x + self.shift
 
 
+# NOTE: An easier "naive" implementation of SWA is done for Xiaomi's MiMo-V2-Flash in:
+# https://github.com/casinca/LLM-quest/blob/master/llm_quest/xiaomi/
+# where we simply apply the precomputed SWA mask to the global attention, forcing the attention pattern to be local.
 def apply_sliding_window_attention(queries, keys, values, window_size, swa_mask=None):
     """
     Sliding Window Attention.
