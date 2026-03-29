@@ -9,8 +9,8 @@
 #
 # NOTE: For reference, per the mHC paper p.10:
 # - inputs (xl and xl_norm) are in bf16
-# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32. TODO
-# - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32)
+# - H_res, H_pre, H_post, scaling factors and static mapping (biases) are stored and computed in fp32.
+# - dynamic mappings (phi_res, phi_pre, phi_post) are in tf32 (Nvidia TensorFloat-32) not done here.
 #
 # NOTE: Often switching between "n" and "exps_rate" notation, same thing for number of expanded streams
 
@@ -19,10 +19,10 @@ import math
 import torch
 import torch.nn as nn
 
-from llm_quest.utils import BirkhoffvonNeumann, SinkhornKnopp
+from llm_quest.utils import BirkhoffvonNeumann, HCCoeffsFP32Mixin, SinkhornKnopp
 
 
-class MCHyperConnectionRes(nn.Module):
+class MCHyperConnectionRes(HCCoeffsFP32Mixin, nn.Module):
     """
     Manifold-Constrained Hyper-connection for residual stream as depicted in:
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
@@ -37,7 +37,7 @@ class MCHyperConnectionRes(nn.Module):
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The SinkhornKnopp class instance to make the residual matrix doubly stochastic
         device (torch.device):
-        dtype (torch.dtype):
+        h_dtypes (torch.dtype): Dtype for H coefficients (α, biases, linear); default to fp32 (matching the paper).
 
     Returns:
         x: The mixed residual streams, shape: (b, seq_len, exps_rate, emb_dim)
@@ -53,17 +53,21 @@ class MCHyperConnectionRes(nn.Module):
         sk_epsilon=1e-6,
         sk_iter_check=3,
         device=None,
-        dtype=None,
+        h_dtypes=torch.float32,
     ):
         super().__init__()
+
         self.expansion_rate = expansion_rate
         self.sinkhorn_knopp = constraint_cls(max_iter=sk_max_iter, epsilon=sk_epsilon, iter_check=sk_iter_check)
+        self.h_dtypes = h_dtypes
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
-        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=self.h_dtypes))
 
         # dynamic mapping (phi_res): project to n² streams
-        self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate**2, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(
+            emb_dim * expansion_rate, expansion_rate**2, bias=False, device=device, dtype=self.h_dtypes
+        )
         # The HC paper init dynamic mapping weights for phi_res as 0 (HC paper p.4 section 2.3) but Pytorch nn.linear
         # is doing Kaiming init by default so we need to zero init
         nn.init.zeros_(self.linear.weight)
@@ -76,7 +80,7 @@ class MCHyperConnectionRes(nn.Module):
             # identity property will be lost after torch.exp().
             # Therefore we re-init bias so that it approximates I after torch.exp()
             # values: 0 for diags / -8 for the rest (why -8? inspired from mHC-lite paper init, exp^(-8) ~ 0)
-            init_bias = torch.eye(expansion_rate, device=device, dtype=dtype) * 8 - 8
+            init_bias = torch.eye(expansion_rate, device=device, dtype=self.h_dtypes) * 8 - 8
             self.bias = nn.Parameter(init_bias)  # shape (exps_rate, exps_rate)
         else:
             self.bias = None
@@ -94,6 +98,7 @@ class MCHyperConnectionRes(nn.Module):
             The residual mapping/matrix H_res, shape: (b, seq_len, exps_rate, exps_rate)
         """
         b, seq_len, _ = x_norm.shape
+        x_norm = x_norm.to(self.h_dtypes)
         # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, exps_rate^2) → (b, seq_len, exps_rate, exps_rate)
         x = self.linear(x_norm).view(b, seq_len, self.expansion_rate, self.expansion_rate)  # apply dynamic mapping
 
@@ -119,12 +124,15 @@ class MCHyperConnectionRes(nn.Module):
         Returns:
             The n mixed streams after applying the residual mapping H_res, shape: (b, seq_len, exps_rate, emb_dim)
         """
-        x = self.residual_matrix(x_norm) @ x
+        out_dtype = x.dtype
 
-        return x
+        h = self.residual_matrix(x_norm)
+        x = h @ x.to(self.h_dtypes)
+
+        return x.to(out_dtype)
 
 
-class MHCLiteRes(nn.Module):
+class MHCLiteRes(HCCoeffsFP32Mixin, nn.Module):
     """
     This is the residual mapping from the mHC-lite paper: https://arxiv.org/abs/2601.05732
 
@@ -144,7 +152,7 @@ class MHCLiteRes(nn.Module):
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         constraint_cls (nn.Module): The constraint class instance to make the residual matrix doubly stochastic
         device (torch.device):
-        dtype (torch.dtype):
+        h_dtypes (torch.dtype): Dtype for H coefficients (α, biases, linear); default to fp32 (matching the paper).
 
     Returns:
         x: The mixed residual streams, shape: (b, seq_len, exps_rate, emb_dim)
@@ -157,18 +165,22 @@ class MHCLiteRes(nn.Module):
         add_static_mapping=True,
         constraint_cls=BirkhoffvonNeumann,
         device=None,
-        dtype=None,
+        h_dtypes=torch.float32,
     ):
         super().__init__()
+
         self.expansion_rate = expansion_rate
         self.num_permuts = math.factorial(expansion_rate)
         self.bvn = constraint_cls(expansion_rate=self.expansion_rate).to(device)
+        self.h_dtypes = h_dtypes
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
-        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=self.h_dtypes))
 
         # dynamic mapping (W_res in mHC-lite paper): project to n! streams
-        self.linear = nn.Linear(emb_dim * expansion_rate, self.num_permuts, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(
+            emb_dim * expansion_rate, self.num_permuts, bias=False, device=device, dtype=self.h_dtypes
+        )
         nn.init.zeros_(self.linear.weight)
 
         # static mapping (biases b_res) are scalars in a vector, not a matrix (1 weight for each of the n! permutations)
@@ -176,7 +188,9 @@ class MHCLiteRes(nn.Module):
         # They are all init to -8 for getting a small value after softmax, except the identity permutation
         # (ex: if n=4, the identity permutation is (0,1,2,3)) which is set to 0.
         if add_static_mapping:
-            self.bias = nn.Parameter(torch.full(size=(self.num_permuts,), fill_value=-8, device=device, dtype=dtype))
+            self.bias = nn.Parameter(
+                torch.full(size=(self.num_permuts,), fill_value=-8, device=device, dtype=self.h_dtypes)
+            )
             with torch.no_grad():
                 self.bias[self.bvn.identity_permut_index] = 0  # set the identity permutation to 0
         else:
@@ -195,6 +209,7 @@ class MHCLiteRes(nn.Module):
             The residual mapping/matrix H_res, shape: (b, seq_len, exps_rate, exps_rate)
         """
         b, seq_len, _ = x_norm.shape
+        x_norm = x_norm.to(self.h_dtypes)
         # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, n!)
         x = self.linear(x_norm)  # apply dynamic mapping
 
@@ -220,12 +235,15 @@ class MHCLiteRes(nn.Module):
         Returns:
             The n mixed streams after applying the residual mapping H_res, shape: (b, seq_len, exps_rate, emb_dim)
         """
-        x = self.residual_matrix(x_norm) @ x
+        out_dtype = x.dtype
 
-        return x
+        h = self.residual_matrix(x_norm)
+        x = h @ x.to(self.h_dtypes)
+
+        return x.to(out_dtype)
 
 
-class MCHyperConnectionPre(nn.Module):
+class MCHyperConnectionPre(HCCoeffsFP32Mixin, nn.Module):
     """
     Manifold-Constrained Hyper-connection for the entry of the residual branch/pre-transformer block, as depicted in:
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
@@ -244,7 +262,7 @@ class MCHyperConnectionPre(nn.Module):
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, use a sigmoid for constraining (non-negative)
         device (torch.device):
-        dtype (torch.dtype):
+        h_dtypes (torch.dtype): Dtype for H coefficients (α, biases, linear); default to fp32 (matching the paper).
 
     Returns:
         x: The single stream resulting of the aggregated expanded streams, after applying the pre mapping H_pre, ready
@@ -258,18 +276,21 @@ class MCHyperConnectionPre(nn.Module):
         add_static_mapping=True,
         activation_cls=nn.Sigmoid,
         device=None,
-        dtype=None,
+        h_dtypes=torch.float32,
     ):
         super().__init__()
 
+        self.h_dtypes = h_dtypes
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
-        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=self.h_dtypes))
 
         # dynamic mapping (phi_pre): downproject the flattened/mixed streams to exps_rate
         # (will get a single weight for each of the n expanded streams)
-        self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(
+            emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=self.h_dtypes
+        )
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
 
@@ -280,7 +301,7 @@ class MCHyperConnectionPre(nn.Module):
         # edge case: can't do ln(0)
         init_val = -math.log(expansion_rate - 1) if expansion_rate > 1 else 10  # sigmoid(10) ~ 1
         self.bias = (
-            nn.Parameter(torch.full(size=(expansion_rate,), fill_value=init_val, device=device, dtype=dtype))
+            nn.Parameter(torch.full(size=(expansion_rate,), fill_value=init_val, device=device, dtype=self.h_dtypes))
             if add_static_mapping
             else None
         )  # shape (exps_rate,)
@@ -298,6 +319,7 @@ class MCHyperConnectionPre(nn.Module):
         Returns:
             The pre mapping/matrix H_pre as a row vector, shape: (b, seq_len, 1, exps_rate)
         """
+        x_norm = x_norm.to(self.h_dtypes)
         # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, exps_rate)
         x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
@@ -323,13 +345,16 @@ class MCHyperConnectionPre(nn.Module):
             The aggregated single stream ready for the trf block, shape: (b, seq_len, emb_dim)
         """
 
-        x = self.pre_mapping_matrix(x_norm) @ x
+        out_dtype = x.dtype
+
+        h = self.pre_mapping_matrix(x_norm)
+        x = h @ x.to(self.h_dtypes)
         x = x.squeeze(-2)  # shape (b, seq_len, 1, emb_dim) → (b, seq_len, emb_dim)
 
-        return x
+        return x.to(out_dtype)
 
 
-class MCHyperConnectionPost(nn.Module):
+class MCHyperConnectionPost(HCCoeffsFP32Mixin, nn.Module):
     """
     Manifold-Constrained Hyper-connection for the exit of the residual branch/post-transformer block, as depicted in:
     - DeepSeek mHC: Manifold-Constrained Hyper-Connections paper (eq 7 and 8): https://arxiv.org/abs/2512.24880
@@ -351,7 +376,7 @@ class MCHyperConnectionPost(nn.Module):
         add_static_mapping (bool): Whether to add static mappings, ie adding biases (b_res in mHC the paper)
         activation_cls (nn.Module): The activation function class, use a sigmoid for constraining (non-negative)
         device (torch.device):
-        dtype (torch.dtype):
+        h_dtypes (torch.dtype): Dtype for H coefficients (α, biases, linear); default to fp32 (matching the paper).
 
     Returns:
         x: The n post-trf block scaled streams, after applying the post mapping H_post,
@@ -365,18 +390,21 @@ class MCHyperConnectionPost(nn.Module):
         add_static_mapping=True,
         activation_cls=nn.Sigmoid,
         device=None,
-        dtype=None,
+        h_dtypes=torch.float32,
     ):
         super().__init__()
 
+        self.h_dtypes = h_dtypes
         self.activation = activation_cls()
 
         # scalar learnable gating factor, (alpha in the mHC paper, table 5 hparam init=0.01)
-        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=dtype))
+        self.factor = nn.Parameter(torch.tensor([0.01], device=device, dtype=self.h_dtypes))
 
         # dynamic mapping (phi_post), same logic as phi_pre:
         # This determines how much the trf block output contributes to each of the n expanded streams
-        self.linear = nn.Linear(emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=dtype)
+        self.linear = nn.Linear(
+            emb_dim * expansion_rate, expansion_rate, bias=False, device=device, dtype=self.h_dtypes
+        )
         # Same init for all dynamic mapping weights as 0 (HC paper p.4 section 2.3)
         nn.init.zeros_(self.linear.weight)
 
@@ -385,7 +413,9 @@ class MCHyperConnectionPost(nn.Module):
         # Here, in order to make sigmoid(H_post_tilde) = 1, with H_post_tilde = bias (since phi_post is 0 init)
         # we need to solve for 2*sigmoid(b) = 1, which gives b = -ln(1) = 0
         self.bias = (
-            nn.Parameter(torch.zeros(expansion_rate, device=device, dtype=dtype)) if add_static_mapping else None
+            nn.Parameter(torch.zeros(expansion_rate, device=device, dtype=self.h_dtypes))
+            if add_static_mapping
+            else None
         )  # shape (exps_rate,)
 
     def post_mapping_matrix(self, x_norm):
@@ -402,6 +432,7 @@ class MCHyperConnectionPost(nn.Module):
         Returns:
             The transposed post mapping/matrix H_post^T as a column vector, shape: (b, seq_len, exps_rate, 1)
         """
+        x_norm = x_norm.to(self.h_dtypes)
         # shape (b, seq_len, exps_rate*emb_dim) → (b, seq_len, exps_rate)
         x = self.linear(x_norm) * self.factor  # apply dynamic mapping and factor
 
@@ -426,8 +457,12 @@ class MCHyperConnectionPost(nn.Module):
             The n mixed streams, shape: (b, seq_len, exps_rate, emb_dim)
         """
 
-        x = self.post_mapping_matrix(x_norm) @ x.unsqueeze(-2)
-        return x
+        out_dtype = x.dtype
+
+        h = self.post_mapping_matrix(x_norm)
+        x = h @ x.unsqueeze(-2).to(self.h_dtypes)
+
+        return x.to(out_dtype)
 
 
 # quick inline test
@@ -441,11 +476,11 @@ if __name__ == "__main__":
     test_x = torch.randn(1, 10, 4, 128, device=device, dtype=dtype)
     test_x_norm = torch.nn.functional.normalize(test_x.view(1, 10, -1), dim=-1)
 
-    test_mhc_res = MCHyperConnectionRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_mhc_pre = MCHyperConnectionPre(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
-    test_mhc_post = MCHyperConnectionPost(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    test_mhc_res = MCHyperConnectionRes(emb_dim=128, expansion_rate=4, device=device)
+    test_mhc_pre = MCHyperConnectionPre(emb_dim=128, expansion_rate=4, device=device)
+    test_mhc_post = MCHyperConnectionPost(emb_dim=128, expansion_rate=4, device=device)
 
-    test_mhc_lite_res = MHCLiteRes(emb_dim=128, expansion_rate=4, device=device, dtype=dtype)
+    test_mhc_lite_res = MHCLiteRes(emb_dim=128, expansion_rate=4, device=device)
 
     test_output_res = test_mhc_res(test_x, test_x_norm)
     test_output_pre = test_mhc_pre(test_x, test_x_norm)

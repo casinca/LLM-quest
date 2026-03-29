@@ -1,7 +1,6 @@
 import math
 from functools import partial
 
-import tiktoken
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
@@ -46,7 +45,6 @@ hparams = {
 
 
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
-# tokenizer = tiktoken.get_encoding("gpt2")
 
 train_hf = HFDataset(config.fineweb_train, tokenizer=tokenizer, max_samples=10_000)
 val_hf = HFDataset(config.fineweb_val, tokenizer=tokenizer, max_samples=200)
@@ -79,7 +77,7 @@ val_loader = DataLoader(
 
 device = config.auto_device
 model = HyperQwen3Model(nano_qwen_config, hc_type=hparams["hc_type"], expansion_rate=hparams["expansion_rate"])
-# For simplicity casting the whole model to bf16, technically hyperconnections should be in fp32
+# We can safely cast the whole model to bf16, the `HCCoeffsFP32Mixin` in utils.py will restore the proper dtypes
 model.bfloat16().to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), weight_decay=hparams["weight_decay"], fused=True)

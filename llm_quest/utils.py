@@ -629,6 +629,27 @@ class Qwen3_5Cache:
 #####################
 
 
+class HCCoeffsFP32Mixin:
+    """
+    Helper to respect proper dtypes used in DeepSeek' mHC:
+    Keep H-coefficient parameters in "h_dtypes" (default fp32) after a full model cast.
+    Ex: if `model.to(bfloat16())` we don't have to manually restore the parameters to fp32 after the cast.
+
+    PyTorch's `Module._apply` moves every parameter/buffer with the rest of the model.
+
+    After the normal "_apply", we restore "factor", "linear.weight", and optional "bias" to "h_dtypes".
+    """
+
+    def _apply(self, fn, recurse=True):
+        super()._apply(fn, recurse=recurse)
+        dt = self.h_dtypes
+        self.factor.data = self.factor.data.to(dtype=dt)
+        self.linear.weight.data = self.linear.weight.data.to(dtype=dt)
+        if self.bias is not None:
+            self.bias.data = self.bias.data.to(dtype=dt)
+        return self
+
+
 # NOTE:
 # - since we check for "all" matrices convergence, one outlier/slow convergence matrix will force extra iterations
 # for the whole batch

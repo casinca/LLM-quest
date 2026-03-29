@@ -22,9 +22,9 @@ def _create_hyper_connection_set(emb_dim, expansion_rate, dtype):
     return nn.ModuleDict(
         {
             "norm": PytorchRMSNorm(emb_dim, dtype=dtype),
-            "res": HyperConnectionRes(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "pre": HyperConnectionPre(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "post": HyperConnectionPost(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "res": HyperConnectionRes(emb_dim, expansion_rate=expansion_rate),
+            "pre": HyperConnectionPre(emb_dim, expansion_rate=expansion_rate),
+            "post": HyperConnectionPost(emb_dim, expansion_rate=expansion_rate),
         }
     )
 
@@ -35,9 +35,9 @@ def _create_mhc_set(emb_dim, expansion_rate, dtype):
     return nn.ModuleDict(
         {
             "norm": PytorchRMSNorm(expansion_rate * emb_dim, dtype=dtype),
-            "res": MCHyperConnectionRes(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "pre": MCHyperConnectionPre(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "post": MCHyperConnectionPost(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "res": MCHyperConnectionRes(emb_dim, expansion_rate=expansion_rate),
+            "pre": MCHyperConnectionPre(emb_dim, expansion_rate=expansion_rate),
+            "post": MCHyperConnectionPost(emb_dim, expansion_rate=expansion_rate),
         }
     )
 
@@ -47,9 +47,9 @@ def _create_mhc_lite_set(emb_dim, expansion_rate, dtype):
     return nn.ModuleDict(
         {
             "norm": PytorchRMSNorm(expansion_rate * emb_dim, dtype=dtype),
-            "res": MHCLiteRes(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "pre": MCHyperConnectionPre(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
-            "post": MCHyperConnectionPost(emb_dim, expansion_rate=expansion_rate, dtype=dtype),
+            "res": MHCLiteRes(emb_dim, expansion_rate=expansion_rate),
+            "pre": MCHyperConnectionPre(emb_dim, expansion_rate=expansion_rate),
+            "post": MCHyperConnectionPost(emb_dim, expansion_rate=expansion_rate),
         }
     )
 
