@@ -5,7 +5,7 @@ with DeepSeek V3 inspirations for their MoE and lightweight MTP (Multi-Token Pre
 just for training but also repurposed for inference as draft heads for speculative decoding.
 
 <p align="center">
-<img src="image.png" alt="alt text" width="600">
+<img src="./_mimo_v2_flash_arch.png" alt="alt text" width="600">
 </p>
 
 Some details of the architecture:
