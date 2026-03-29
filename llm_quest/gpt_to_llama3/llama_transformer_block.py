@@ -139,11 +139,11 @@ class TransformerBlock(nn.Module):
         self.norm_2 = RMSNorm(cfg["emb_dim"])
         self.ffn = FFN(cfg)
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, attn_mask=None):
         # Pre-norm arch
         residual = x
         x = self.norm_1(x)
-        x = self.att(x, mask, cos, sin)
+        x = self.att(x, mask, cos, sin, attn_mask)
         x = x + residual
 
         residual = x

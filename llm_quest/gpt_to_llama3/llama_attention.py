@@ -49,7 +49,14 @@ class GroupedQueryAttention(nn.Module):
         self.w_values = nn.Linear(d_in, num_kv_groups * self.head_dim, bias=False, dtype=dtype)
         self.out_proj = nn.Linear(d_out, d_out, dtype=dtype)  # optional additional learnable params for the output
 
-    def forward(self, x, mask, cos, sin):
+    def forward(self, x, mask, cos, sin, attn_mask=None):
+        """
+        args:
+            x: (b, seq_len, d_in)
+            mask: (ctx_len, ctx_len) causal mask, True = masked position
+            cos, sin: RoPE tables
+            attn_mask (optional): (b, seq_len), True = valid token (same as GPT)
+        """
         queries = self.w_queries(x)  # shape (b, s, d_out)
         keys = self.w_keys(x)  # K and V shapes (b, s, num_kv_groups * head_dim)
         values = self.w_values(x)
@@ -78,11 +85,16 @@ class GroupedQueryAttention(nn.Module):
         values = values.repeat_interleave(self.num_repeat, dim=1)
         att_scores = queries @ keys.mT  # shape (b, num_heads, seq_len, seq_len)
         # mask up to seq length/num of tokens
-        current_mask = mask[:seq_len, :seq_len]
+        curr_mask = mask[:seq_len, :seq_len]
         # scaling by √(head_dim)
         scaled_att_scores = att_scores * self.att_scaling
-        # masking in place and normalizing with softmax
-        scaled_att_scores.masked_fill_(current_mask, -torch.inf)
+        if attn_mask is not None:
+            # combine causal + padding (invert attn_mask: True = key position to mask)
+            curr_mask = curr_mask.view(1, 1, seq_len, seq_len) | ~attn_mask.view(b, 1, 1, seq_len)
+            mask_value = torch.finfo(scaled_att_scores.dtype).min / 2
+            scaled_att_scores.masked_fill_(curr_mask, mask_value)
+        else:
+            scaled_att_scores.masked_fill_(curr_mask, -torch.inf)
         att_weights = F.softmax(scaled_att_scores, dim=-1)
 
         ctx_tensor = att_weights @ values
