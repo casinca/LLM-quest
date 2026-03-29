@@ -654,7 +654,6 @@ class HCCoeffsFP32Mixin:
 # - since we check for "all" matrices convergence, one outlier/slow convergence matrix will force extra iterations
 # for the whole batch
 # - probably some other optimizations log
-# TODO: check for a good iter_check, clamp values and training stability
 class SinkhornKnopp:
     """
     Sinkhorn-Knopp Algorithm implemented in PyTorch.
@@ -678,7 +677,7 @@ class SinkhornKnopp:
         Convergence threshold. Algorithm stops when all row and column sums
         are within epsilon of 1. Must be between 0 and 1.
     iter_check : int, default=3
-        Check convergence every iter_check iterations, set to 0 to check every iteration.
+        Check convergence every iter_check iterations; set to 1 to check every iteration.
 
     Attributes
     ----------
@@ -704,6 +703,7 @@ class SinkhornKnopp:
     def __init__(self, max_iter=20, epsilon=1e-6, iter_check=3):
         assert max_iter > 0, f"max_iter must be positive, got {max_iter}"
         assert 0 < epsilon < 1, f"epsilon must be in (0, 1), got {epsilon}"
+        assert iter_check > 0, f"iter_check must be positive, got {iter_check}"
 
         self.max_iter = max_iter
         self.epsilon = epsilon
