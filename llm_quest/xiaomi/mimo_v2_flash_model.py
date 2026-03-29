@@ -68,19 +68,19 @@ class MainModel(nn.Module):
         for i in range(cfg["n_layers"]):
             if i == 0:
                 # First layer: GA + Dense FFN
-                use_sw = False
+                use_swa = False
                 use_moe = False
             else:
                 use_moe = True  # All hybrid layers use MoE
-                use_sw = True if (i + 1) % cfg["hybrid_ratio"] else False  # 5 SWA : 1 GA
+                use_swa = True if (i + 1) % cfg["hybrid_ratio"] else False  # 5 SWA : 1 GA
 
-            self.layers.append(TransformerBlock(cfg, layer_idx=i, use_sliding_window=use_sw, use_moe=use_moe))
+            self.layers.append(TransformerBlock(cfg, layer_idx=i, use_sliding_window=use_swa, use_moe=use_moe))
 
         self.final_norm = PytorchRMSNorm(cfg["emb_dim"], dtype=cfg["dtype"])
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False, dtype=cfg["dtype"])
 
         # Buffers for SWA and GA
-        # we need two sets of RoPE buffers: one for SWA (default base) and one for GA (high base)
+        # we need two sets of RoPE buffers: one for SWA (default theta base) and one for GA (higher theta base)
         self.rope_base_swa = cfg.get("rope_base", 10000)
         self.rope_base_ga = cfg.get("rope_base_ga", 640000)  # default from paper for 32k training
 
