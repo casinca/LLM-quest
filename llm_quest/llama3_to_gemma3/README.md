@@ -48,18 +48,18 @@ Trying to do SWA before $QK^T$ wasn't as straightforward as I expected... afaik 
 
 I tried to do the 2nd approach, with padding and strides, ex of what it looks like with keys:
 
-<img src="./_gem_img/_gem_img1.png" width="500"/>
+<img src="./_img/_gem_img1.png" width="500"/>
 
 ### Smoll test
 
 The below Figure from Gemma 3 caught my eye and wanted to try if I'd get similar results with my from scratch 
 implementation.
 
-<img src="./_gem_img/_gem_img2.png" width="400"/>
+<img src="./_img/_gem_img2.png" width="400"/>
 
 &nbsp;
 
-<img src="./_gem_img/_gem_img3.png" width="900"/>
+<img src="./_img/_gem_img3.png" width="900"/>
 
 On a low scale local test with a subset of FineWeb, mixing local and global attention 1:1, did improve the
 loss over global attention and a noticeable boost concerning token/s. Sounds like it's working as intended.  

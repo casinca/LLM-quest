@@ -29,7 +29,7 @@ case there is a dimension mismatch but here we're both in 768D).
 ## Vision Language Model (VLM) from scratch
 
 <div style="text-align: center;">
-    <img src="_vlm_img/_vlm_viz_img.png" alt="alt text" width="600"/>
+    <img src="_img/_vlm_viz_img.png" alt="alt text" width="600"/>
 </div>
 
 &nbsp;
@@ -61,7 +61,7 @@ analysis, rather than an exact and sensible description of the image.
 
 For example, for the first image of the test set:
 
-<img src="_vlm_img/_vlm_img_test_sample.png" alt="alt text" width="300"/>
+<img src="_img/_vlm_img_test_sample.png" alt="alt text" width="300"/>
 
 the model generated:
 

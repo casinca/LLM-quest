@@ -26,7 +26,7 @@ here: https://github.com/casinca/LLM-quest/blob/master/llm_quest/qwen/qwen3_next
 &nbsp;
 
 *High level flowchart for the Qwen3.5 VLM.*  
-<img src="_qwen3_5_imgs/_qwen3_5_flow_chart.png" alt="Qwen3.5 flow chart" width="700"/>
+<img src="_img/_qwen3_5_flow_chart.png" alt="Qwen3.5 flow chart" width="700"/>
 
 &nbsp;
 
@@ -131,7 +131,7 @@ exposed to all frequencies, ranging from high to low. It gives a more natural "p
 &nbsp;
 
 
-<img src="_qwen3_5_imgs/_mrope_interleaved.png" alt="Qwen2 VL paper" width="700"/>
+<img src="_img/_mrope_interleaved.png" alt="Qwen2 VL paper" width="700"/>
 
 *Figure 3 of the "Revisiting Multimodal Positional Encoding in Vision-Language Models" paper*
 
@@ -166,7 +166,7 @@ In `qwen3_5_generate_multimodal.py`, we test the vision capabilities of the mode
 dataset) fed to the from-scratch Multimodal GPT-2 implemented
 [here](https://github.com/casinca/LLM-quest/blob/master/llm_quest/multimodal/README.md).
 
-<img src="../../multimodal/_vlm_img/_vlm_img_test_sample.png" alt="alt text" width="300"/>
+<img src="../../multimodal/_img/_vlm_img_test_sample.png" alt="alt text" width="300"/>
 
 &nbsp;
 

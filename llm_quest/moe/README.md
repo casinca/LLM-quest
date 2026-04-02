@@ -1,6 +1,6 @@
 # Journal on MoE from scratch: Dense to classic sparse to DeepSeek MoE variant
 
-![moe_img1](./_moe_img/moe_img1.png)
+![moe_img1](./_img/moe_img1.png)
 
 
 *note1: Both implementations are solely based on research papers (that's the goal), all of them mentioned, are in the
@@ -143,7 +143,7 @@ case.
 
 ## 2. DeepSeek MoE (V2, V3 and R1)
 
-<img src="./_moe_img/moe_img2.png" width="800">
+<img src="./_img/moe_img2.png" width="800">
 
 ### a) What changes from part 1. :
 

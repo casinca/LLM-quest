@@ -66,7 +66,7 @@ tendency to add trailing spaces to its answers... which can ruin a whole group o
 
 For example, below is a good MTP (3 tokens right out of a `labels_length=4`):
 
-<img src="_rpt_imgs/_rpt_correct_mtp_example.png" alt="alt text" width="500"/>
+<img src="_img/_rpt_correct_mtp_example.png" alt="alt text" width="500"/>
 
 &nbsp;
 

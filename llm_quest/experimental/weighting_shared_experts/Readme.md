@@ -39,7 +39,7 @@ $$ \text{Shared Output} = \sum_{i=1}^{N_{\text{shared}}} \sigma\big( p \big) \cd
 After a few small tests, the model indeed tends to regulate the shared knowledge by applying a decreasing linear (at
 worst, monotonic) amount of it as we progress through deeper layers.
 
-<img src="./_exp_img/_output1.png" width="500">
+<img src="./_img/_output1.png" width="500">
 
 <sup>1</sup> This could explain a part of why DeepSeek chose to directly use 3x FFN for the first 3 layers, which is
 inherently shared knowledge acquisition only without using any sort of weighting.  
@@ -74,4 +74,4 @@ wrong method: attempt to normalize routed+shared together, will overweight share
 Output example with a batch `rand_x = torch.rand(2, 4, 768)`, `num_experts=8`, `num_shared_experts=1`, `top_k=3`, (only
 the first seq is shown): 
 
-<img src="./_exp_img/img3.png" width="500">
+<img src="./_img/img3.png" width="500">

@@ -22,7 +22,7 @@ Hyper-connections are an alternative to the traditional residual/skip connection
 architectures, originally introduced in ResNet.
 
 <div align="center">
-    <img src="_hyper_connections_img/_hyper_connections_img1.png" width="500">
+    <img src="_img/_hyper_connections_img1.png" width="500">
     <p>Fig 1 from the DeepSeek mHC paper</p>
 </div>
 
@@ -243,7 +243,7 @@ hyper-connections* with regard to $H_l^{\text{res}}$ and the *DeepSeek manifold-
 
 
 <div align="center">
-    <img src="_hyper_connections_img/_hyper_connections_img2.png" width="500">
+    <img src="_img/_hyper_connections_img2.png" width="500">
     <p>Fig 1 from the DeepSeek mHC paper</p>
 </div>
 
@@ -268,7 +268,7 @@ vector $\mathbb{R}^{n \times C} \to \mathbb{R}^{1 \times nC}$ *to preserve full 
 DeepSeek put it.
 
 <div align="center">
-    <img src="_hyper_connections_img/_hyper_connections_img3.png" width="800">
+    <img src="_img/_hyper_connections_img3.png" width="800">
     <p>Mapping changes, from classic HC to DeepSeek mHC to mHC-lite</p>
 </div>
 
@@ -350,7 +350,7 @@ break early from SK if doubly stochastic vs checking after 20 steps. It's not me
 they surely have thought about it, 20 iters is just the upper limit to find convergence.
 
 <div align="center">
-    <img src="_hyper_connections_img/_hyper_connections_img4.png" width="300">
+    <img src="_img/_hyper_connections_img4.png" width="300">
     <p>Figure 5 token throughput of the mHC-lite paper</p>
 </div>
 

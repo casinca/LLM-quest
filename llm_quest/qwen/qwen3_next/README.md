@@ -22,7 +22,7 @@ An edit of the Venn diagram from this paper: ["Back to recurrent processing at t
 state-space models"](https://www.nature.com/articles/s42256-025-01034-6), this is where we could fit Qwen3-Next:
 
 <div align="center">
-  <img src="_qwen3_next_img/_qwen3_next_venn_diagram.png" alt="paper_diagram" width="70%">
+  <img src="_img/_qwen3_next_venn_diagram.png" alt="paper_diagram" width="70%">
 </div>
 
 &nbsp;
@@ -66,7 +66,7 @@ architecture which balances speed, efficiency and performance.
 &nbsp;
 
 <div align="center">
-  <img src="_qwen3_next_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%">
+  <img src="_img/_qwen3_next_arch.png" alt="image from Qwen3-Next blogpost" width="60%">
   
   <div style="margin-top: 8px; font-style: italic;">
     Figure 1 from the Qwen3-Next blogpost, edited for the missing sigmoid activation (in GDN).
