@@ -65,9 +65,8 @@
 |:-------|:------|
 | **DPO**\* | With cDPO for noisy labels, step by step |
 | **RLHF with GRPO** | including variants: Dr. GRPO, DAPO, GSPO, SAPO |
-| **RLVR with GRPO** | —  |
-| **Qwen GSPO** | Transition from GRPO implementation |
-| **Reinforcement Pretraining (RPT)** | — |
+| **RLVR with GRPO** | Reasoning with GPT2-m  |
+| **Reinforcement Pretraining (RPT)** |  with Qwen3-0.8B |
 
 
 &nbsp;
