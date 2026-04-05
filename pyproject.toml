@@ -29,7 +29,7 @@ dependencies = [
 packages = ["llm_quest"]
 py-modules = ["config"]
 
-
+# Do not forget, for windows, pytorch is missing hashes for python version in the uv.lock, uv sync can fail
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
