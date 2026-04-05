@@ -132,3 +132,15 @@ Research papers used in the repo are always cited and linked in the relevant rea
 
 Special mention to [@rasbt](https://github.com/rasbt) for the [LLMs-from-scratch](https://github.com/rasbt/LLMs-from-scratch) book/repo,
   which made me kickstart this repo and became a base for verbose re-implementations of various research papers.
+
+&nbsp;
+
+## Install
+
+```bash
+uv venv && uv pip install -e .
+```
+or
+```bash
+uv sync
+```
