@@ -29,10 +29,10 @@ stability, in their equation (2) and (3) below, which isn't linked to the attent
 
 $$
 s_{ij} =
-\frac{\exp\!\left(a_{ij} - m_i\right)}
-{\exp\!\left(\text{sink} - m_i\right) + \sum_j \exp\!\left(a_{ij} - m_i\right)},
+\frac{\exp\left(a_{ij} - m_i\right)}
+{\exp\left(\text{sink} - m_i\right) + \sum_j \exp\left(a_{ij} - m_i\right)},
 \quad
-m_i = \max\!\left( \max_j a_{ij},\ \text{sink} \right).
+m_i = \max\left( \max_j a_{ij},\ \text{sink} \right).
 $$
 
 The max trick is used to avoid overflow (has nothing to do with the math) in the exponential function by subtracting
