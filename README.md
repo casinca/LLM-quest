@@ -1,6 +1,10 @@
 # LLM Quest
 
-**LLM Architectures, techniques, and research papers for experimentation and learning — from scratch.**
+<p align="center">
+  <img src=".github/assets/llm_quest_banner.png" alt="LLM Quest Banner" width="70%">
+</p>
+
+**LLM Architectures, techniques, and research papers for practice, experimentation, and learning — from scratch.**
 
 
 <!-- TOC -->
@@ -30,7 +34,8 @@
 
 ## Content
 
-> *More details are available in each subfolder's `README.md`*
+> [!NOTE]
+> More details are available in each subfolder's `README.md`
 
 &nbsp;
 
