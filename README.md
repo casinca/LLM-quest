@@ -47,7 +47,7 @@
 | **GPT to Llama 3.2**\* | • GQA<br>• RoPE + YaRN<br>• RMS Norm<br>• SwiGLU |
 | **Llama 3.2 to DeepSeek V3/R1** | • MLA<br>• MTP modules<br>• DeepSeek MoE |
 | **Llama 3.2 to Gemma 3** *(text-only)* | • GeGLU<br>• Local/Global attention<br>• SWA<br>• QK norm<br> • Pre+Post RMSNorm<br>• Logit softcapping (*Gemma 2*) |
-| **Qwen3** *(dense and MoE)* | — |
+| **Qwen3** *(dense and MoE)* | — (*nothing new*) |
 | **Qwen3-Next** (hybrid attention) | • Gated DeltaNet<br>• Gated Attention<br>• Zero-Centered RMSNorm<br>• Weighted shared expert<br>• Partial RoPE |
 | **Xiaomi MiMo-V2-Flash** (hybrid attention) | • SWA+GA<br>• Attention Sink<br>• DeepSeek MoE without shared experts<br>• SWA MTP modules<br> |
 | **Qwen3.5** (multimodal) | • Early fusion<br> • Qwen3-Next + Qwen3-ViT<br> • 3D patch embeddings with temporal downsampling<br>• ViT-LLM adapter with spatial downsampling<br> • Multimodal RoPE: MRoPE-I variant (interleaved) <br> |
@@ -71,7 +71,7 @@
 | **DPO**\* | With cDPO for noisy labels, step by step |
 | **RLHF with GRPO** | including variants: Dr. GRPO, DAPO, GSPO, SAPO |
 | **RLVR with GRPO** | Reasoning with GPT2-m  |
-| **Reinforcement Pretraining (RPT)** |  with Qwen3-0.8B |
+| **Reinforcement Pretraining (RPT)** | with Qwen3-0.6B |
 
 
 &nbsp;
